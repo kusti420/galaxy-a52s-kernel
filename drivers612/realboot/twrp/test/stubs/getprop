@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+# test stub: properties from /fake/props (key=value)
+[ $# -ge 1 ] || { cat /fake/props; exit 0; }
+v=$(grep -m1 "^$1=" /fake/props 2>/dev/null | cut -d= -f2-)
+printf '%s\n' "$v"

@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+# test stub: df -Pk <path> from /fake/df.conf lines "<path prefix> <source> <avail KB>"
+p=${!#}; best=""; bl=0
+while read -r pre src av; do
+	[ -n "$pre" ] || continue
+	case "$p" in "$pre"|"$pre"/*) [ ${#pre} -gt $bl ] && { best="$src $av $pre"; bl=${#pre}; };; esac
+done < /fake/df.conf
+[ -n "$best" ] || { echo "df: $p: no such fs" >&2; exit 1; }
+set -- $best
+echo "Filesystem 1024-blocks Used Available Capacity Mounted on"
+echo "$1 99999999 1 $2 1% $3"

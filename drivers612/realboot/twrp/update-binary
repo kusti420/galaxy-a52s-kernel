@@ -1,0 +1,704 @@
+#!/system/bin/sh
+# SPDX-License-Identifier: GPL-2.0
+# Galaxy A52s 5G (SM-A528B, a52sxq) recovery installer for the Linux 6.12 kernel (LineageOS 24).
+#
+# One script for both zips. a52s-k612.conf in the zip selects the mode:
+#   MODE=install   write the 6.12 boot/vendor_boot/dtbo and install the /vendor add-on
+#   MODE=restore   write the stock LineageOS boot/vendor_boot/dtbo, remove the 6.12 add-on
+# Runs under TWRP and LineageOS recovery: POSIX sh (mksh, busybox ash), toybox or busybox tools.
+# Recovery calls it as: update-binary <api> <OUTFD> <zip>. Shebang /system/bin/sh: LineageOS
+# recovery (24.0) has no /sbin/sh; TWRP has /system/bin/sh (and /sbin/sh -> it).
+#
+# What it writes, and only after every check passed: the boot, vendor_boot and dtbo partitions
+# (by-name), the add-on files on /vendor, and a backup directory on internal storage
+# (/sdcard/a52s-k612-backup/<time>). It never formats anything, never writes any other
+# partition and never touches mmcblk* (the microSD card).
+#
+# A52S_TESTMODE=1 is only set by twrp/test/run-tests.sh (fake root under bubblewrap): regular
+# files may then stand in for block devices and the stub mount table is read instead of
+# /proc/mounts. A recovery never sets it.
+
+umask 022
+set -f
+OUTFD=$2
+ZIPFILE=$3
+W=/tmp/a52s-k612
+LOG=/tmp/a52s-k612.log
+TESTMODE=${A52S_TESTMODE:-0}
+MOUNTS=/proc/mounts
+[ "$TESTMODE" = 1 ] && MOUNTS=${A52S_TEST_MOUNTS:-/proc/mounts}
+BK_BASE=/sdcard/a52s-k612-backup
+BK_MIN_KB=614400
+PARTS="boot vendor_boot dtbo"
+LBL_MOD=u:object_r:vendor_file:s0
+LBL_RC=u:object_r:vendor_configs_file:s0
+PHASE=check
+OWN_MOUNTS=""
+V_MP=""
+V_OWN=0
+V_REMOUNTED=0
+BK_DIR=""
+BK_OK=0
+CLEANED=0
+
+# ------------------------------------------------------------------------------ output
+ui_print() {
+	if [ -n "$OUTFD" ] && [ "$OUTFD" -eq "$OUTFD" ] 2>/dev/null && [ -e "/proc/self/fd/$OUTFD" ]; then
+		printf 'ui_print %s\nui_print\n' "$*" >> "/proc/self/fd/$OUTFD"
+	else
+		printf '%s\n' "$*"
+	fi
+	printf '%s\n' "$*" >> "$LOG" 2>/dev/null
+}
+log() { printf '%s\n' "$*" >> "$LOG" 2>/dev/null; }
+warn() { ui_print "WARNING: $*"; }
+
+cleanup() {
+	[ "$CLEANED" = 1 ] && return 0
+	CLEANED=1
+	cd /
+	vendor_close
+	for mp in $OWN_MOUNTS; do
+		umount "$mp" >> "$LOG" 2>&1 || umount -l "$mp" >> "$LOG" 2>&1
+	done
+	OWN_MOUNTS=""
+	if [ -n "$BK_DIR" ] && [ -d "$BK_DIR" ]; then
+		cp "$LOG" "$BK_DIR/install.log" 2>/dev/null
+		sync
+	fi
+	rm -rf "$W"
+}
+
+abort() {
+	ui_print "ERROR: $1"
+	[ -n "$2" ] && ui_print "$2"
+	case $PHASE in
+	check) ui_print "Nothing was written to the phone's partitions.";;
+	vendor) ui_print "boot/vendor_boot/dtbo were NOT changed: the phone still boots its old kernel."
+		ui_print "Add-on files already copied to /vendor are ignored by the 5.4 kernel.";;
+	esac
+	cleanup
+	ui_print "Aborted. Log: $LOG"
+	exit 1
+}
+
+trap 'abort "interrupted"' INT TERM HUP
+
+# ------------------------------------------------------------------------------ helpers
+sha() { sha256sum "$1" 2>/dev/null | { read -r h _; printf '%s' "$h"; }; }
+
+# file_prop <key> <file>: last value of key=value in a build.prop style file
+file_prop() {
+	[ -f "$2" ] || return 1
+	sed -n "s/^$(printf '%s' "$1" | sed 's/[.]/[.]/g')=//p" "$2" 2>/dev/null | tail -n 1
+}
+
+# recovery property, with fallbacks for recoveries without getprop
+sysprop() {
+	v=$(getprop "$1" 2>/dev/null)
+	if [ -z "$v" ]; then
+		for pf in /prop.default /default.prop; do
+			v=$(file_prop "$1" "$pf")
+			[ -n "$v" ] && break
+		done
+	fi
+	printf '%s' "$v"
+}
+
+# androidboot.<name> from the kernel command line or bootconfig
+boot_arg() {
+	for t in $(cat /proc/cmdline 2>/dev/null); do
+		case $t in androidboot.$1=*) printf '%s' "${t#*=}"; return 0;; esac
+	done
+	[ -r /proc/bootconfig ] && sed -n "s/^androidboot[.]$1 *= *\"\(.*\)\"\$/\1/p" /proc/bootconfig | head -n 1
+}
+
+conf() { file_prop "$1" "$W/z/a52s-k612.conf"; }
+
+is_blk() { [ -b "$1" ] || { [ "$TESTMODE" = 1 ] && [ -f "$1" ]; }; }
+
+# df_field <path> <n>: field n of the df -Pk data line (2 size, 4 avail, 1 source)
+df_field() {
+	out=$(df -Pk "$1" 2>/dev/null) || out=$(df -k "$1" 2>/dev/null) || return 1
+	line=$(printf '%s\n' "$out" | tail -n 1)
+	# shellcheck disable=SC2086
+	set -- $line "$2"
+	n=$(( $# - 1 ))
+	k=$(eval "printf '%s' \"\${$#}\"")
+	# a wrapped line (long source name) has one field less: shift the index down
+	[ "$n" -lt 6 ] && [ "$k" -gt 1 ] && k=$((k - 1))
+	eval "printf '%s' \"\${$k}\""
+}
+avail_kb() { v=$(df_field "$1" 4); case $v in ''|*[!0-9]*) printf '0';; *) printf '%s' "$v";; esac; }
+df_src() { df_field "$1" 1; }
+
+dev_size() {
+	s=$(blockdev --getsize64 "$1" 2>/dev/null)
+	if [ -z "$s" ]; then
+		n=${1##*/}
+		[ -r "/sys/class/block/$n/size" ] && s=$(( $(cat "/sys/class/block/$n/size") * 512 ))
+	fi
+	printf '%s' "$s"
+}
+
+drop_caches() {
+	sync
+	{ echo 3 > /proc/sys/vm/drop_caches; } 2>/dev/null
+	return 0
+}
+
+get_label() {
+	# shellcheck disable=SC2046
+	set -- $(ls -Zd "$1" 2>/dev/null)
+	for t in "$@"; do
+		case $t in *:object_r:*) printf '%s' "$t"; return 0;; esac
+	done
+	return 1
+}
+
+# find_part <name>: resolved block device of a by-name partition (empty if none)
+find_part() {
+	for d in "/dev/block/by-name/$1" "/dev/block/bootdevice/by-name/$1"; do
+		[ -e "$d" ] || continue
+		r=$(readlink -f "$d" 2>/dev/null)
+		[ -n "$r" ] || r=$d
+		printf '%s' "$r"
+		return 0
+	done
+	return 1
+}
+
+# dyn_dev <name>: resolved device-mapper node of a dynamic (super) partition
+dyn_dev() {
+	sfx=$(sysprop ro.boot.slot_suffix)
+	for n in "$1$sfx" "$1"; do
+		d=/dev/block/mapper/$n
+		[ -e "$d" ] || continue
+		r=$(readlink -f "$d" 2>/dev/null)
+		[ -n "$r" ] || r=$d
+		printf '%s' "$r"
+		return 0
+	done
+	return 1
+}
+
+# find_mount <dev>: sets M_MP / M_OPTS to the first mount of dev (empty if not mounted)
+find_mount() {
+	M_MP=""
+	M_OPTS=""
+	while read -r m_src m_mp m_fs m_opts m_rest; do
+		case $m_src in /*) ;; *) continue;; esac
+		m_r=$m_src
+		[ -e "$m_src" ] && m_r=$(readlink -f "$m_src" 2>/dev/null)
+		if [ "$m_r" = "$1" ] || [ "$m_src" = "$1" ]; then
+			M_MP=$m_mp
+			M_OPTS=$m_opts
+			return 0
+		fi
+	done < "$MOUNTS"
+	return 1
+}
+
+# open_ro <dev> <name>: sets O_MP to an existing mount of dev or a new read-only mount
+open_ro() {
+	O_MP=""
+	find_mount "$1"
+	if [ -n "$M_MP" ]; then O_MP=$M_MP; O_OWN=0; return 0; fi
+	mkdir -p "$W/mnt/$2" || return 1
+	if mount -t ext4 -o ro,noload "$1" "$W/mnt/$2" >> "$LOG" 2>&1 ||
+	   mount -t erofs -o ro "$1" "$W/mnt/$2" >> "$LOG" 2>&1 ||
+	   mount -o ro "$1" "$W/mnt/$2" >> "$LOG" 2>&1; then
+		O_MP=$W/mnt/$2
+		O_OWN=1
+		OWN_MOUNTS="$O_MP $OWN_MOUNTS"
+		return 0
+	fi
+	return 1
+}
+
+close_ro() {
+	[ "$O_OWN" = 1 ] || return 0
+	umount "$O_MP" >> "$LOG" 2>&1 || umount -l "$O_MP" >> "$LOG" 2>&1
+	rest=""
+	for mp in $OWN_MOUNTS; do [ "$mp" = "$O_MP" ] || rest="$rest $mp"; done
+	OWN_MOUNTS=$rest
+	O_OWN=0
+}
+
+# ------------------------------------------------------------------------------ checks
+check_device() {
+	BL=$(sysprop ro.boot.bootloader)
+	[ -n "$BL" ] || BL=$(boot_arg bootloader)
+	D1=$(sysprop ro.product.device)
+	D2=$(sysprop ro.build.product)
+	D3=$(sysprop ro.product.vendor.device)
+	log "props: ro.product.device=$D1 ro.build.product=$D2 ro.product.vendor.device=$D3 bootloader=$BL"
+	case $BL in
+	A528B*) ;;
+	'') abort "cannot read the bootloader version (ro.boot.bootloader)" \
+		"This zip is only for the Galaxy A52s 5G SM-A528B.";;
+	*) abort "bootloader $BL is not an SM-A528B bootloader (A528B...)" \
+		"This zip is only for the Galaxy A52s 5G SM-A528B.";;
+	esac
+	ok=0
+	for d in "$D1" "$D2" "$D3"; do
+		case $d in a52sxq*) ok=1;; esac
+	done
+	[ "$ok" = 1 ] || abort "this recovery reports device '$D1' / '$D2', not a52sxq" \
+		"This zip is only for the Galaxy A52s 5G SM-A528B."
+	ui_print "Device: a52sxq (SM-A528B), bootloader $BL"
+	bit=$(printf '%s' "$BL" | cut -c9)
+	case $bit in
+	[0-4]) warn "bootloader bit $bit: the mobile network needs the bit-5 firmware (A528BXXU5...)."
+		ui_print "  The phone boots, but the modem stays off. Do NOT upgrade the bootloader for this.";;
+	esac
+}
+
+unpack() {
+	command -v unzip > /dev/null 2>&1 || abort "this recovery has no unzip command"
+	command -v sha256sum > /dev/null 2>&1 || abort "this recovery has no sha256sum command"
+	rm -rf "$W"
+	mkdir -p "$W/z" || abort "cannot create $W"
+	ui_print "Unpacking..."
+	unzip -o -q "$ZIPFILE" -d "$W/z" >> "$LOG" 2>&1 ||
+		abort "cannot unpack the zip (damaged download, or not enough RAM for /tmp)"
+	[ -f "$W/z/a52s-k612.conf" ] && [ -f "$W/z/SHA256SUMS" ] || abort "the zip is incomplete"
+	nfiles=0
+	while read -r h f; do
+		[ -n "$h" ] || continue
+		[ -f "$W/z/$f" ] || abort "missing in the zip: $f"
+		[ "$(sha "$W/z/$f")" = "$h" ] || abort "checksum mismatch: $f (damaged download?)"
+		nfiles=$((nfiles + 1))
+	done < "$W/z/SHA256SUMS"
+	log "payload verified: $nfiles files"
+	MODE=$(conf MODE)
+	TITLE=$(conf TITLE)
+	EXPECT_ROM=$(conf EXPECT_ROM)
+	case $MODE in install|restore) ;; *) abort "bad a52s-k612.conf (MODE=$MODE)";; esac
+	for p in $PARTS; do
+		[ -f "$W/z/images/$p.img" ] || abort "missing in the zip: images/$p.img"
+	done
+}
+
+check_tmp() {
+	need=$(file_prop NEED_TMP_KB "$1")
+	[ -n "$need" ] || return 0
+	have=$(avail_kb /tmp)
+	[ "$have" -ge "$need" ] || abort "not enough space in /tmp (RAM): $((have / 1024)) MB free, $((need / 1024)) MB needed"
+}
+
+check_rom() {
+	SYSPROP=""
+	LV=""
+	SYSDEV=$(dyn_dev system)
+	if [ -n "$SYSDEV" ] && open_ro "$SYSDEV" system; then
+		for f in "$O_MP/system/build.prop" "$O_MP/build.prop"; do
+			if [ -f "$f" ]; then SYSPROP=$f; break; fi
+		done
+	fi
+	if [ -n "$SYSPROP" ]; then
+		LV=$(file_prop ro.lineage.version "$SYSPROP")
+		AREL=$(file_prop ro.build.version.release "$SYSPROP")
+		DISP=$(file_prop ro.build.display.id "$SYSPROP")
+		log "system: $SYSPROP ro.lineage.version=$LV release=$AREL display=$DISP"
+		# LineageOS 24 (A17) keeps ro.lineage.* in /product/etc/build.prop, not in system
+		if [ -z "$LV" ]; then
+			[ "$O_OWN" = 1 ] && close_ro
+			for part in product system_ext; do
+				PD=$(dyn_dev $part)
+				[ -n "$PD" ] && open_ro "$PD" $part || continue
+				for f in "$O_MP/etc/build.prop" "$O_MP/build.prop"; do
+					[ -f "$f" ] && LV=$(file_prop ro.lineage.version "$f")
+					[ -n "$LV" ] && { log "$part: $f ro.lineage.version=$LV"; break; }
+				done
+				[ "$O_OWN" = 1 ] && close_ro
+				[ -n "$LV" ] && break
+			done
+		fi
+		[ -n "$LV" ] || abort "the installed ROM is not LineageOS (no ro.lineage.version): ${DISP:-unknown}" \
+			"This kernel is for LineageOS 24.0 only."
+	else
+		warn "cannot read /system/build.prop (system not mapped or not mountable)."
+		VD=$(dyn_dev vendor)
+		lineage=0
+		if [ -n "$VD" ] && open_ro "$VD" vendor; then
+			grep -qi lineage "$O_MP/build.prop" 2>/dev/null && lineage=1
+			close_ro
+		fi
+		[ "$lineage" = 1 ] || abort "cannot tell which ROM is installed" \
+			"Mount System in the recovery (Mount menu) and flash again."
+		warn "/vendor looks like LineageOS: continuing without the exact version."
+		LV=unknown
+	fi
+	[ "$O_OWN" = 1 ] && close_ro
+	case $LV in
+	"$EXPECT_ROM"*) ui_print "ROM: LineageOS $LV (the tested build)";;
+	24.*) warn "LineageOS $LV: only $EXPECT_ROM was tested. Continuing."
+		if [ "$MODE" = restore ]; then
+			ui_print "  These are the $EXPECT_ROM kernel images. If they do not boot your build,"
+			ui_print "  flash your build's own boot.img/vendor_boot.img/dtbo.img (or its ROM zip)."
+		fi;;
+	unknown) ;;
+	*) abort "LineageOS $LV is not LineageOS 24" "This kernel is for LineageOS 24.0 (Android 17).";;
+	esac
+}
+
+check_parts() {
+	SAME_ALL=1
+	for p in $PARTS; do
+		dev=$(find_part "$p")
+		[ -n "$dev" ] || abort "no $p partition (/dev/block/by-name/$p)"
+		case $dev in *mmcblk*) abort "$p resolves to $dev (microSD): refusing";; esac
+		is_blk "$dev" || abort "$p: $dev is not a block device"
+		img=$W/z/images/$p.img
+		isz=$(wc -c < "$img" | tr -d ' ')
+		psz=$(dev_size "$dev")
+		[ -n "$psz" ] || abort "cannot read the size of $p ($dev)"
+		[ "$psz" = "$isz" ] || abort "$p is $psz bytes, the image $isz: not the expected partition layout"
+		cur=$(sha "$dev")
+		[ -n "$cur" ] || abort "cannot read $p ($dev)"
+		want=$(sha "$img")
+		same=0
+		[ "$cur" = "$want" ] && same=1
+		[ "$same" = 1 ] || SAME_ALL=0
+		eval "DEV_$p=\$dev; CUR_$p=\$cur; WANT_$p=\$want; SAME_$p=\$same"
+		log "$p: $dev size=$psz current=$cur image=$want same=$same"
+	done
+	KVER=$(grep -a -o -m 1 'Linux version [0-9][^ ]*' "$DEV_boot" 2>/dev/null | head -n 1)
+	ui_print "Current kernel: ${KVER:-unknown (compressed)}"
+}
+
+# ------------------------------------------------------------------------------ backup
+do_backup() {
+	BK_DIR=""
+	BK_OK=0
+	if [ "$SAME_ALL" = 1 ]; then
+		ui_print "boot/vendor_boot/dtbo already hold these images: no backup needed."
+		return 0
+	fi
+	if [ ! -d /sdcard ]; then
+		warn "no internal storage (/sdcard): skipping the backup."
+		return 0
+	fi
+	src=$(df_src /sdcard/)
+	case $src in
+	*mmcblk*) warn "/sdcard is on $src (microSD?): skipping the backup."; return 0;;
+	/dev/block/*) ;;
+	*) warn "internal storage is not mounted ($src; data not decrypted?): skipping the backup."
+		return 0;;
+	esac
+	free=$(avail_kb /sdcard/)
+	if [ "$free" -lt "$BK_MIN_KB" ]; then
+		warn "only $((free / 1024)) MB free on internal storage (600 MB needed): skipping the backup."
+		return 0
+	fi
+	ts=$(date +%Y%m%d-%H%M%S 2>/dev/null)
+	[ -n "$ts" ] || ts=backup
+	d=$BK_BASE/$ts
+	n=1
+	while [ -e "$d" ]; do d=$BK_BASE/$ts-$n; n=$((n + 1)); done
+	if ! mkdir -p "$d" 2>/dev/null || ! : > "$d/.probe" 2>/dev/null; then
+		warn "cannot write $d (storage encrypted?): skipping the backup."
+		return 0
+	fi
+	rm -f "$d/.probe"
+	BK_DIR=$d
+	ui_print "Backing up the current boot/vendor_boot/dtbo to $d"
+	: > "$d/SHA256SUMS"
+	for p in $PARTS; do
+		eval "dev=\$DEV_$p; cur=\$CUR_$p"
+		if ! dd if="$dev" of="$d/$p.img" bs=1048576 >> "$LOG" 2>&1 || [ "$(sha "$d/$p.img")" != "$cur" ]; then
+			warn "backup of $p failed: continuing WITHOUT a backup."
+			rm -f "$d/boot.img" "$d/vendor_boot.img" "$d/dtbo.img"
+			return 0
+		fi
+		printf '%s  %s\n' "$cur" "$p.img" >> "$d/SHA256SUMS"
+	done
+	{
+		echo "a52sxq kernel backup, taken by: ${TITLE:-?} ($MODE)"
+		echo "date: $ts"
+		echo "kernel: ${KVER:-unknown}"
+		echo "rom: LineageOS ${LV:-unknown}"
+		echo "bootloader: $BL"
+		echo "restore: Odin AP tar with these 3 images, or TWRP Install Image (boot, vendor_boot, dtbo)"
+	} > "$d/info.txt"
+	sync
+	BK_OK=1
+}
+
+# ------------------------------------------------------------------------------ /vendor
+# vendor_open: mount /vendor read-write (sets V_MP). Returns 1 with V_ERR set on failure.
+vendor_open() {
+	V_ERR=""
+	VDEV=$(dyn_dev vendor)
+	[ -n "$VDEV" ] || { V_ERR="no vendor partition (/dev/block/mapper/vendor)"; return 1; }
+	case $VDEV in *mmcblk*) V_ERR="vendor resolves to $VDEV (microSD)"; return 1;; esac
+	is_blk "$VDEV" || { V_ERR="vendor: $VDEV is not a block device"; return 1; }
+	find_mount "$VDEV"
+	if [ -n "$M_MP" ]; then
+		V_MP=$M_MP
+		case ",$M_OPTS," in
+		*,ro,*)
+			blockdev --setrw "$VDEV" >> "$LOG" 2>&1
+			if ! mount -o remount,rw "$V_MP" >> "$LOG" 2>&1; then
+				V_MP=""
+				V_ERR="cannot remount /vendor read-write"
+				return 1
+			fi
+			V_REMOUNTED=1;;
+		esac
+	else
+		blockdev --setrw "$VDEV" >> "$LOG" 2>&1
+		mkdir -p "$W/vendor"
+		if ! mount -t ext4 -o rw "$VDEV" "$W/vendor" >> "$LOG" 2>&1; then
+			V_ERR="cannot mount vendor ($VDEV) read-write"
+			return 1
+		fi
+		V_MP=$W/vendor
+		V_OWN=1
+	fi
+	log "vendor: $VDEV at $V_MP (own=$V_OWN remounted=$V_REMOUNTED)"
+	if ! [ -f "$V_MP/build.prop" ] || ! [ -d "$V_MP/lib/modules" ] || ! [ -d "$V_MP/etc/init" ]; then
+		V_ERR="$V_MP does not look like the vendor partition"
+		return 1
+	fi
+	if ! : > "$V_MP/.a52s-k612-probe" 2>/dev/null; then
+		V_ERR="/vendor is still read-only (ext4 shared_blocks?)"
+		return 1
+	fi
+	rm -f "$V_MP/.a52s-k612-probe"
+	return 0
+}
+
+vendor_close() {
+	[ -n "$V_MP" ] || return 0
+	sync
+	if [ "$V_OWN" = 1 ]; then
+		umount "$V_MP" >> "$LOG" 2>&1 || umount -l "$V_MP" >> "$LOG" 2>&1
+	elif [ "$V_REMOUNTED" = 1 ]; then
+		mount -o remount,ro "$V_MP" >> "$LOG" 2>&1
+	fi
+	V_MP=""
+	V_OWN=0
+	V_REMOUNTED=0
+}
+
+label_for() {
+	case $1 in etc/init/*) printf '%s' "$LBL_RC";; *) printf '%s' "$LBL_MOD";; esac
+}
+
+vendor_preflight() {
+	ui_print "Mounting /vendor read-write..."
+	vendor_open || abort "$V_ERR" "The add-on cannot be installed from this recovery."
+	A=$W/z/vendor-addon
+	add_kb=$(du -sk "$A" | { read -r k _; printf '%s' "$k"; })
+	old_kb=0
+	while read -r h f; do
+		case $f in vendor-addon/*) ;; *) continue;; esac
+		rel=${f#vendor-addon/}
+		case $rel in lib/modules/6.12/*) continue;; esac
+		if [ -f "$V_MP/$rel" ]; then
+			k=$(du -sk "$V_MP/$rel" | { read -r k _; printf '%s' "$k"; })
+			old_kb=$((old_kb + k))
+		fi
+	done < "$W/z/SHA256SUMS"
+	if [ -d "$V_MP/lib/modules/6.12" ]; then
+		k=$(du -sk "$V_MP/lib/modules/6.12" | { read -r k _; printf '%s' "$k"; })
+		old_kb=$((old_kb + k))
+	fi
+	need=$((add_kb - old_kb + 1024))
+	free=$(avail_kb "$V_MP")
+	log "vendor space: add=${add_kb}K replaced=${old_kb}K free=${free}K"
+	[ "$free" -ge "$need" ] || abort "not enough space on /vendor: $((free / 1024)) MB free, $((need / 1024)) MB needed"
+}
+
+vendor_install() {
+	PHASE=vendor
+	ui_print "Installing the 6.12 add-on into /vendor..."
+	A=$W/z/vendor-addon
+	# backup the files the add-on replaces outside lib/modules/6.12 (the ROM's 5.4-gki files)
+	if [ "$BK_OK" = 1 ]; then
+		while read -r h f; do
+			case $f in vendor-addon/*) ;; *) continue;; esac
+			rel=${f#vendor-addon/}
+			case $rel in lib/modules/6.12/*) continue;; esac
+			[ -f "$V_MP/$rel" ] || continue
+			[ "$(sha "$V_MP/$rel")" = "$h" ] && continue
+			mkdir -p "$BK_DIR/vendor/${rel%/*}" && cp "$V_MP/$rel" "$BK_DIR/vendor/$rel"
+		done < "$W/z/SHA256SUMS"
+	fi
+	rm -rf "$V_MP/lib/modules/6.12"
+	while read -r h f; do
+		case $f in vendor-addon/*) ;; *) continue;; esac
+		rel=${f#vendor-addon/}
+		dst=$V_MP/$rel
+		dir=${dst%/*}
+		if [ ! -d "$dir" ]; then
+			mkdir -p "$dir" || abort "cannot create /vendor/${rel%/*}"
+		fi
+		case $rel in
+		lib/modules/*/*)
+			chmod 0755 "$dir"
+			chown 0:0 "$dir"
+			chcon "$LBL_MOD" "$dir" >> "$LOG" 2>&1;;
+		esac
+		if ! cp "$A/$rel" "$dst.a52s-new" 2>> "$LOG" || ! chmod 0644 "$dst.a52s-new" ||
+		   ! chown 0:0 "$dst.a52s-new" || ! mv -f "$dst.a52s-new" "$dst"; then
+			rm -f "$dst.a52s-new"
+			abort "cannot copy /vendor/$rel (vendor full?)"
+		fi
+		chcon "$(label_for "$rel")" "$dst" >> "$LOG" 2>&1
+	done < "$W/z/SHA256SUMS"
+	drop_caches
+	nver=0
+	nolabel=0
+	while read -r h f; do
+		case $f in vendor-addon/*) ;; *) continue;; esac
+		rel=${f#vendor-addon/}
+		dst=$V_MP/$rel
+		[ "$(sha "$dst")" = "$h" ] || abort "verify failed: /vendor/$rel"
+		mo=$(stat -c '%a %u:%g' "$dst" 2>/dev/null)
+		[ "$mo" = "644 0:0" ] || abort "verify failed: /vendor/$rel has mode/owner '$mo', expected 644 0:0"
+		want=$(label_for "$rel")
+		lab=$(get_label "$dst")
+		if [ -z "$lab" ] || [ "$lab" = "?" ]; then
+			nolabel=$((nolabel + 1))
+		elif [ "$lab" != "$want" ]; then
+			abort "/vendor/$rel has SELinux label $lab, expected $want"
+		fi
+		nver=$((nver + 1))
+	done < "$W/z/SHA256SUMS"
+	[ "$nolabel" = 0 ] || warn "could not read the SELinux label of $nolabel files (no ls -Z here)."
+	ui_print "  $nver files installed and verified (sha256, 0644 root:root, SELinux labels)."
+	vendor_close
+}
+
+vendor_remove() {
+	ui_print "Removing the 6.12 add-on from /vendor..."
+	if ! vendor_open; then
+		warn "$V_ERR."
+		ui_print "  The add-on stays in /vendor: harmless, the 5.4 kernel ignores it."
+		vendor_close
+		return 0
+	fi
+	if [ ! -e "$V_MP/lib/modules/6.12" ] && [ ! -e "$V_MP/etc/init/a52sxq-k612.rc" ]; then
+		ui_print "  not installed: nothing to remove."
+	else
+		rm -rf "$V_MP/lib/modules/6.12" "$V_MP/etc/init/a52sxq-k612.rc"
+		sync
+		if [ -e "$V_MP/lib/modules/6.12" ] || [ -e "$V_MP/etc/init/a52sxq-k612.rc" ]; then
+			warn "could not remove all add-on files (harmless for the 5.4 kernel)."
+		else
+			ui_print "  removed /vendor/lib/modules/6.12 and /vendor/etc/init/a52sxq-k612.rc"
+		fi
+	fi
+	ui_print "  (/vendor/lib/modules/5.4-gki is left as it is: the 5.4 kernel does not use it.)"
+	vendor_close
+}
+
+# ------------------------------------------------------------------------------ images
+write_parts() { # <dir with boot.img ...> <only-changed 0|1>
+	wfail=""
+	for p in $PARTS; do
+		eval "dev=\$DEV_$p; same=\$SAME_$p"
+		if [ "$2" = 1 ] && [ "$same" = 1 ]; then
+			ui_print "  $p: already up to date"
+			continue
+		fi
+		ui_print "  writing $p"
+		log "+ dd if=$1/$p.img of=$dev"
+		dd if="$1/$p.img" of="$dev" bs=1048576 >> "$LOG" 2>&1 || wfail="$wfail $p"
+	done
+	sync
+	for p in $PARTS; do
+		eval "dev=\$DEV_$p"
+		blockdev --flushbufs "$dev" >> "$LOG" 2>&1
+	done
+	drop_caches
+	[ -z "$wfail" ]
+}
+
+verify_parts() { # <dir with images>: sets VBAD
+	VBAD=""
+	for p in $PARTS; do
+		eval "dev=\$DEV_$p"
+		want=$(sha "$1/$p.img")
+		got=$(sha "$dev")
+		log "verify $p: want=$want got=$got"
+		[ "$got" = "$want" ] || VBAD="$VBAD $p"
+	done
+	[ -z "$VBAD" ]
+}
+
+flash_images() {
+	PHASE=images
+	ui_print "Writing the kernel images..."
+	I=$W/z/images
+	write_parts "$I" 1 || warn "dd reported an error"
+	if verify_parts "$I"; then
+		ui_print "  boot, vendor_boot, dtbo written and verified (sha256)."
+		return 0
+	fi
+	warn "verification failed for:$VBAD. Writing again..."
+	write_parts "$I" 0
+	if verify_parts "$I"; then
+		ui_print "  boot, vendor_boot, dtbo written and verified (sha256) on the 2nd try."
+		return 0
+	fi
+	ui_print "ERROR: the partitions do not match the images after two tries:$VBAD"
+	if [ "$BK_OK" = 1 ]; then
+		ui_print "Writing the backup back ($BK_DIR)..."
+		write_parts "$BK_DIR" 0
+		if verify_parts "$BK_DIR"; then
+			ui_print "The previous kernel was restored and verified. Nothing else changed."
+			PHASE=done
+			[ "$MODE" = install ] &&
+				ui_print "(The 6.12 add-on stays in /vendor: harmless, the 5.4 kernel ignores it.)"
+			cleanup
+			exit 1
+		fi
+	fi
+	ui_print "DANGER: the kernel partitions may be inconsistent. Do NOT reboot into the system."
+	ui_print "Flash this zip again, or the restore zip. If the phone does not boot:"
+	ui_print "Download mode (Vol-down + Vol-up with USB) and Odin the stock AP tar."
+	PHASE=done
+	cleanup
+	exit 1
+}
+
+# ------------------------------------------------------------------------------ main
+: > "$LOG"
+log "a52s-k612 update-binary: api=$1 outfd=$OUTFD zip=$ZIPFILE testmode=$TESTMODE"
+ui_print "Galaxy A52s 5G (SM-A528B) - Linux 6.12 kernel for LineageOS 24"
+[ -n "$ZIPFILE" ] && [ -r "$ZIPFILE" ] || abort "cannot read the zip ($ZIPFILE)"
+
+check_device
+rm -rf "$W"
+mkdir -p "$W" || abort "cannot create $W"
+# space for unpacking: read NEED_TMP_KB from the conf before unpacking everything
+if unzip -o -q "$ZIPFILE" a52s-k612.conf -d "$W" >> "$LOG" 2>&1; then
+	check_tmp "$W/a52s-k612.conf"
+fi
+unpack
+ui_print "Package: $TITLE"
+check_rom
+check_parts
+do_backup
+if [ "$MODE" = install ]; then
+	vendor_preflight
+	vendor_install
+	flash_images
+else
+	flash_images
+	vendor_remove
+fi
+PHASE=done
+[ -n "$BK_DIR" ] && [ "$BK_OK" = 1 ] && ui_print "Backup: $BK_DIR"
+cleanup
+if [ "$MODE" = install ]; then
+	ui_print "Done. Reboot to system: the first boot takes about 25 s to the lock screen."
+	ui_print "Rollback: flash a52s-lineage-stock-restore-twrp.zip."
+else
+	ui_print "Done. Reboot to system: the stock LineageOS 5.4 kernel is back."
+fi
+exit 0

@@ -28,6 +28,7 @@
  * Only the phone's own firmware (firmware_class.path) is ever used: this module names no file.
  */
 #include <linux/delay.h>
+#include <linux/io.h>
 #include <linux/kobject.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -46,6 +47,61 @@ static unsigned int interval_ms = 2000;
 module_param(interval_ms, uint, 0444);
 static unsigned int settle_ms = 2000;
 module_param(settle_ms, uint, 0444);
+
+/*
+ * WALT boot boost. sched-walt's walt_boost_init() starts with FULL_THROTTLE_BOOST (sched_boost 1)
+ * and Qualcomm's 6.x post_boot clears it via /proc/sys/walt/sched_boost; this ROM's post_boot is
+ * the 5.4 one (writes /proc/sys/kernel/sched_boost, absent on 6.x) and its vendor_init may not
+ * write /proc/sys/walt (labelled plain proc), so the boost stayed on forever: CPUs pinned at max
+ * frequency with the screen off (alpha1 tester report, 2026-11-15). Drop exactly the boot's
+ * FULL_THROTTLE reference (sched_set_boost(-1)) after boot; other boost requests stay.
+ * 0 = leave it alone.
+ */
+static unsigned int walt_boost_release_s = 45;
+module_param(walt_boost_release_s, uint, 0444);
+MODULE_PARM_DESC(walt_boost_release_s, "seconds after probe to drop WALT's boot FULL_THROTTLE boost (0 = keep)");
+
+/*
+ * L3 idle floor (2026-11-15, drivers612/busdcvs/L3-MEMLAT.md): the silver CPU domain's L3 vote port
+ * EPSS 0x18591090 sits at index 7 (1190.4 MHz) from boot and nothing on 6.x writes it (5.4's RIMPS
+ * memlat owned it), so the L3 never ran below 1.19 GHz. Measured on phone 1: writing 0 drops the idle
+ * L3 to 250-555 MHz, restoring 7 brings 1.19 GHz back. The AP's own L3 votes go to the shared port
+ * (0x18590090) and are unaffected. 0 = leave it alone.
+ */
+static bool l3_vote_release = true;
+module_param(l3_vote_release, bool, 0444);
+MODULE_PARM_DESC(l3_vote_release, "clear the stale silver-domain L3 vote (EPSS 0x18591090) after boot (default 1)");
+#define A52_EPSS_SILVER_L3_VOTE 0x18591090
+
+static void l3_vote_release_do(void)
+{
+	void __iomem *r = ioremap(A52_EPSS_SILVER_L3_VOTE, 4);
+	u32 old;
+
+	if (!r)
+		return;
+	old = readl_relaxed(r);
+	writel_relaxed(0, r);
+	iounmap(r);
+	pr_info("a52sxq_dsp_boot: silver-domain L3 vote 0x%x -> 0 (L3 idle floor released)\n", old);
+}
+
+static void walt_boost_release_fn(struct work_struct *w)
+{
+	if (l3_vote_release)
+		l3_vote_release_do();
+	int (*set_boost)(int) = (int (*)(int))__symbol_get("sched_set_boost");
+	int ret;
+
+	if (!set_boost) {
+		pr_info("a52sxq_dsp_boot: sched_set_boost not available, WALT boot boost left as is\n");
+		return;
+	}
+	ret = set_boost(-1);
+	symbol_put_addr(set_boost);
+	pr_info("a52sxq_dsp_boot: WALT boot boost released (sched_set_boost(-1) = %d)\n", ret);
+}
+static DECLARE_DELAYED_WORK(walt_boost_work, walt_boost_release_fn);
 MODULE_PARM_DESC(settle_ms, "wait after the ADSP runs before announcing it (helper2.sh: 2 s)");
 
 enum { ST_ADSP, ST_SETTLE, ST_CDSP, ST_DONE };
@@ -156,6 +212,8 @@ static int dspboot_probe(struct platform_device *pdev)
 	INIT_DELAYED_WORK(&d->work, dspboot_work);
 	platform_set_drvdata(pdev, d);
 	schedule_delayed_work(&d->work, 0);
+	if (walt_boost_release_s)
+		schedule_delayed_work(&walt_boost_work, msecs_to_jiffies(walt_boost_release_s * 1000));
 	return 0;
 }
 
@@ -164,6 +222,7 @@ static void dspboot_remove(struct platform_device *pdev)
 	struct dspboot *d = platform_get_drvdata(pdev);
 
 	cancel_delayed_work_sync(&d->work);
+	cancel_delayed_work_sync(&walt_boost_work);
 	if (d->adsp_file)
 		sysfs_remove_file(d->kobj, &adsp_running_attr.attr);
 	if (d->cdsp_file)

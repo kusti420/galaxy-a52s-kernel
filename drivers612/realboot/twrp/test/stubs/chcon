@@ -1,0 +1,8 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+# test stub: SELinux label kept in the user.selinux xattr (tmpfs). /fake/nochcon = refuse,
+# /fake/wronglabel = store a wrong label
+echo "chcon $*" >> /fake/cmd.log
+[ -e /fake/nochcon ] && { echo "chcon: permission denied" >&2; exit 1; }
+l=$1; [ -e /fake/wronglabel ] && l=u:object_r:unlabeled:s0
+python3 -I -c 'import os,sys; os.setxattr(sys.argv[2], "user.selinux", sys.argv[1].encode())' "$l" "$2"

@@ -1,0 +1,13 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+# test stub: block device ioctls on the regular files that stand in for devices
+echo "blockdev $*" >> /fake/cmd.log
+op=$1; dev=$(readlink -f "$2"); n=${dev##*/}
+case $op in
+--getsize64) [ -e "$dev" ] || exit 1; stat -c %s "$dev";;
+--setrw) [ -e /fake/stuckro.$n ] || rm -f /fake/ro.$n;;
+--setro) touch /fake/ro.$n;;
+--getro) [ -e /fake/ro.$n ] && echo 1 || echo 0;;
+--flushbufs) ;;
+*) echo "blockdev stub: unsupported $op" >&2; exit 1;;
+esac

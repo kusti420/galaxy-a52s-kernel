@@ -1,0 +1,49 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+# test stub: "mounts" the directory /fake/parts/<dev>.d with a real bind mount (userns) and
+# keeps the table the script reads (/fake/mounts). Fault flags in /fake:
+#   ro.<dev>      device read-only (cleared by blockdev --setrw unless stuckro.<dev>)
+#   norw.<dev>    filesystem refuses rw (ext4 shared_blocks)
+#   fstype.<dev>  the only fstype that mounts (e.g. erofs)
+echo "mount $*" >> /fake/cmd.log
+t=""; o=""; pos=()
+while [ $# -gt 0 ]; do
+	case $1 in -t) t=$2; shift 2;; -o) o=$2; shift 2;; *) pos+=("$1"); shift;; esac
+done
+want_rw() { case ",$1," in *,ro,*) return 1;; *) return 0;; esac; }
+if [[ ",$o," == *,remount,* ]]; then
+	mp=${pos[-1]}
+	line=$(awk -v m="$mp" '$2 == m' /fake/mounts | head -n1)
+	[ -n "$line" ] || { echo "mount: $mp: not mounted" >&2; exit 1; }
+	dev=$(readlink -f "${line%% *}"); n=${dev##*/}
+	if want_rw "$o"; then
+		[ -e /fake/ro.$n ] && { echo "mount: $dev is read-only" >&2; exit 32; }
+		[ -e /fake/norw.$n ] && { echo "mount: $mp: cannot remount rw" >&2; exit 32; }
+		/usr/bin/mount -o remount,bind,rw "$mp" || exit 32; new=rw
+	else
+		/usr/bin/mount -o remount,bind,ro "$mp" || exit 32; new=ro
+	fi
+	awk -v m="$mp" -v r="$new" '$2 == m { sub(/^(ro|rw)/, r, $4) } { print }' /fake/mounts > /fake/mounts.n
+	mv /fake/mounts.n /fake/mounts
+	exit 0
+fi
+[ ${#pos[@]} = 2 ] || { echo "mount stub: need dev and mountpoint" >&2; exit 1; }
+src=${pos[0]}; mp=${pos[1]}
+dev=$(readlink -f "$src"); n=${dev##*/}
+d=/fake/parts/$n.d
+[ -d "$d" ] || { echo "mount: $src: wrong fs type" >&2; exit 32; }
+if [ -e /fake/fstype.$n ]; then
+	ft=$(cat /fake/fstype.$n)
+	[ -z "$t" ] || [ "$t" = "$ft" ] || { echo "mount: $src: wrong fs type ($t)" >&2; exit 32; }
+	[[ "$t" = ext4 && ",$o," == *,noload,* ]] && [ "$ft" != ext4 ] && exit 32
+fi
+if want_rw "$o"; then
+	[ -e /fake/ro.$n ] && { echo "mount: $src is write-protected" >&2; exit 32; }
+	[ -e /fake/norw.$n ] && { echo "mount: $src: cannot mount rw" >&2; exit 32; }
+	mo=rw
+else
+	mo=ro
+fi
+/usr/bin/mount --bind "$d" "$mp" || exit 32
+[ $mo = ro ] && /usr/bin/mount -o remount,bind,ro "$mp"
+echo "$src $mp ${t:-auto} $mo,seclabel 0 0" >> /fake/mounts

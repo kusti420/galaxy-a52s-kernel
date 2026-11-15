@@ -1,0 +1,11 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+# test stub: ls -Z from the user.selinux xattr, everything else to toybox ls
+z=0; for a in "$@"; do case $a in -*Z*) z=1;; esac; done
+if [ $z = 1 ]; then
+	l=$(python3 -I -c 'import os,sys
+try: print(os.getxattr(sys.argv[1], "user.selinux").decode())
+except OSError: print("?")' "${!#}")
+	echo "$l ${!#}"; exit 0
+fi
+exec /abt/bin/toybox ls "$@"

@@ -1,0 +1,7 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+echo "umount $*" >> /fake/cmd.log
+[ "$1" = -l ] && shift
+mp=$1
+/usr/bin/umount "$mp" || exit 1
+awk -v m="$mp" '$2 != m' /fake/mounts > /fake/mounts.n; mv /fake/mounts.n /fake/mounts

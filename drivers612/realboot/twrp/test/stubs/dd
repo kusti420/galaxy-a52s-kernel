@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+PATH=/usr/bin
+# test stub: toybox dd, plus fault injection: /fake/corrupt.<dev> = flip a byte whenever an
+# image from the zip is written to that device
+echo "dd $*" >> /fake/cmd.log
+/abt/bin/toybox dd "$@" || exit $?
+for a in "$@"; do case $a in if=*) i=${a#if=};; of=*) o=${a#of=};; esac; done
+n=$(readlink -f "$o"); n=${n##*/}
+if [ -e /fake/corrupt.$n ] && [[ $i == /tmp/a52s-k612/z/images/* ]]; then
+	printf '\x5a' | /abt/bin/toybox dd of="$o" bs=1 seek=4097 conv=notrunc 2>/dev/null
+fi
+exit 0

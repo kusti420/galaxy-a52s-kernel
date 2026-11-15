@@ -1,0 +1,55 @@
+From 3a4b7dc9e79551dba0e3ad12fa714276696526a5 Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Sun, 15 Nov 2026 18:52:44 +0200
+Subject: [PATCH 6/7] firmware: qcom: scm: opt-in Gunyah watchdog on
+ hypervisors without the Gunyah UID
+
+The SM7325 retail hypervisor answers the Gunyah watchdog SMCs (CONTROL, STATUS,
+PING, SET_TIME) but its vendor-hyp UID call returns NOT_SUPPORTED, so the watchdog
+device is never registered. Log the UID and register it anyway with
+qcom_scm.gunyah_wdt=1; gunyah_wdt's probe still checks the STATUS call.
+---
+ drivers/firmware/qcom/qcom_scm.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/firmware/qcom/qcom_scm.c b/drivers/firmware/qcom/qcom_scm.c
+index 7d480a3cb..94146b046 100644
+--- a/drivers/firmware/qcom/qcom_scm.c
++++ b/drivers/firmware/qcom/qcom_scm.c
+@@ -2488,6 +2488,10 @@ int qcom_scm_qtee_callback_response(phys_addr_t buf, size_t buf_size,
+ }
+ EXPORT_SYMBOL(qcom_scm_qtee_callback_response);
+ 
++static bool force_gunyah_wdt;
++module_param_named(gunyah_wdt, force_gunyah_wdt, bool, 0444);
++MODULE_PARM_DESC(gunyah_wdt, "Register the Gunyah watchdog device although the hypervisor UID does not match");
++
+ static void qcom_scm_gunyah_wdt_free(void *data)
+ {
+ 	struct platform_device *gunyah_wdt_dev = data;
+@@ -2511,8 +2515,23 @@ static void qcom_scm_gunyah_wdt_init(struct qcom_scm *scm)
+ 
+ 	/* Bail out if we are not running under Gunyah */
+ 	if (!IS_ENABLED(CONFIG_HAVE_ARM_SMCCC_DISCOVERY) ||
+-	    !arm_smccc_hypervisor_has_uuid(&gunyah_uuid))
+-		return;
++	    !arm_smccc_hypervisor_has_uuid(&gunyah_uuid)) {
++		struct arm_smccc_res res = {};
++
++		/*
++		 * Older Gunyah builds (e.g. the "Haven" hypervisor on SM7325 retail phones)
++		 * answer the Gunyah watchdog SMCs but report another hypervisor UID. Log it,
++		 * and let the board opt in with qcom_scm.gunyah_wdt=1.
++		 */
++		if (IS_ENABLED(CONFIG_HAVE_ARM_SMCCC_DISCOVERY)) {
++			arm_smccc_1_1_invoke(ARM_SMCCC_VENDOR_HYP_CALL_UID_FUNC_ID, &res);
++			dev_info(scm->dev, "hypervisor UID %08lx %08lx %08lx %08lx (not Gunyah)\n",
++				 res.a0, res.a1, res.a2, res.a3);
++		}
++		if (!force_gunyah_wdt)
++			return;
++		dev_info(scm->dev, "gunyah_wdt=1: registering the Gunyah watchdog anyway\n");
++	}
+ 
+ 	/*
+ 	 * Gunyah emulates either of Qualcomm watchdog or ARM SBSA watchdog on

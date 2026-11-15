@@ -63,3 +63,20 @@ if [ "${A52_L3_FLOOR:-0}" = 1 ]; then
 		echo "dt-fix: $p floor row 300000 -> 300000 added"
 	done
 fi
+# --- SE8 / SM5714 USB-PD (2026-11-15). The 6.12 boarddt copied Qualcomm's qcom,gpios-reserved list
+# (32 33 48 49 50 51 56 57 58 59); 5.4 reserved only 56..59 and runs the SM5714 USB-PD chip
+# (usbpd-sm5714@33) on SE8 = i2c@a80000, pins 32/33. With them reserved, a80000.i2c never probes
+# ("could not request pin 32"), the PD chip stays unbound -> no Type-C attach events -> after a
+# cable re-plug nothing sends NOTIFY_EVENT_VBUS and USB stays dead (phone 1, 2026-11-15); it also
+# kept the interconnect's sync_state pending. Drop 32/33 only (48..51 stay: TZ-owned SPI likely).
+# Env A52_SE8_UNRESERVE=0 keeps Qualcomm's list.
+TP=/soc/pinctrl@f000000
+if [ "${A52_SE8_UNRESERVE:-1}" = 1 ] && fdtget "$D" $TP qcom,gpios-reserved >/dev/null 2>&1; then
+	old=$(fdtget -tu "$D" $TP qcom,gpios-reserved)
+	new=$(for g in $old; do case $g in 32|33) ;; *) printf '%s ' $g;; esac; done)
+	if [ "$old " != "$new" ]; then
+		# shellcheck disable=SC2086
+		fdtput -tu "$D" $TP qcom,gpios-reserved $new
+		echo "dt-fix: TLMM gpios-reserved '$old' -> '${new% }' (SE8 USB-PD pins freed)"
+	fi
+fi
