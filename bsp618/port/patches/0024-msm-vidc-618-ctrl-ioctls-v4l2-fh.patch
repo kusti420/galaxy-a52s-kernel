@@ -1,0 +1,173 @@
+msm-vidc (5.4 msm_vidc on 6.18): control ioctls through the ext-ctrl ops, v4l2_fh_add/del(fh, filp)
+
+- v4l2_ioctl_ops.vidioc_g_ctrl/s_ctrl/queryctrl are gone (v6.18): the core serves
+  VIDIOC_G_CTRL/S_CTRL/QUERYCTRL through vidioc_g/s_ext_ctrls and vidioc_query_ext_ctrl.
+  New ext ops call vidc's own handlers (msm_vidc_g_ctrl/s_ctrl/query_ctrl) control by
+  control, so the 6.12 behaviour (msm_comm_s_ctrl, try_get_ctrl_for_instance, HEVC tier
+  stripping, menu_skip_mask flags) is kept. VIDIOC_{G,S}_EXT_CTRLS/QUERY_EXT_CTRL now
+  answer instead of -ENOTTY.
+- v4l2_fh_add()/v4l2_fh_del() take the struct file (and set/clear filp->private_data):
+  msm_vidc_open() only initialises the fh, msm_v4l2_open() adds it (replacing its
+  private_data assignment), msm_v4l2_close() deletes it before msm_vidc_close().
+
+--- a/drivers612/gpu-video/video/msm/vidc/msm_v4l2_vidc.c
++++ b/drivers612/gpu-video/video/msm/vidc/msm_v4l2_vidc.c
+@@ -255,7 +255,8 @@
+ 	}
+ #endif
+ 	clear_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags);
+-	filp->private_data = &(vidc_inst->event_handler);
++	/* bsp618/port: 6.18 v4l2_fh_add(fh, filp) also sets filp->private_data = fh */
++	v4l2_fh_add(&vidc_inst->event_handler, filp);
+ 	trace_msm_v4l2_vidc_open_end("msm v4l2_open end");
+ 	return 0;
+ }
+@@ -270,8 +271,8 @@
+ 	kvfree(vidc_inst->compat_reserved);
+ 	vidc_inst->compat_reserved = NULL;
+ 
++	v4l2_fh_del(&vidc_inst->event_handler, filp);	/* bsp618/port: clears private_data */
+ 	rc = msm_vidc_close(vidc_inst);
+-	filp->private_data = NULL;
+ 	trace_msm_v4l2_vidc_close_end("msm v4l2_close end");
+ 	return rc;
+ }
+@@ -412,7 +413,7 @@
+ 	return msm_vidc_enum_framesizes((void *)vidc_inst, fsize);
+ }
+ 
+-static int msm_v4l2_queryctrl(struct file *file, void *fh,
++static int __maybe_unused msm_v4l2_queryctrl(struct file *file, void *fh,	/* bsp618/port: see msm_v4l2_query_ext_ctrl() */
+ 	struct v4l2_queryctrl *ctrl)
+ {
+ 	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
+@@ -428,6 +429,85 @@
+ 	return msm_vidc_query_menu((void *)vidc_inst, qmenu);
+ }
+ 
++/*
++ * bsp618/port: v4l2_ioctl_ops lost vidioc_g_ctrl/s_ctrl/queryctrl in 6.18. The core now
++ * serves VIDIOC_G_CTRL/S_CTRL/QUERYCTRL through the ext-ctrl ops (one control per call,
++ * after check_ext_ctrls()), unless the fh has a ctrl_handler; vidc keeps its own handlers
++ * (msm_comm_s_ctrl(), try_get_ctrl_for_instance(), the HEVC tier / menu_skip_mask flags in
++ * msm_vidc_query_ctrl()), so these ext ops call exactly those, control by control.
++ * Side effect: VIDIOC_{G,S}_EXT_CTRLS and VIDIOC_QUERY_EXT_CTRL are now answered too (6.12:
++ * -ENOTTY). type and name come from the control (6.12 echoed the caller's input; the
++ * core's queryctrl conversion needs a valid type to copy min/max/step/default).
++ */
++static int msm_v4l2_query_ext_ctrl(struct file *file, void *fh,
++	struct v4l2_query_ext_ctrl *qec)
++{
++	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
++	struct v4l2_queryctrl q = { .id = qec->id };
++	struct v4l2_ctrl *ctrl;
++	int rc;
++
++	if (!vidc_inst)
++		return -EINVAL;
++	rc = msm_vidc_query_ctrl((void *)vidc_inst, &q);
++	if (rc)
++		return rc;
++	ctrl = v4l2_ctrl_find(&vidc_inst->ctrl_handler, q.id);
++	memset(qec, 0, sizeof(*qec));
++	qec->id = q.id;
++	if (ctrl) {
++		qec->type = ctrl->type;
++		strscpy(qec->name, ctrl->name, sizeof(qec->name));
++		qec->elems = 1;
++		qec->elem_size = ctrl->elem_size;
++	}
++	qec->minimum = q.minimum;
++	qec->maximum = q.maximum;
++	qec->step = q.step;
++	qec->default_value = q.default_value;
++	qec->flags = q.flags;
++	return 0;
++}
++
++static int msm_v4l2_ext_ctrls(struct file *file, void *fh,
++	struct v4l2_ext_controls *c, bool set)
++{
++	struct msm_vidc_inst *vidc_inst = get_vidc_inst(file, fh);
++	struct v4l2_control ctl;
++	u32 i;
++	int rc;
++
++	if (!vidc_inst)
++		return -EINVAL;
++	if (c->which == V4L2_CTRL_WHICH_DEF_VAL || c->which == V4L2_CTRL_WHICH_MIN_VAL ||
++	    c->which == V4L2_CTRL_WHICH_MAX_VAL || c->which == V4L2_CTRL_WHICH_REQUEST_VAL)
++		return -EINVAL;
++	for (i = 0; i < c->count; i++) {
++		ctl.id = c->controls[i].id;
++		ctl.value = c->controls[i].value;
++		rc = set ? msm_vidc_s_ctrl((void *)vidc_inst, &ctl)
++			 : msm_vidc_g_ctrl((void *)vidc_inst, &ctl);
++		if (rc) {
++			c->error_idx = i;
++			return rc;
++		}
++		c->controls[i].value = ctl.value;
++	}
++	return 0;
++}
++
++static int msm_v4l2_g_ext_ctrls(struct file *file, void *fh,
++	struct v4l2_ext_controls *c)
++{
++	return msm_v4l2_ext_ctrls(file, fh, c, false);
++}
++
++static int msm_v4l2_s_ext_ctrls(struct file *file, void *fh,
++	struct v4l2_ext_controls *c)
++{
++	return msm_v4l2_ext_ctrls(file, fh, c, true);
++}
++
+ const struct v4l2_ioctl_ops msm_v4l2_ioctl_ops = {
+ 	.vidioc_querycap = msm_v4l2_querycap,
+ 	.vidioc_enum_fmt_vid_cap = msm_v4l2_enum_fmt,
+@@ -441,9 +521,9 @@
+ 	.vidioc_dqbuf = msm_v4l2_dqbuf,
+ 	.vidioc_streamon = msm_v4l2_streamon,
+ 	.vidioc_streamoff = msm_v4l2_streamoff,
+-	.vidioc_s_ctrl = msm_v4l2_s_ctrl,
+-	.vidioc_g_ctrl = msm_v4l2_g_ctrl,
+-	.vidioc_queryctrl = msm_v4l2_queryctrl,
++	.vidioc_s_ext_ctrls = msm_v4l2_s_ext_ctrls,	/* bsp618/port: was vidioc_s_ctrl */
++	.vidioc_g_ext_ctrls = msm_v4l2_g_ext_ctrls,	/* bsp618/port: was vidioc_g_ctrl */
++	.vidioc_query_ext_ctrl = msm_v4l2_query_ext_ctrl,	/* bsp618/port: was vidioc_queryctrl */
+ 	.vidioc_querymenu = msm_v4l2_querymenu,
+ 	.vidioc_subscribe_event = msm_v4l2_subscribe_event,
+ 	.vidioc_unsubscribe_event = msm_v4l2_unsubscribe_event,
+--- a/drivers612/gpu-video/video/msm/vidc/msm_vidc.c
++++ b/drivers612/gpu-video/video/msm/vidc/msm_vidc.c
+@@ -1312,8 +1312,8 @@
+ {
+ 	struct msm_vidc_inst *vidc_inst = (struct msm_vidc_inst *)inst;
+ 
++	/* bsp618/port: v4l2_fh_add() takes the file in 6.18: done by msm_v4l2_open() */
+ 	v4l2_fh_init(&vidc_inst->event_handler, pvdev);
+-	v4l2_fh_add(&vidc_inst->event_handler);
+ 
+ 	return 0;
+ }
+@@ -1630,8 +1630,7 @@
+ 	list_del(&inst->list);
+ 	mutex_unlock(&core->lock);
+ 
+-	v4l2_fh_del(&inst->event_handler);
+-	v4l2_fh_exit(&inst->event_handler);
++	v4l2_fh_exit(&inst->event_handler);	/* bsp618/port: not added yet (msm_v4l2_open) */
+ 	vb2_queue_release(&inst->bufq[INPUT_PORT].vb2_bufq);
+ fail_bufq_output:
+ 	vb2_queue_release(&inst->bufq[OUTPUT_PORT].vb2_bufq);
+@@ -1768,7 +1767,7 @@
+ 
+ 	msm_comm_ctrl_deinit(inst);
+ 
+-	v4l2_fh_del(&inst->event_handler);
++	/* bsp618/port: v4l2_fh_del(fh, filp) is done by msm_v4l2_close() */
+ 	v4l2_fh_exit(&inst->event_handler);
+ 
+ 	DEINIT_MSM_VIDC_LIST(&inst->scratchbufs);

@@ -1,0 +1,36 @@
+== 64-bit: only in 5.4 (REMOVED in donor)
+== 64-bit: only in donor (added)
+s_kgsl_dcvs_attrs 56
+s_kgsl_dcvs_profile 16
+s_kgsl_fault 24
+s_kgsl_fault_report 24
+s_kgsl_gpu_aux_command_bind 32
+s_kgsl_gpumem_bind_range 32
+s_kgsl_gpumem_bind_ranges 32
+s_kgsl_pagefault_report 32
+s_kgsl_read_calibrated_timestamps 32
+s_kgsl_recurring_command 48
+v_IOCTL_KGSL_GET_FAULT_REPORT 3222800734
+v_IOCTL_KGSL_GPUMEM_BIND_RANGES 3223325014
+v_IOCTL_KGSL_READ_CALIBRATED_TIMESTAMPS 3223325024
+v_IOCTL_KGSL_RECURRING_COMMAND 3224373599
+== 64-bit: in both, value DIFFERS (name 5.4 donor)
+== 64-bit: identical: 155 symbols (ioctls: 62, structs: 93)
+== 32-bit: only in 5.4 (REMOVED in donor)
+== 32-bit: only in donor (added)
+s_kgsl_dcvs_attrs 56
+s_kgsl_dcvs_profile 16
+s_kgsl_fault 24
+s_kgsl_fault_report 24
+s_kgsl_gpu_aux_command_bind 32
+s_kgsl_gpumem_bind_range 32
+s_kgsl_gpumem_bind_ranges 32
+s_kgsl_pagefault_report 32
+s_kgsl_read_calibrated_timestamps 32
+s_kgsl_recurring_command 48
+v_IOCTL_KGSL_GET_FAULT_REPORT 3222800734
+v_IOCTL_KGSL_GPUMEM_BIND_RANGES 3223325014
+v_IOCTL_KGSL_READ_CALIBRATED_TIMESTAMPS 3223325024
+v_IOCTL_KGSL_RECURRING_COMMAND 3224373599
+== 32-bit: in both, value DIFFERS (name 5.4 donor)
+== 32-bit: identical: 155 symbols (ioctls: 62, structs: 93)

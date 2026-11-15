@@ -1,0 +1,28 @@
+qcom-pdc: IRQCHIP_MATCH probe callbacks take the platform_device (6.18 platform_irq_probe_t)
+
+6.18 IRQCHIP_PLATFORM_DRIVER calls fn(pdev, parent) instead of fn(np, parent). Same change as
+upstream 6.18 drivers/irqchip/qcom-pdc.c (qcom_pdc_probe): the node comes from pdev.
+
+--- a/bsp612/soc-repo/drivers/irqchip/qcom-pdc.c
++++ b/bsp612/soc-repo/drivers/irqchip/qcom-pdc.c
+@@ -525,9 +525,10 @@
+ 
+ #define QCOM_PDC_SIZE 0x10000
+ 
+-static int qcom_pdc_init(struct device_node *node, struct device_node *parent)
++static int qcom_pdc_probe(struct platform_device *pdev, struct device_node *parent)
+ {
+ 	struct irq_domain *parent_domain, *pdc_domain;
++	struct device_node *node = pdev->dev.of_node;
+ 	resource_size_t res_size;
+ 	struct resource res;
+ 	int ret;
+@@ -634,7 +635,7 @@
+ }
+ 
+ IRQCHIP_PLATFORM_DRIVER_BEGIN(qcom_pdc)
+-IRQCHIP_MATCH("qcom,pdc", qcom_pdc_init)
++IRQCHIP_MATCH("qcom,pdc", qcom_pdc_probe)
+ IRQCHIP_PLATFORM_DRIVER_END(qcom_pdc)
+ MODULE_DESCRIPTION("Qualcomm Technologies, Inc. Power Domain Controller");
+ MODULE_LICENSE("GPL v2");

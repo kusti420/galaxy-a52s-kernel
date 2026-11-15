@@ -1,0 +1,54 @@
+msm_drm sde_kms: free DSI/DP bridges only after the encoder detached them
+
+Error paths of _sde_kms_setup_displays() (connector init failed, DSI ext bridge init
+failed, DP connector init failed) freed the kzalloc'd bridge first and destroyed the
+encoder afterwards. sde_encoder_destroy() -> drm_encoder_cleanup() walks
+encoder->bridge_chain and calls drm_bridge_detach() on every bridge, so it touched freed
+memory. On 6.12 that was list_del() + bridge->dev = NULL on the freed bridge; on 6.18
+drm_bridge_detach() also does drm_bridge_put() (ack/drivers/gpu/drm/drm_bridge.c:487-504),
+i.e. a kref_put() on freed memory, and if that memory was reused and read as 1 the core
+calls __drm_bridge_free() -> kfree(bridge->container) on garbage (drm_bridge.c:208-215).
+Order now: connector/encoder destroy (detach, refcount 2 -> 1), then the bridge kfree.
+
+Error paths only (the A52s DSI path does not take them on a good boot); no change to the
+success path. Applies on top of 0030 (0030 does not touch sde_kms.c).
+
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_kms.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_kms.c
+@@ -2093,8 +2093,12 @@
+ 			priv->connectors[priv->num_connectors++] = connector;
+ 		} else {
+ 			SDE_ERROR("dsi %d connector init failed\n", i);
+-			dsi_display_drm_bridge_deinit(display);
++			/*
++			 * bsp618: detach the bridge (drm_encoder_cleanup()) before it
++			 * is freed; 6.18 drops the attach reference on detach.
++			 */
+ 			sde_encoder_destroy(encoder);
++			dsi_display_drm_bridge_deinit(display);
+ 			continue;
+ 		}
+ 
+@@ -2102,9 +2106,10 @@
+ 					encoder, connector);
+ 		if (rc) {
+ 			SDE_ERROR("dsi %d ext bridge init failed\n", rc);
+-			dsi_display_drm_bridge_deinit(display);
++			/* bsp618: free the bridge only after the encoder detached it */
+ 			sde_connector_destroy(connector);
+ 			sde_encoder_destroy(encoder);
++			dsi_display_drm_bridge_deinit(display);
+ 		}
+ 
+ 		dsc_count += info.dsc_count;
+@@ -2178,8 +2183,9 @@
+ 			priv->connectors[priv->num_connectors++] = connector;
+ 		} else {
+ 			SDE_ERROR("dp %d connector init failed\n", i);
+-			dp_drm_bridge_deinit(display);
++			/* bsp618: free the bridge only after the encoder detached it */
+ 			sde_encoder_destroy(encoder);
++			dp_drm_bridge_deinit(display);
+ 		}
+ 
+ 		/* update display cap to MST_MODE for DP MST encoders */

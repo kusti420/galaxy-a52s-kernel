@@ -1,0 +1,11 @@
+--- a/sm7325-common/configs/manifest_lahaina.xml	2026-11-11 20:50:10.093197237 +0200
++++ b/sm7325-common/configs/manifest_lahaina.xml	2026-11-11 20:51:51.147023820 +0200
+@@ -1,4 +1,8 @@
+ <manifest version="2.0" type="device" target-level="7">
++    <!-- 6.12 GKI: the kernel is checked against the android16-6.12 requirements (FCM level
++         202504), independently of the HAL target-level above. Without this line libvintf takes
++         the manifest target-level (7), whose matrix only knows 5.10 and 5.15 kernels. -->
++    <kernel target-level="202504"/>
+     <hal format="hidl">
+         <name>android.hardware.audio</name>
+         <transport>hwbinder</transport>

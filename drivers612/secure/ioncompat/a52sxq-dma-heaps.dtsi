@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Samsung Galaxy A52s 5G (a52sxq): DMA-BUF heaps behind ioncompat on Qualcomm's 6.12
+ * yupik.dtb. Overlay fragment in the style of bsp612/dts/a52sxq-bringup-overlay.dts
+ * (literal numbers, plain dtc, label targets): paste it into that overlay or #include it.
+ *
+ * Source of every size: the phone's own 5.4 tree, downstream-dt/a52sxq-r02.dts
+ * (/reserved-memory and /soc/qcom,ion). NOT compiled into any dtb yet, NOT booted.
+ *
+ * What the 6.12 base already has (devicetree/qcom/yupik.dtsi + yupik-dma-heaps.dtsi) and
+ * how it compares with the phone:
+ *
+ *   region / label               6.12 base      A52s 5.4       5.4 ION heap        action
+ *   qseecom_mem                  20 MiB CMA     28 MiB CMA     qsecom (id 7)       override size
+ *   qseecom_ta_mem               16 MiB CMA     16 MiB CMA     qsecom_ta (id 1)    same
+ *   user_contig_mem              16 MiB CMA     16 MiB CMA     user_contig (id 6)  same
+ *   audio_cma_mem                28 MiB CMA     28 MiB CMA     audio_ml (id 5)     same
+ *   secure_display_memory        140 MiB CMA    140 MiB CMA    secure_display (11) same
+ *   system_cma (linux,cma)       32 MiB         32 MiB         -                   same
+ *   cdsp_secure_heap_mem         30 MiB no-map  disabled       secure_carveout     disable
+ *                                @0x81800000                   (15, disabled)      (+ heap)
+ *   non_secure_display_memory    100 MiB CMA    not present    - ("display", id 3, disable
+ *                                                              is not on the phone) (+ heap)
+ *   adsp_mem                     12 MiB CMA     12 MiB CMA     - (adsprpc remote   same
+ *                                                              heap, not an ION heap)
+ *
+ * Heaps that need no DT node: qcom_dma_heaps always registers "qcom,system" (alias
+ * "system"), "qcom,system-uncached", "qcom,secure-pixel", "qcom,secure-non-pixel".
+ * The Samsung "ion,rbin_heap" (ion_camera_heap, camera rbin region) is dropped: no blob
+ * names it; CamX asks for "system | camera" and gets system memory.
+ *
+ * Also required and already in the 6.12 base, unchanged: /soc/qcom-secure-buffer
+ * (qcom,vmid-cp-camera-preview-ro, as on the phone) and /soc/qcom-mem-buf
+ * ("supplier", qcom,vmid = <3>): mem_buf_lend() is what assigns lent secure memory.
+ */
+
+/* 5.4 phone: size = <0x00 0x1c00000> (28 MiB); 6.12 base: 0x1400000 (20 MiB) */
+&qseecom_mem {
+	size = <0x0 0x1c00000>;
+};
+
+/*
+ * 5.4 phone: cdsp_secure_heap@81800000 is status = "disabled" (the RAM is ordinary
+ * memory there) and so is its ION heap (secure_carveout). Keep it that way: no blob
+ * uses ION_SECURE_CARVEOUT_HEAP_ID on this phone, and 30 MiB stay with Linux.
+ */
+&cdsp_secure_heap_mem {
+	status = "disabled";
+};
+
+/* 5.4 phone: no such region and no "display" ION heap; do not pin 100 MiB of CMA */
+&non_secure_display_memory {
+	status = "disabled";
+};
+
+&soc {
+	qcom,dma-heaps {
+		/* region disabled above; parse_heap_dt() skips unavailable children */
+		qcom,secure_cdsp {
+			status = "disabled";
+		};
+
+		qcom,display {
+			status = "disabled";
+		};
+
+		/*
+		 * Unchanged from the base, listed so the contract is in one place
+		 * (HEAP_TYPE_CMA = 2). ioncompat maps the 5.4 heap ids onto these
+		 * names; the names are ABI between this DT and ioncompat.c.
+		 *
+		 * qcom,secure_display  "qcom,secure-display"  <&secure_display_memory>
+		 *                        5.4 id 11 (HYP_CMA): ioncompat allocates here and
+		 *                        lends to the VMIDs of the CP flags
+		 * qcom,qseecom         "qcom,qseecom"         <&qseecom_mem>      5.4 id 7
+		 * qcom,qseecom_ta      "qcom,qseecom-ta"      <&qseecom_ta_mem>   5.4 id 1
+		 * qcom,audio_ml        "qcom,audio-ml"        <&audio_cma_mem>    5.4 id 5
+		 * qcom,user_contig     "qcom,user-contig"     <&user_contig_mem>  5.4 id 6
+		 */
+	};
+};

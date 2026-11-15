@@ -1,0 +1,30 @@
+rmnet_perf: inet_lookup_established()/__inet6_lookup_established() lost the hashinfo argument
+
+6.18 takes the TCP established hash from the netns (net->ipv4.tcp_death_row.hashinfo), which
+is &tcp_hashinfo unless a child netns sets tcp_child_ehash_entries; the quick-ack socket
+lookup passed &tcp_hashinfo explicitly. Same table in the init netns, where rmnet lives.
+
+--- a/drivers612/conn/data/src/datarmnet-ext/perf/rmnet_perf_tcp.c
++++ b/drivers612/conn/data/src/datarmnet-ext/perf/rmnet_perf_tcp.c
+@@ -296,7 +296,11 @@
+ 	struct net *net = dev_net(skb_dev);
+ 
+ 	if (tuple->ip_proto == 4)
+-		return inet_lookup_established(net, &tcp_hashinfo,
++		/* 6.18: the lookups take the netns' TCP hash table themselves
++		 * (net->ipv4.tcp_death_row.hashinfo = &tcp_hashinfo unless
++		 * tcp_child_ehash_entries is set), no hashinfo argument.
++		 */
++		return inet_lookup_established(net,
+ 					       tuple->v4_saddr,
+ 					       tuple->sport, tuple->v4_daddr,
+ 					       tuple->dport, skb_dev->ifindex);
+@@ -307,7 +311,7 @@
+ 	 * actually handles doing that for us. The lookup code REALLY does want
+ 	 * dport in host order ;)
+ 	 */
+-	return __inet6_lookup_established(net, &tcp_hashinfo, &tuple->v6_saddr,
++	return __inet6_lookup_established(net, &tuple->v6_saddr,
+ 					  tuple->sport, &tuple->v6_daddr,
+ 					  ntohs(tuple->dport), skb_dev->ifindex,
+ 					  0);

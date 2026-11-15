@@ -1,0 +1,3 @@
+path=drivers612/conn/wlan/donors/qca-wifi-host-cmn
+url=https://git.codelinaro.org/clo/la/platform/vendor/qcom-opensource/wlan/qca-wifi-host-cmn.git
+commit=d345f3d88f788fbcdb8767a680712f3194d0ec9d

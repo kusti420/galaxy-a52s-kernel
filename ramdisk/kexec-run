@@ -1,0 +1,53 @@
+#!/bin/busybox sh
+# Start another kernel from the harness by kexec, with the safety net in place.
+# Usage: /kexec-run <name> <Image> <initramfs or -> <dtb or -> <watchdog seconds or 0> "<cmdline or ->"
+#   dtb "-"     : the running kernel's own FDT (right for harness -> harness)
+#   dtb <file>  : alternative base FDT from kexec/mkkexecdtb.py (written to /sys/firmware/kexec_fdt)
+#   cmdline "-" : this kernel's own command line
+# a52.kexeced=<name> is appended to the command line: the crash guard of whichever harness
+# boots next recognises the log of a kexec'd kernel by it.
+# Order: load (may fail, nothing armed yet) -> marker in the log -> arm the hypervisor watchdog
+# by the raw sequence -> jump. A next kernel that hangs is reset by the bite and the phone
+# boots the harness from flash, whose crash guard then leaves for Download mode.
+# Run it detached: setsid /kexec-run ... >/tmp/kexec-run.log 2>&1 &
+B=/bin/busybox
+NAME="$1"; IMG="$2"; RD="$3"; DTB="$4"; WDT="${5:-60}"; CMD="$6"
+log() { echo "a52sxq-init: $*" > /dev/kmsg; echo "a52sxq-harness: $*" > /dev/kmsg; echo "kexec-run: $*"; }
+[ -n "$NAME" ] && [ -f "$IMG" ] || { echo "usage: /kexec-run <name> <Image> <initramfs|-> <dtb|-> <wdt s|0> \"<cmdline|->\""; exit 2; }
+if [ -e /tmp/crashed ] && [ ! -e /tmp/kexec-force ]; then echo "kexec-run: safe mode (previous boot crashed): refusing"; exit 3; fi
+[ -z "$CMD" ] || [ "$CMD" = - ] && CMD="$($B cat /proc/cmdline)"
+# drop an older marker, add ours
+CMD="$(echo "$CMD" | $B sed 's/ *a52\.kexeced=[^ ]*//g') a52.kexeced=$NAME"
+F=/sys/firmware/kexec_fdt
+[ -e $F ] || { echo "kexec-run: no support: $F is missing in this kernel"; exit 4; }
+if [ "$DTB" = - ] || [ -z "$DTB" ]; then
+	$B printf x > $F		# clear: use the running kernel's FDT
+else
+	[ -f "$DTB" ] || { echo "kexec-run: dtb $DTB missing"; exit 2; }
+	$B cat "$DTB" > $F || { echo "kexec-run: writing the dtb failed"; exit 4; }
+	[ "$($B sha256sum < $F)" = "$($B sha256sum < "$DTB")" ] || { echo "kexec-run: dtb readback differs"; exit 4; }
+fi
+/kx "$IMG" "$RD" "$CMD" || { echo "kexec-run: load failed (dmesg | tail)"; exit 5; }
+# Watchdog. Units measured 2026-11-12: MILLISECONDS (u16, so at most 65 s), and the counter
+# only runs while the CPUs are busy: it stands still while the system idles (the hypervisor's
+# virtual watchdog sits on the SoC watchdog, which stops in idle power collapse). So WDT here
+# is seconds of BUSY time, 20..60; bark at WDT, bite 5 s later, enable, pet.
+# ONLY this raw sequence is proven; never /dev/watchdog or the busybox watchdog applet.
+if [ "$WDT" != 0 ]; then
+	$B insmod /hhwdt.ko 2>/dev/null
+	R=/sys/module/hhwdt/parameters/raw
+	[ -e $R ] || { echo "kexec-run: hhwdt raw interface missing: not jumping without a watchdog"; exit 6; }
+	[ "$WDT" -ge 20 ] && [ "$WDT" -le 60 ] || { echo "kexec-run: watchdog seconds must be 20..60 (or 0)"; exit 2; }
+	BARK=$($B printf %x $((WDT * 1000))); BITE=$($B printf %x $((WDT * 1000 + 5000)))
+	log "kexec to $NAME (watchdog ${WDT}s)"
+	$B sync
+	echo "8 $BARK ffff" > $R; echo "8 ffff $BITE" > $R; echo "5 3 0" > $R; echo "7 0 0" > $R
+	echo "a52sxq-harness: kexec to $NAME: watchdog armed" > /dev/kmsg
+else
+	log "kexec to $NAME (NO watchdog)"
+fi
+/rb kexec
+# only reached if the jump was refused: userspace was resumed by rb
+[ "$WDT" != 0 ] && echo "5 2 0" > /sys/module/hhwdt/parameters/raw
+log "kexec refused, watchdog disabled, still in the harness"
+exit 7

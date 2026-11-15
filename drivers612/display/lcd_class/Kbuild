@@ -1,0 +1,4 @@
+# The GKI 6.12 kernel is built with CONFIG_LCD_CLASS_DEVICE unset, so /sys/class/lcd does not
+# exist. lcd.c is the unmodified kernel file (drivers/video/backlight/lcd.c of the BSP kernel),
+# built here as a vendor module so the Samsung framework can create /sys/class/lcd/panel.
+obj-m += lcd.o

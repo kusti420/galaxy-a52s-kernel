@@ -1,0 +1,45 @@
+--- a/drivers/iommu/of_iommu.c
++++ b/drivers/iommu/of_iommu.c
+@@ -243,6 +243,28 @@
+ 			phandle = be32_to_cpup(maps++);
+ 			np = of_find_node_by_phandle(phandle);
+ 
++			if (np != dev->of_node) {
++				/*
++				 * a52sxq: an entry for another device. Skip its address and size
++				 * cells (in the other device's DMA parent's format) instead of
++				 * reading them as phandles; stop if they cannot be sized.
++				 */
++				struct device_node *pp = np ? of_get_parent(np) : NULL;
++				int na, ns;
++
++				if (!pp) {
++					dev_warn(dev, "iommu-addresses: unknown phandle 0x%x in %pOF\n",
++						 phandle, it.node);
++					of_node_put(np);
++					break;
++				}
++				na = of_n_addr_cells(np);
++				ns = of_n_size_cells(np);
++				of_node_put(pp);
++				of_node_put(np);
++				maps += na + ns;
++				continue;
++			}
+ 			if (np == dev->of_node) {
+ 				int prot = IOMMU_READ | IOMMU_WRITE;
+ 				struct iommu_resv_region *region;
+@@ -254,6 +276,13 @@
+ 					prot |= IOMMU_CACHE;
+ 
+ 				maps = of_translate_dma_region(np, maps, &iova, &length);
++				if (!maps) {
++					/* a52sxq: untranslatable region: warn and stop, do not
++					 * dereference NULL (6.18 first boot oopsed here) */
++					dev_warn(dev, "iommu-addresses: cannot translate entry in %pOF\n",
++						 it.node);
++					break;
++				}
+ 				if (length == 0) {
+ 					dev_warn(dev, "Cannot reserve IOVA region of 0 size\n");
+ 					continue;

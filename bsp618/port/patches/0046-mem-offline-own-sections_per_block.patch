@@ -1,0 +1,20 @@
+mem-offline: private sections_per_block clashes with the 6.18 memory core's exported one
+
+<linux/memory.h> now declares 'extern int sections_per_block'; the driver keeps its own
+unsigned copy (same value, block_size / MIN_MEMORY_BLOCK_SIZE) under a private name so it
+never writes the core's variable. Not loaded on 6.12, not built on 5.4: compile fix only.
+
+--- a/bsp612/soc-repo/drivers/soc/qcom/mem-offline.c
++++ b/bsp612/soc-repo/drivers/soc/qcom/mem-offline.c
+@@ -54,6 +54,11 @@
+ 
+ static unsigned long start_section_nr, end_section_nr;
+ static struct kobject *kobj;
++/*
++ * 6.18 <linux/memory.h> declares the memory core's own (exported) int
++ * sections_per_block; keep this driver's private copy under its own name.
++ */
++#define sections_per_block mem_offline_sections_per_block
+ static unsigned int sections_per_block;
+ static atomic_t target_migrate_pages = ATOMIC_INIT(0);
+ static u32 offline_granule;

@@ -1,0 +1,338 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Samsung Galaxy A52s 5G (a52sxq): FIRST BRING-UP overlay for Qualcomm's 6.12 yupik.dtb
+ * (bsp612/out/dist/dtb/yupik.dtb, downstream 6.12 bindings, built with -@).
+ *
+ * Goal of this stage: GKI 6.12.81 + first-stage modules from a ramdisk, UFS visible, USB 2.0
+ * gadget, ramoops, keys, self-reboot into Download mode. No display, no audio, no radios.
+ *
+ * Every board value here is from the phone's own 5.4 tree (downstream-dt/a52sxq-r02.dts =
+ * yupik base + a52sxq_kor_single_w00_r02 overlay as booted), never from the Qualcomm IDP/QRD
+ * files. Numbers are literal so that plain dtc can build this file (no cpp, no includes).
+ *
+ * The Samsung ABL picks the dtbo entry by qcom,board-id = <0x22 N> with N <= hardware
+ * revision; its libufdt needs /__fixups__ in the overlay (label targets) and /__symbols__ in
+ * the base. See research/bootloader-acceptance.md and bsp612/BRINGUP.md.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	model = "Samsung A52SXQ PROJECT (bsp612 bring-up)";
+	compatible = "qcom,yupik-idp", "qcom,yupik", "qcom,idp";
+	qcom,msm-id = <0x1db 0x10000 0x203 0x10000>;
+	qcom,board-id = <0x22 0x02>;
+	dtbo-version = <0x00>;
+	dtbo-hw_rev = <0x00>;
+	dtbo-hw_rev_end = <0xff>;
+};
+
+/* ------------------------------------------------------------------ memory map */
+
+/*
+ * 5.4 phone: the ADSP image is loaded at 0x84700000, size 0x4800000 (node name stays
+ * adsp@86700000 there too). Qualcomm 6.12 base: 0x86700000 + 0x2800000, with
+ * video_region@85b00000 and camera@86200000 inside the range Samsung gives to the ADSP.
+ */
+&pil_adsp_mem {
+	reg = <0x0 0x84700000 0x0 0x4800000>;
+};
+
+/* inside Samsung's ADSP region; not referenced by any node of the 6.12 base */
+&video_mem {
+	status = "disabled";
+};
+
+&pil_cvp_mem {
+	status = "disabled";
+};
+
+/* 5.4 phone: removed_region is 0x6a00000 long (base: 0x5100000) */
+&removed_mem {
+	reg = <0x0 0xc0000000 0x0 0x6a00000>;
+};
+
+&reserved_memory {
+	/* 5.4 phone: cvp@8b200000 (the 6.12 base has no region here) */
+	a52_cvp_mem: cvp@8b200000 {
+		reg = <0x0 0x8b200000 0x0 0x500000>;
+		no-map;
+	};
+
+	a52_dummy_mem: dummy_mem@9c700000 {
+		reg = <0x0 0x9c700000 0x0 0x100000>;
+		no-map;
+	};
+
+	/* Samsung: HDM, KASLR (the ABL writes its magic here before the jump) and TIMA */
+	a52_hdm_mem: hdm_region@9fb00000 {
+		reg = <0x0 0x9fb00000 0x0 0x1000>;
+		no-map;
+	};
+
+	a52_kaslr_mem: kaslr_region@a0001000 {
+		reg = <0x0 0xa0001000 0x0 0x1000>;
+		no-map;
+	};
+
+	a52_tima_mem: tima_region@b0100000 {
+		reg = <0x0 0xb0100000 0x0 0x100000>;
+		no-map;
+	};
+
+	/*
+	 * 5.4 phone: modem_shared_mem_region@d0000000 has size 0; the trusted VM block starts
+	 * at 0xd0800000 (already in the base). The gap is kept out as in the proven 6.18 dts.
+	 */
+	a52_modem_shared_mem: modem_shared_mem_region@d0000000 {
+		reg = <0x0 0xd0000000 0x0 0x800000>;
+		no-map;
+	};
+
+	/* Samsung debug: sec_debug (0x900000) and ss_plog (0x200000) */
+	a52_sec_debug_mem: sec_debug_region@f0000000 {
+		reg = <0x0 0xf0000000 0x0 0x900000>;
+		no-map;
+	};
+
+	a52_ss_plog_mem: ss_plog@f0900000 {
+		reg = <0x0 0xf0900000 0x0 0x200000>;
+		no-map;
+	};
+
+	/*
+	 * Same place and layout as the phone's 5.4 kernel (and the 6.18 test kernel): the
+	 * console of a test boot is readable from the next boot of any of them
+	 * (/sys/fs/pstore/console-ramoops-0). PSTORE_RAM is built into GKI.
+	 */
+	a52_ramoops: ramoops@f0b00000 {
+		compatible = "ramoops";
+		/*
+		 * Same zone layout as the 6.18 harness since 2026-11-12 (one 128 KiB dump record,
+		 * then console/ftrace/pmsg), so the harness can read this kernel's console after
+		 * a reset. The last 128 KiB of the old 1 MiB belong to the harness's a52ram area.
+		 */
+		reg = <0x0 0xf0b00000 0x0 0xe0000>;
+		record-size = <0x20000>;
+		console-size = <0x40000>;
+		ftrace-size = <0x40000>;
+		pmsg-size = <0x40000>;
+	};
+};
+
+/* ------------------------------------------------------------------ pins */
+
+/*
+ * 56..59: fingerprint SPI, owned by the secure world on the phone (5.4 pinctrl-yupik.c,
+ * CONFIG_FINGERPRINT_SECURE); touching them resets the phone. The 6.12 driver takes the list
+ * from this property only. 32 33 48..51 are the base's (IDP) list, kept: a superset is safe
+ * and nothing in this stage uses them.
+ */
+&tlmm {
+	qcom,gpios-reserved = <32 33 48 49 50 51 56 57 58 59>;
+};
+
+/* ------------------------------------------------------------------ clocks */
+
+/*
+ * Firmware-owned GCC clocks. The first 41 entries are the base's own list (PCIe, second USB).
+ * The 15 added ones (166..175, 180..184 = QSPI x3, CFG_NOC_LPASS, MSS x6, WPSS x3,
+ * EDP_CLKREF_EN, SEC_CTRL_CLK_SRC) are what every retail SM7325 phone protects upstream and
+ * what the proven 6.18 dts of this project protects ("touching one resets the phone").
+ * The phone's 5.4 gcc-yupik driver does not have 14 of them at all; the 6.12 gcc-sc7280
+ * driver registers them (diff of the two drivers' clock tables), and Qualcomm's list does
+ * not cover them. No node of the base consumes any of the 15.
+ */
+&gcc {
+	protected-clocks = <0x07 0x08 0x15 0x27 0x28 0x29 0x2a 0x2b 0x2c 0x2d 0x2e 0x2f 0x30
+			    0x31 0x32 0x33 0x34 0x35 0x36 0x37 0x38 0x39 0x3a 0x3b 0x78 0xb0
+			    0x10 0x91 0x92 0x93 0x94 0x95 0x96 0x9c 0x9d 0x9e 0x9f 0xa0 0xb2
+			    0xb1 0xb3
+			    166 167 168 169 170 171 172 173 174 175 180 181 182 183 184>;
+};
+
+/* ------------------------------------------------------------------ PMICs */
+
+/*
+ * The 6.12 base has an empty SPMI bus (Qualcomm adds the PMICs in its board overlays). Only
+ * what this stage needs: PMK8350 PON keys + the SDAM cell with the restart reason, and the
+ * PM7325 GPIO block for the volume-up key. Bindings as in the 6.12 pmk8350.dtsi/pm7325.dtsi;
+ * addresses, interrupts and key codes as on the phone (5.4: pon_hlos@1300, sdam@7100
+ * restart@48 bits <1 7>, pm7325 pinctrl@8800 gpio6).
+ */
+&spmi_bus {
+	a52_pmk8350: qcom,pmk8350@0 {
+		compatible = "qcom,spmi-pmic";
+		reg = <0 0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		a52_pon: pon@1300 {
+			compatible = "qcom,pmk8350-pon";
+			reg = <0x1300>, <0x800>;
+			reg-names = "hlos", "pbs";
+
+			pwrkey {
+				compatible = "qcom,pmk8350-pwrkey";
+				interrupts = <0 0x13 0x7 3>;	/* IRQ_TYPE_EDGE_BOTH */
+				linux,code = <116>;		/* KEY_POWER */
+			};
+
+			resin {
+				compatible = "qcom,pmk8350-resin";
+				interrupts = <0 0x13 0x6 3>;
+				linux,code = <114>;		/* KEY_VOLUMEDOWN */
+			};
+		};
+
+		a52_sdam_2: sdam@7100 {
+			compatible = "qcom,spmi-sdam";
+			reg = <0x7100>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* PMK8350 0x7148 bits 7:1: PON restart reason read by the ABL */
+			a52_restart_reason: restart@48 {
+				reg = <0x48 0x1>;
+				bits = <1 7>;
+			};
+		};
+	};
+
+	a52_pm7325: qcom,pm7325@1 {
+		compatible = "qcom,spmi-pmic";
+		reg = <1 0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		a52_pm7325_gpios: pinctrl@8800 {
+			compatible = "qcom,pm7325-gpio";
+			reg = <0x8800>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+
+			key_vol_up {
+				a52_key_vol_up_default: key_vol_up_default {
+					pins = "gpio6";
+					function = "normal";
+					input-enable;
+					bias-pull-up;
+					power-source = <1>;
+				};
+			};
+		};
+	};
+};
+
+&soc {
+	/*
+	 * Consumer of the restart-reason cell, as on the phone (/soc/reboot_reason) and in
+	 * Qualcomm's yupik-pmic-overlay.dtsi. qcom-reboot-reason.ko knows recovery/bootloader;
+	 * samsung612/modules/sec_core finds the cell through this node and adds Samsung's
+	 * codes, including "download" = 0x15.
+	 */
+	a52_reboot_reason: reboot_reason {
+		compatible = "qcom,reboot-reason";
+		nvmem-cells = <&a52_restart_reason>;
+		nvmem-cell-names = "restart_reason";
+	};
+
+	/* phone: /soc/gpio_keys/vol_up, pm7325 gpio 6, active low, debounce 15 ms */
+	a52_gpio_keys: gpio_keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&a52_key_vol_up_default>;
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&a52_pm7325_gpios 6 1>;	/* GPIO_ACTIVE_LOW */
+			linux,input-type = <1>;
+			linux,code = <115>;			/* KEY_VOLUMEUP */
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+	};
+
+	a52sxq_overlay_marker: samsung-overlay-marker {
+		samsung,overlay-applied;
+		samsung,stage = "bsp612-bringup";
+	};
+};
+
+/* ------------------------------------------------------------------ UFS */
+
+/*
+ * As the phone's ufshc@1d84000 / ufsphy_mem@1d87000 (identical to Qualcomm's IDP values, which
+ * were checked one by one): VCC = L7B 2.504/2.952 V 800 mA, VCCQ = L9B (also the ref-clk
+ * rail), PHY core = L10C, PHY PLL = L6B, reset = TLMM 175 (already in the base).
+ * Samsung's sec,wb-* write-booster tuning is not carried (no such code in the 6.12 driver).
+ */
+&ufsphy_mem {
+	compatible = "qcom,ufs-phy-qmp-v4-yupik";
+
+	vdda-phy-supply = <&L10C>;
+	vdda-pll-supply = <&L6B>;
+	vdda-phy-max-microamp = <97500>;
+	vdda-pll-max-microamp = <18400>;
+
+	status = "ok";
+};
+
+&ufshc_mem {
+	vdd-hba-supply = <&gcc_ufs_phy_gdsc>;
+	vdd-hba-fixed-regulator;
+
+	vcc-supply = <&L7B>;
+	vcc-voltage-level = <2504000 2952000>;
+	vcc-low-voltage-sup;
+	vcc-max-microamp = <800000>;
+
+	vccq-supply = <&L9B>;
+	vccq-max-microamp = <900000>;
+	vccq-min-microamp = <10000>;
+
+	qcom,vddp-ref-clk-supply = <&L9B>;
+	qcom,vddp-ref-clk-max-microamp = <100>;
+
+	rpm-level = <3>;
+
+	status = "ok";
+};
+
+/* ------------------------------------------------------------------ USB */
+
+/*
+ * The phone runs USB 2.0 only: 5.4 dwc3 has maximum-speed = "high-speed" and
+ * usb-phy = <hsphy>, <usb_nop_phy>; the QMP/DP combo PHY is not used. Supplies of the HS PHY
+ * in the base are already the phone's (vdd L10C 0.88 V, vdda18 L1C, vdda33 L2B).
+ *
+ * Role: the base keeps "usb-role-switch" + extcon = <&eud> on the glue node and an overlay
+ * cannot delete properties. dwc3-msm therefore registers a role switch and starts in role
+ * NONE; the ramdisk forces device mode with
+ *   echo peripheral > /sys/devices/platform/soc/a600000.ssusb/mode
+ * (dwc3-msm-core.c mode_store). dr_mode stays "otg": dwc3-msm requires the core's DRD role
+ * switch. eud.ko must be loaded or dwc3-msm defers forever on the extcon phandle.
+ */
+&dwc3_0 {
+	maximum-speed = "high-speed";
+	usb-phy = <&usb2_phy0>, <&usb_nop_phy>;
+};
+
+&usb_qmp_dp_phy {
+	status = "disabled";
+};
+
+/* ------------------------------------------------------------------ not on this board */
+
+/* WCN6750 Bluetooth enable pins and rails of the reference board */
+&bluetooth {
+	status = "disabled";
+};
+
+/* IDP devices on SE1 I2C (RTC6226 FM radio, FSA4480 audio switch) */
+&qupv3_se1_i2c {
+	status = "disabled";
+};

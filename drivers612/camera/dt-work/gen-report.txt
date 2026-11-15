@@ -1,0 +1,72 @@
+SOC camera nodes emitted:
+  qcom,camera-flash@0 ("qcom,camera-flash")
+  qcom,torch_0 (None)
+  qcom,flash_0 (None)
+  qcom,cam-req-mgr ("qcom,cam-req-mgr")
+  qcom,cam-sync ("qcom,cam-sync")
+  qcom,cam-res-mgr ("qcom,cam-res-mgr")
+  qcom,csiphy0 ("qcom,csiphy-v1.2.1", "qcom,csiphy")
+  qcom,csiphy1 ("qcom,csiphy-v1.2.1", "qcom,csiphy")
+  qcom,csiphy2 ("qcom,csiphy-v1.2.1", "qcom,csiphy")
+  qcom,csiphy3 ("qcom,csiphy-v1.2.1", "qcom,csiphy")
+  qcom,csiphy4 ("qcom,csiphy-v1.2.1", "qcom,csiphy")
+  qcom,cci0 ("qcom,cci", "simple-bus")
+  qcom,cci1 ("qcom,cci", "simple-bus")
+  qcom,cam_smmu ("qcom,msm-cam-smmu", "simple-bus")
+  qcom,cam-cdm-intf ("qcom,cam-cdm-intf")
+  qcom,cpas-cdm0 ("qcom,cam170-cpas-cdm0")
+  qcom,cam-isp ("qcom,cam-isp")
+  qcom,csid0 ("qcom,csid165_204")
+  qcom,vfe0 ("qcom,vfe165_160")
+  qcom,csid1 ("qcom,csid165_204")
+  qcom,vfe1 ("qcom,vfe165_160")
+  qcom,csid2 ("qcom,csid165_204")
+  qcom,vfe2 ("qcom,vfe165_160")
+  qcom,csid-lite0 ("qcom,csid-lite165")
+  qcom,vfe-lite0 ("qcom,vfe-lite165")
+  qcom,csid-lite1 ("qcom,csid-lite165")
+  qcom,vfe-lite1 ("qcom,vfe-lite165")
+  qcom,cam-icp ("qcom,cam-icp")
+  qcom,a5 ("qcom,cam-a5")
+  qcom,ipe0 ("qcom,cam-ipe")
+  qcom,bps ("qcom,cam-bps")
+  qcom,cam-jpeg ("qcom,cam-jpeg")
+  qcom,jpegenc ("qcom,cam_jpeg_enc_165")
+  qcom,jpegdma ("qcom,cam_jpeg_dma_165")
+  qcom,cam-lrme ("qcom,cam-lrme")
+  qcom,lrme ("qcom,lrme")
+  qcom,cam-cpas ("qcom,cam-cpas")
+
+Base labels referenced (exist in 6.12 base):
+  apps_smmu cam_cc_bps_gdsc cam_cc_ife_0_gdsc cam_cc_ife_1_gdsc cam_cc_ife_2_gdsc cam_cc_ipe_0_gdsc cam_cc_titan_top_gdsc cam_sensor_active_rst0 cam_sensor_active_rst1 cam_sensor_active_rst2 cam_sensor_active_rst3 cam_sensor_active_rst4 cam_sensor_suspend_rst0 cam_sensor_suspend_rst1 cam_sensor_suspend_rst2 cam_sensor_suspend_rst3 cam_sensor_suspend_rst4 camcc cci0_active cci0_suspend cci1_active cci1_suspend cci2_active cci2_suspend cci3_active cci3_suspend cnoc2 gcc gem_noc mc_virt mmss_noc pil_camera_mem pm7325_l6 pm8350c_l10 pm8350c_l2 qupv3_se0_i2c qupv3_se3_i2c qupv3_se4_i2c refgen tlmm
+
+MISSING labels (not in 6.12 base, not defined by this fragment):
+
+Pinctrl nodes added under &tlmm (label absent in base):
+  cam_sensor_suspend_mclk0 cam_sensor_suspend_mclk4 cam_sensor_active_mclk2 cam_sensor_active_vana0 cam_sensor_suspend_mclk1 cam_sensor_suspend_vana1 cam_sensor_active_mclk4 cam_flash_active cam_sensor_active_mclk0 mcu_suspend cam_sensor_active_mclk1 cam_sensor_suspend_vana2 cam_sensor_active_mclk3 cam_sensor_suspend_mclk3 cam_sensor_suspend_mclk2 mcu_active cam_sensor_active_vana2 cam_sensor_active_vana1 cam_sensor_suspend_vana0 cam_flash_suspend
+
+Pinctrl labels present in base but content differs (overridden):
+  cam_sensor_active_rst3 cam_sensor_active_rst4 cam_sensor_suspend_rst3 cam_sensor_suspend_rst4
+
+Notes:
+  /soc/qcom,cam_smmu/msm_cam_smmu_icp/iova-mem-map/iova-mem-region-shared:iova-region-len: dtc decompiled cells as string "\t`", ""; restored to <0x9600000>
+  /soc/qcom,cam_smmu/msm_cam_smmu_icp/iova-mem-map/iova-mem-region-shared:iova-region-start: dtc decompiled cells as string "\a@", ""; restored to <0x7400000>
+  /soc/qcom,cam_smmu/msm_cam_smmu_lrme/iova-mem-map/iova-mem-region-shared:iova-region-start: dtc decompiled cells as string "\a@", ""; restored to <0x7400000>
+  /soc/qcom,csid0:reg-cam-base: dtc decompiled cells as string "", "\v0"; restored to <0xb3000>
+  /soc/qcom,ipe0:reg-cam-base: dtc decompiled cells as string "", "\bp"; restored to <0x87000>
+  /soc/qcom,vfe-lite0:reg-cam-base: dtc decompiled cells as string "", "\f@"; restored to <0xc4000>
+  /soc/qcom,vfe1:reg-cam-base: dtc decompiled cells as string "", "\v`"; restored to <0xb6000>
+  bus label qupv3_se0_i2c: phone /soc/i2c@980000 vs base /soc/qcom,qupv3_0_geni_se@9c0000/i2c@980000
+  bus label qupv3_se3_i2c: phone /soc/i2c@98c000 vs base /soc/qcom,qupv3_0_geni_se@9c0000/i2c@98c000
+  bus label qupv3_se4_i2c: phone /soc/i2c@990000 vs base /soc/qcom,qupv3_0_geni_se@9c0000/i2c@990000
+  label pm7325_l6: phone path /soc/rsc@18200000/rpmh-regulator-ldob6/regulator-pm7325-l6, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldob6/regulator-pm7325-l6 (ctx /soc/qcom,csiphy0:csi-vdd-1p2-supply)
+  label pm7325_l6: phone path /soc/rsc@18200000/rpmh-regulator-ldob6/regulator-pm7325-l6, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldob6/regulator-pm7325-l6 (ctx /soc/qcom,csiphy1:csi-vdd-1p2-supply)
+  label pm7325_l6: phone path /soc/rsc@18200000/rpmh-regulator-ldob6/regulator-pm7325-l6, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldob6/regulator-pm7325-l6 (ctx /soc/qcom,csiphy2:csi-vdd-1p2-supply)
+  label pm7325_l6: phone path /soc/rsc@18200000/rpmh-regulator-ldob6/regulator-pm7325-l6, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldob6/regulator-pm7325-l6 (ctx /soc/qcom,csiphy3:csi-vdd-1p2-supply)
+  label pm7325_l6: phone path /soc/rsc@18200000/rpmh-regulator-ldob6/regulator-pm7325-l6, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldob6/regulator-pm7325-l6 (ctx /soc/qcom,csiphy4:csi-vdd-1p2-supply)
+  label pm8350c_l10: phone path /soc/rsc@18200000/rpmh-regulator-ldoc10/regulator-pm8350c-l10, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldoc10/regulator-pm8350c-l10 (ctx /soc/qcom,csiphy0:csi-vdd-0p9-supply)
+  label pm8350c_l10: phone path /soc/rsc@18200000/rpmh-regulator-ldoc10/regulator-pm8350c-l10, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldoc10/regulator-pm8350c-l10 (ctx /soc/qcom,csiphy1:csi-vdd-0p9-supply)
+  label pm8350c_l10: phone path /soc/rsc@18200000/rpmh-regulator-ldoc10/regulator-pm8350c-l10, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldoc10/regulator-pm8350c-l10 (ctx /soc/qcom,csiphy2:csi-vdd-0p9-supply)
+  label pm8350c_l10: phone path /soc/rsc@18200000/rpmh-regulator-ldoc10/regulator-pm8350c-l10, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldoc10/regulator-pm8350c-l10 (ctx /soc/qcom,csiphy3:csi-vdd-0p9-supply)
+  label pm8350c_l10: phone path /soc/rsc@18200000/rpmh-regulator-ldoc10/regulator-pm8350c-l10, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldoc10/regulator-pm8350c-l10 (ctx /soc/qcom,csiphy4:csi-vdd-0p9-supply)
+  label pm8350c_l2: phone path /soc/rsc@18200000/rpmh-regulator-ldoc2/regulator-pm8350c-l2, 6.12 base path /soc/rsc@18200000/drv@2/rpmh-regulator-ldoc2/regulator-pm8350c-l2 (ctx /soc/i2c@990000/qcom,ois@62:cam_vio-supply)

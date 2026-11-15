@@ -1,0 +1,48 @@
+msm-vidc: empty vb2 wait_prepare/wait_finish (6.18 vb2_core_queue_init() needs a lock or the pair)
+
+What: give msm_vidc_vb2q_ops no-op .wait_prepare/.wait_finish.
+
+Why / evidence:
+- 6.18 ack/drivers/media/common/videobuf2/videobuf2-core.c:2660-2662:
+  `if (WARN_ON(!q->lock && !q->ops->wait_prepare)) return -EINVAL;` (not in 6.12
+  bsp612/kernel vb2_core_queue_init()).
+- msm_vidc.c vb2_bufq_init() (~1284-1307) sets neither q->lock nor wait ops, so
+  msm_vidc_open() fails at the first vb2_bufq_init(OUTPUT_MPLANE) ("Failed to initialize vb2
+  queue on capture port"), msm_v4l2_open() returns -ENOMEM: every decoder/encoder open fails
+  with a WARN splat.
+- Why no-ops and not q->lock = &bufq[port].lock: vidc takes buf_queue.lock itself around
+  vb2_reqbufs/qbuf/dqbuf/streamon (msm_vidc.c:~285, 459, 490, 541, 578) and calls
+  vb2_dqbuf(..., nonblocking = true) only (msm_vidc.c:490), so vb2 never waits. 6.12 vb2 with
+  neither op set did nothing at the wait points (call_void_qop on NULL); videobuf2-core.c
+  2040-2056 / 3224-3232 on 6.18 prefer the ops over q->lock, so an empty pair is exactly the
+  6.12 behaviour. A q->lock would let vb2 unlock a mutex in paths vidc does not expect, and
+  v4l2_ioctl_get_lock() would not use it anyway (vidc sets no vdev->queue).
+- vb2_ops.wait_prepare/wait_finish still exist in ACK 6.18 (include/media/videobuf2-core.h:439).
+
+--- a/drivers612/gpu-video/video/msm/vidc/msm_vidc.c
++++ b/drivers612/gpu-video/video/msm/vidc/msm_vidc.c
+@@ -1273,12 +1273,24 @@
+ 	}
+ }
+ 
++/*
++ * bsp618/port: 6.18 vb2_core_queue_init() fails (WARN, -EINVAL) for a queue with neither
++ * q->lock nor .wait_prepare. vidc serialises with its own buf_queue.lock and only calls
++ * vb2_dqbuf() non-blocking; 6.12 vb2 called no wait op at all for this queue, so an empty
++ * pair keeps exactly that (vb2 must not drop a lock it does not know about).
++ */
++static void msm_vidc_vb2_wait_nop(struct vb2_queue *q)
++{
++}
++
+ static const struct vb2_ops msm_vidc_vb2q_ops = {
+ 	.queue_setup = msm_vidc_queue_setup,
+ 	.start_streaming = msm_vidc_start_streaming,
+ 	.buf_queue = msm_vidc_buf_queue,
+ 	.buf_cleanup = msm_vidc_cleanup_buffer,
+ 	.stop_streaming = msm_vidc_stop_streaming,
++	.wait_prepare = msm_vidc_vb2_wait_nop,
++	.wait_finish = msm_vidc_vb2_wait_nop,
+ };
+ 
+ static inline int vb2_bufq_init(struct msm_vidc_inst *inst,

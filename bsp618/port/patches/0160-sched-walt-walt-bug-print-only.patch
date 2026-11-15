@@ -1,0 +1,43 @@
+sched-walt: WALT-BUG checks print instead of panicking on the 6.18 bring-up
+
+What: walt_config() sets sysctl_panic_on_walt_bug to the sentinel + print bits only
+(0x4544de18) instead of Qualcomm's walt_debug_initial_values() (0x4544de1b, print + panic
+for WALT_BUG_UPSTREAM and WALT_BUG_WALT). Direct WALT_PANIC()/BUG_ON() sites are unchanged.
+
+Why: every WALT_BUG() in walt.c (39 sites), walt_cfs.c (2), walt_lb.c (1) and walt_halt.c (1)
+calls WALT_PANIC(1) -> BUG_ON() with the default value (walt.h WALT_BUG, walt_debug_initial_values;
+walt_config.c:48). The ROM never lowers it (no panic_on_walt_bug write in
+device/samsung/sm7325-common/init), and the test kernel has CONFIG_PANIC_ON_OOPS=y. These checks
+(double enqueue/dequeue, "missed the delayed dequeue", REPLACE_NEXT_TASK_FAIR pick sanity, CRA
+underflow, window-start mismatches, drain re-enqueue) were validated on android16-6.12 only
+(ab-s66..s69 soak). Any one that trips on a 6.18 core change (per-task CFS throttling, which
+calls dequeue_task_fair()/enqueue_task_fair() directly at fair.c:6059/6189 and so bypasses
+android_rvh_{en,de}queue_task; dl_server/ext_server picks; EEVDF wakeup changes) would panic
+the kernel before boot_completed instead of leaving a "WALT-BUG ..." line in the log. Every
+WALT_BUG site already recovers (clamps to 0, skips the double accounting, or just reports).
+
+Re-arm Qualcomm's behaviour at run time, once 6.18 is clean:
+  echo 1162141211 > /proc/sys/walt/panic_on_walt_bug
+
+Applies after 0018 (paths relative to bsp618/src); no identifier touched by port618.py rules.
+--- a/bsp612/soc-repo/kernel/sched/walt/walt_config.c	2026-11-14 15:38:51.744791904 +0200
++++ b/bsp612/soc-repo/kernel/sched/walt/walt_config.c	2026-11-14 15:40:35.047886398 +0200
+@@ -45,7 +45,17 @@
+ 	sysctl_sched_many_wakeup_threshold = WALT_MANY_WAKEUP_DEFAULT;
+ 	sysctl_walt_rtg_cfs_boost_prio = 99; /* disabled by default */
+ 	sysctl_sched_sync_hint_enable = 1;
+-	sysctl_panic_on_walt_bug = walt_debug_initial_values();
++	/*
++	 * bsp618/port: print WALT-BUG sanity failures, do not BUG() on them (Qualcomm's
++	 * walt_debug_initial_values() also sets the panic bits). WALT's checks were tuned on the
++	 * android16-6.12 scheduler; on 6.18 a check that trips on changed core behaviour would
++	 * otherwise panic the bring-up kernel before it can be read. Re-arm the panic by writing
++	 * Qualcomm's default 1162141211 (0x4544de1b) to /proc/sys/walt/panic_on_walt_bug once 6.18
++	 * runs clean; this default is 0x4544de18 (print only). WALT_PANIC() sites are unchanged.
++	 */
++	sysctl_panic_on_walt_bug = WALT_PANIC_SENTINEL |
++				   walt_debug_bitmask_print(WALT_BUG_UPSTREAM) |
++				   walt_debug_bitmask_print(WALT_BUG_WALT);
+ 	sysctl_sched_skip_sp_newly_idle_lb = 1;
+ 	sysctl_sched_hyst_min_coloc_ns = 80000000;
+ 	sysctl_sched_idle_enough = SCHED_IDLE_ENOUGH_DEFAULT;

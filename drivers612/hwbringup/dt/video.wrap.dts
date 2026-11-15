@@ -1,0 +1,2 @@
+/dts-v1/; /plugin/;
+#include "./drivers612/gpu-video/video/a52sxq-video.dtsi"

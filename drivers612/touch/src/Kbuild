@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Samsung sec_input framework + ST FTS5CU56A (stm_ts, I2C) for the Galaxy A52s 5G,
+# forward-ported from the phone's 5.4 kernel to the Qualcomm 6.12 BSP (out-of-tree).
+#
+# The 5.4 defconfig switches these drivers used, given here as -D because there is no
+# Kconfig for an external module tree. Everything not listed is off (dual foldable, SPI,
+# Samsung TUI, gunyah trusted touch, vbus / hall / typec-manager notifiers, ABC, kunit, factory).
+sec_cfg := \
+	-DCONFIG_INPUT_SEC_INPUT_MODULE=1 \
+	-DCONFIG_SEC_DEBUG_TSP_LOG_MODULE=1 \
+	-DCONFIG_INPUT_TOUCHSCREEN_TCLMV2_MODULE=1 \
+	-DCONFIG_TOUCHSCREEN_DUMP_MODE_MODULE=1 \
+	-DCONFIG_INPUT_SEC_NOTIFIER_MODULE=1 \
+	-DCONFIG_INPUT_SEC_SECURE_TOUCH_MODULE=1 \
+	-DCONFIG_DRV_SAMSUNG_MODULE=1 \
+	-DCONFIG_TOUCHSCREEN_STM_MODULE=1 \
+	-DCONFIG_SAMSUNG_PRODUCT_SHIP=1 \
+	-DCONFIG_QGKI=1
+
+# Optional: charger (VBUS) state to the touch IC, as on 5.4 (CONFIG_VBUS_NOTIFIER=y there).
+# Needs vbus_notifier.ko from drivers612/power: build with  VBUS=1 ./build.sh
+ifeq ($(SEC_INPUT_VBUS),1)
+sec_cfg += -DCONFIG_VBUS_NOTIFIER=1 -I$(SEC_INPUT_VBUS_INC)
+endif
+
+ccflags-y += $(sec_cfg) -I$(src)/include -I$(src) -Wformat
+
+obj-m += sec_tsp_log.o
+obj-m += sec_input_notifier.o
+obj-m += sec_cmd.o
+obj-m += sec_common_fn.o
+obj-m += sec_tclm_v2.o
+obj-m += sec_tsp_dumpkey.o
+obj-m += sec_secure_touch.o
+
+obj-m += stm_ts.o
+stm_ts-y := stm/stm_i2c.o stm/stm_core.o stm/stm_fn.o stm/stm_fw.o stm/stm_dump.o stm/stm_cmd.o

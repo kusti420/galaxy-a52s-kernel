@@ -1,0 +1,22 @@
+snd-usb-audio-qmi: iommu_domain_alloc(bus) is gone on 6.18
+
+iommu_paging_domain_alloc(dev) allocates the same unmanaged paging domain for the
+usb_audio_qmi_dev node's SMMU stream (ERR_PTR instead of NULL on failure). USB-C audio
+offload through the ADSP (CONFIG_SND_USB_AUDIO_QMI=y on 5.4).
+
+--- a/bsp612/soc-repo/sound/usb/usb_audio_qmi_svc.c
++++ b/bsp612/soc-repo/sound/usb/usb_audio_qmi_svc.c
+@@ -1831,8 +1831,11 @@
+ 		return -ENODEV;
+ 	}
+ 
+-	uaudio_qdev->domain = iommu_domain_alloc(pdev->dev.bus);
+-	if (!uaudio_qdev->domain) {
++	/* 6.18: iommu_domain_alloc(bus) is gone; the per-device paging domain
++	 * (same unmanaged domain type, ERR_PTR on failure)
++	 */
++	uaudio_qdev->domain = iommu_paging_domain_alloc(&pdev->dev);
++	if (IS_ERR(uaudio_qdev->domain)) {
+ 		dev_err(&pdev->dev, "failed to allocate iommu domain\n");
+ 		return -ENODEV;
+ 	}

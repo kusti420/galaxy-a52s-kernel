@@ -1,0 +1,24 @@
+From: a52sxq realboot <noreply@localhost>
+Subject: [PATCH] arm64: COMMAND_LINE_SIZE 4096 for the Samsung ABL (a52sxq real boot)
+
+APPLIED 2026-11-14 14:23 in bsp612/kernel (GKI 6.12.81; header marked git update-index
+--assume-unchanged so the release string and every module vermagic stay 6.12.81-4k-g8a69376da734). The Samsung ABL of the A52s appends ~2.7 KB of
+its own arguments (androidboot.bootloader, em.model, sales_code, carrierid, warranty_bit,
+sec-battery.*, ...) to the dtb bootargs and the vendor_boot command line; on test phone 2 the
+5.4 boot's /proc/cmdline is 3195 bytes. GKI's 2048 cuts the tail off (prediction for the real
+boot: drivers612/realboot/out/<name>/cmdline-predicted.txt), so ro.bootloader would be empty
+and LineageOS's libinit (init_sm7325.cpp) could not tell the model. The 5.4 kernel and the
+6.18 harness (ack/, same change) use 4096. boot_command_line is __initdata. Rebuild bsp612
+(./build.sh) and, to be safe, every out-of-tree module, then the realboot images (REF must then
+be a ramdisk re-tested with the new kernel).
+---
+--- a/arch/arm64/include/uapi/asm/setup.h	2026-11-14 14:16:04.499749018 +0200
++++ b/arch/arm64/include/uapi/asm/setup.h	2026-11-14 14:16:04.500394099 +0200
+@@ -22,6 +22,6 @@
+ 
+ #include <linux/types.h>
+ 
+-#define COMMAND_LINE_SIZE	2048
++#define COMMAND_LINE_SIZE	4096
+ 
+ #endif

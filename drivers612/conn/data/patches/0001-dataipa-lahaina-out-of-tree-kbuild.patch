@@ -1,0 +1,31 @@
+--- donors/dataipa/drivers/platform/msm/Kbuild	2026-11-11 18:29:23.804956839 +0200
++++ drivers612/conn/data/src/dataipa/drivers/platform/msm/Kbuild	2026-11-11 20:39:54.324905598 +0200
+@@ -2,17 +2,18 @@
+ DATAIPADRVTOP = $(srctree)/techpack/dataipa/drivers/platform/msm
+ 
+ #MSMs - GKI
++# a52sxq: lahaina on KERNEL.PLATFORM.5.0 (GKI 6.12 + soc-repo) is built out of tree like the
++# vendor-SI targets; the 5.4 in-tree path $(srctree)/techpack/dataipa and the QGKI config do
++# not exist there. Same headers/config the bazel perf variant uses (perf_config_headers +
++# perf_defconfig = dataipa_vendor.h + dataipa_GKI.conf); ipatestm is consolidate-only in bazel.
+ ifeq ($(CONFIG_ARCH_LAHAINA), y)
+-LINUXINCLUDE    += -include $(srctree)/techpack/dataipa/config/dataipa.h
+-ifeq ($(CONFIG_QGKI),y)
+-include $(srctree)/techpack/dataipa/config/dataipa_QGKI.conf
+-ifeq ($(CONFIG_LOCALVERSION), "-qgki-debug")
+-include $(srctree)/techpack/dataipa/config/dataipa_debug.conf
+-LINUXINCLUDE    += -include $(srctree)/techpack/dataipa/config/dataipa_debug.h
+-endif
+-else
+-include $(srctree)/techpack/dataipa/config/dataipa_GKI.conf
+-endif
++DATAIPADRVTOP := $(abspath $(src))
++DATAIPATOP := $(abspath $(src)/../../..)
++LINUXINCLUDE    += -include $(DATAIPATOP)/config/dataipa_vendor.h
++include $(DATAIPATOP)/config/dataipa_GKI.conf
++export CONFIG_IPA_KERNEL_TESTS_MODULE=
++# ipam_local_defines of define_modules.bzl for every target but niobe/seraph
++LINUXINCLUDE    += -DCONFIG_IPA_RMNET_MEM=1
+ endif
+ 
+ #MSM - Vendor SI

@@ -1,0 +1,3 @@
+/dts-v1/; /plugin/;
+#include "./drivers612/audio/dts/yupik-audio.dtsi"
+#include "./drivers612/audio/a52sxq-audio.dtsi"

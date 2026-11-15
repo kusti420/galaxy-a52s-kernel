@@ -1,0 +1,22 @@
+build/Makefile: search the ACK source root last
+
+Qualcomm's plain-make entry point (build/Makefile) puts -I$(srctree)/ ahead of the
+kernel's own include paths. <crypto/hash.h> then resolves to ACK's private crypto/hash.h
+(the top-level crypto/ directory) instead of include/crypto/hash.h, and every mac80211
+file that uses the hash API fails ("offsetof of incomplete type 'struct ahash_alg'").
+Kleaf does not have this ordering. Keep the path (soc-repo sources include files relative
+to the tree root) but put it after LINUXINCLUDE.
+
+--- a/build/Makefile
++++ b/build/Makefile
+@@ -20,8 +20,8 @@
+   -I$(soc)/include \
+   -I$(soc)/include/uapi \
+   -I$(soc)/include/linux \
+-  -I$(srctree)/ \
+-  $(LINUXINCLUDE)
++  $(LINUXINCLUDE) \
++  -I$(srctree)/
+ 
+ 
+ # -------------------------------------------------

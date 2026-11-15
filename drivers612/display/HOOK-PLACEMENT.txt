@@ -1,0 +1,324 @@
+auto  msm/msm_atomic.c:28: hunk end
+auto  msm/msm_atomic.c:273: hunk start
+UNRESOLVED msm/msm_atomic.c:532: no anchor for an insertion in the middle
+auto  msm/msm_atomic.c:676: hunk start
+auto  msm/msm_atomic.c:719: hunk start
+auto  msm/msm_atomic.c:864: hunk start
+auto  msm/msm_drv.c:1102: hunk start
+UNRESOLVED msm/msm_drv.c:1137: no anchor for an insertion in the middle
+auto  msm/msm_drv.c:1751: hunk start
+auto  msm/msm_drv.c:2493: hunk start
+auto  msm/msm_drv.h:23: hunk start
+auto  msm/msm_drv.h:259: hunk start
+auto  msm/msm_drv.h:1384: hunk end
+UNRESOLVED msm/msm_smmu.c:39: no anchor for an insertion in the middle
+auto  msm/msm_smmu.c:336: hunk start
+auto  msm/msm_smmu.c:363: hunk start
+UNRESOLVED msm/msm_smmu.c:527: no anchor for an insertion in the middle
+auto  msm/msm_smmu.c:642: hunk end
+auto  msm/sde_dbg.c:26: hunk start
+auto  msm/sde_dbg.c:1249: hunk start
+auto  msm/sde_dbg.c:1353: hunk start
+UNRESOLVED msm/sde_dbg.c:1488: no anchor for an insertion in the middle
+auto  msm/sde_dbg.c:1580: hunk start; hunk end
+auto  msm/sde_dbg.h:542: hunk start
+auto  msm/sde_io_util.c:771: hunk end
+auto  msm/sde_power_handle.c:320: hunk start
+auto  msm/dsi/dsi_catalog.c:297: hunk end
+auto  msm/dsi/dsi_catalog.h:111: hunk start
+auto  msm/dsi/dsi_clk.h:296: hunk start
+auto  msm/dsi/dsi_clk_manager.c:14: hunk start
+auto  msm/dsi/dsi_clk_manager.c:657: hunk start
+auto  msm/dsi/dsi_clk_manager.c:687: hunk start
+auto  msm/dsi/dsi_clk_manager.c:782: hunk start
+auto  msm/dsi/dsi_clk_manager.c:1347: hunk start; hunk end
+auto  msm/dsi/dsi_ctrl.c:31: hunk start
+auto  msm/dsi/dsi_ctrl.c:37: hunk start; hunk end
+auto  msm/dsi/dsi_ctrl.c:1518: hunk start
+auto  msm/dsi/dsi_ctrl.c:2152: hunk start
+auto  msm/dsi/dsi_ctrl.c:2227: hunk start
+auto  msm/dsi/dsi_ctrl.c:2808: hunk start
+auto  msm/dsi/dsi_ctrl.c:2881: hunk start
+auto  msm/dsi/dsi_ctrl.c:2922: hunk end
+auto  msm/dsi/dsi_ctrl.c:3851: hunk start; hunk end
+auto  msm/dsi/dsi_ctrl.h:64: hunk start
+UNRESOLVED msm/dsi/dsi_ctrl.h:668: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_defs.h:379: hunk start
+auto  msm/dsi/dsi_defs.h:472: hunk end
+auto  msm/dsi/dsi_display.c:27: hunk start
+auto  msm/dsi/dsi_display.c:1419: hunk start
+auto  msm/dsi/dsi_display.c:2603: hunk start; hunk end
+auto  msm/dsi/dsi_display.c:2708: hunk start
+auto  msm/dsi/dsi_display.c:3583: hunk end
+auto  msm/dsi/dsi_display.c:3597: hunk start
+UNRESOLVED msm/dsi/dsi_display.c:4348: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_display.c:5558: hunk start
+auto  msm/dsi/dsi_display.c:5595: hunk start
+auto  msm/dsi/dsi_display.c:5627: hunk start; hunk end
+auto  msm/dsi/dsi_display.c:5768: hunk start
+auto  msm/dsi/dsi_display.c:6036: hunk start; hunk end
+auto  msm/dsi/dsi_display.c:6234: hunk start; hunk end
+auto  msm/dsi/dsi_display.c:6391: hunk start
+auto  msm/dsi/dsi_display.c:6487: hunk start
+auto  msm/dsi/dsi_display.c:7459: hunk start; hunk end
+auto  msm/dsi/dsi_display.c:8380: hunk start
+auto  msm/dsi/dsi_display.c:8772: hunk start
+auto  msm/dsi/dsi_display.c:8785: hunk start
+auto  msm/dsi/dsi_display.c:9012: hunk start
+UNRESOLVED msm/dsi/dsi_display.c:9036: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_display.c:9124: hunk start; hunk end
+auto  msm/dsi/dsi_display.c:9139: hunk start
+auto  msm/dsi/dsi_display.c:9339: hunk start
+auto  msm/dsi/dsi_display.c:9419: hunk end
+auto  msm/dsi/dsi_display.c:9472: hunk end
+auto  msm/dsi/dsi_display.c:9567: hunk start
+auto  msm/dsi/dsi_display.c:9624: hunk end
+auto  msm/dsi/dsi_display.c:9751: hunk start
+auto  msm/dsi/dsi_display.h:848: hunk start
+auto  msm/dsi/dsi_drm.c:20: hunk start
+auto  msm/dsi/dsi_drm.c:65: hunk end
+auto  msm/dsi/dsi_drm.c:144: hunk start; hunk end
+auto  msm/dsi/dsi_drm.c:482: hunk start
+auto  msm/dsi/dsi_drm.c:696: hunk start
+auto  msm/dsi/dsi_drm.c:792: hunk start
+auto  msm/dsi/dsi_drm.c:1220: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:21: hunk start
+auto  msm/dsi/dsi_panel.c:79: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:322: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:521: hunk start
+auto  msm/dsi/dsi_panel.c:541: hunk start
+auto  msm/dsi/dsi_panel.c:625: hunk start
+auto  msm/dsi/dsi_panel.c:635: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:655: hunk start
+auto  msm/dsi/dsi_panel.c:797: hunk end
+UNRESOLVED msm/dsi/dsi_panel.c:870: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_panel.c:904: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:967: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:1031: hunk start
+auto  msm/dsi/dsi_panel.c:1472: hunk start
+auto  msm/dsi/dsi_panel.c:2519: hunk start
+auto  msm/dsi/dsi_panel.c:2634: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:2997: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:3245: hunk start
+auto  msm/dsi/dsi_panel.c:4316: hunk end
+auto  msm/dsi/dsi_panel.c:4488: hunk start
+auto  msm/dsi/dsi_panel.c:4577: hunk start
+UNRESOLVED msm/dsi/dsi_panel.c:5126: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_panel.c:5314: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:5447: hunk start
+auto  msm/dsi/dsi_panel.c:5463: hunk start; hunk end
+UNRESOLVED msm/dsi/dsi_panel.c:5489: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_panel.c:5593: hunk start
+auto  msm/dsi/dsi_panel.c:5598: hunk end
+auto  msm/dsi/dsi_panel.c:5636: hunk start
+auto  msm/dsi/dsi_panel.c:5641: hunk end
+auto  msm/dsi/dsi_panel.c:5824: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:5864: hunk start; hunk end
+auto  msm/dsi/dsi_panel.c:6036: hunk start
+auto  msm/dsi/dsi_panel.c:6073: hunk start
+auto  msm/dsi/dsi_panel.c:6141: hunk start
+UNRESOLVED msm/dsi/dsi_panel.h:432: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_phy.c:1479: hunk start; hunk end
+UNRESOLVED msm/dsi/dsi_phy.h:424: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_phy_hw.h:425: hunk end
+auto  msm/dsi/dsi_phy_hw_v4_0.c:15: hunk start
+auto  msm/dsi/dsi_phy_hw_v4_0.c:240: hunk start
+auto  msm/dsi/dsi_phy_hw_v4_0.c:426: hunk start; hunk end
+auto  msm/dsi/dsi_phy_hw_v4_0.c:539: hunk end
+auto  msm/dsi/dsi_phy_hw_v4_0.c:582: hunk start; hunk end
+auto  msm/dsi/dsi_phy_hw_v4_0.c:629: hunk start
+auto  msm/dsi/dsi_phy_hw_v5_0.c:15: hunk start
+auto  msm/dsi/dsi_phy_hw_v5_0.c:235: hunk start
+auto  msm/dsi/dsi_phy_hw_v5_0.c:389: hunk start; hunk end
+auto  msm/dsi/dsi_phy_hw_v5_0.c:499: hunk end
+auto  msm/dsi/dsi_phy_hw_v5_0.c:565: hunk start
+auto  msm/dsi/dsi_pll_4nm.c:210: hunk start
+auto  msm/dsi/dsi_pll_4nm.c:240: hunk end
+auto  msm/dsi/dsi_pll_5nm.c:218: hunk start
+auto  msm/dsi/dsi_pll_5nm.c:249: hunk end
+auto  msm/dsi/dsi_pwr.c:14: hunk start
+auto  msm/dsi/dsi_pwr.c:161: hunk end
+auto  msm/dsi/dsi_pwr.c:215: hunk end
+auto  msm/sde/sde_connector.c:171: hunk start
+auto  msm/sde/sde_connector.c:225: hunk start
+auto  msm/sde/sde_connector.c:883: hunk start
+auto  msm/sde/sde_connector.c:1096: hunk start; hunk end
+auto  msm/sde/sde_connector.c:1223: hunk end
+auto  msm/sde/sde_connector.c:2955: hunk end
+auto  msm/sde/sde_connector.c:3399: hunk start
+auto  msm/sde/sde_core_perf.c:26: hunk start
+auto  msm/sde/sde_core_perf.c:1108: hunk start; hunk end
+auto  msm/sde/sde_core_perf.c:1485: hunk start; hunk end
+auto  msm/sde/sde_core_perf.h:205: hunk start
+auto  msm/sde/sde_crtc.c:61: hunk start
+auto  msm/sde/sde_crtc.c:3066: hunk start
+auto  msm/sde/sde_crtc.c:3361: hunk end
+auto  msm/sde/sde_crtc.c:4865: hunk start; hunk end
+auto  msm/sde/sde_crtc.c:5023: hunk start
+auto  msm/sde/sde_crtc.c:7956: hunk start
+auto  msm/sde/sde_crtc.c:7983: hunk start
+auto  msm/sde/sde_crtc.c:8005: hunk start
+auto  msm/sde/sde_crtc.h:690: hunk start
+auto  msm/sde/sde_encoder.c:56: hunk start
+auto  msm/sde/sde_encoder.c:247: hunk start
+auto  msm/sde/sde_encoder.c:1879: hunk start; hunk end
+UNRESOLVED msm/sde/sde_encoder.c:2363: no anchor for an insertion in the middle
+auto  msm/sde/sde_encoder.c:2497: hunk start; hunk end
+auto  msm/sde/sde_encoder.c:3356: hunk start; hunk end
+auto  msm/sde/sde_encoder.c:3862: hunk start
+auto  msm/sde/sde_encoder.c:4440: hunk start; hunk end
+auto  msm/sde/sde_encoder.c:4513: hunk start; hunk end
+auto  msm/sde/sde_encoder.c:5240: hunk start; hunk end
+auto  msm/sde/sde_encoder_dce.c:995: hunk end
+auto  msm/sde/sde_encoder_dce.h:39: hunk start
+auto  msm/sde/sde_encoder_phys_cmd.c:14: hunk start
+auto  msm/sde/sde_encoder_phys_cmd.c:42: hunk end
+auto  msm/sde/sde_encoder_phys_cmd.c:489: hunk start; hunk end
+auto  msm/sde/sde_encoder_phys_cmd.c:563: hunk start; hunk end
+auto  msm/sde/sde_encoder_phys_cmd.c:614: hunk end
+auto  msm/sde/sde_encoder_phys_cmd.c:636: hunk start
+auto  msm/sde/sde_encoder_phys_cmd.c:653: hunk start
+auto  msm/sde/sde_encoder_phys_cmd.c:660: hunk start; hunk end
+auto  msm/sde/sde_encoder_phys_cmd.c:963: hunk start; hunk end
+UNRESOLVED msm/sde/sde_encoder_phys_cmd.c:1487: no anchor for an insertion in the middle
+UNRESOLVED msm/sde/sde_encoder_phys_cmd.c:1666: no anchor for an insertion in the middle
+auto  msm/sde/sde_encoder_phys_cmd.c:1999: hunk start; hunk end
+auto  msm/sde/sde_encoder_phys_cmd.c:2797: hunk end
+auto  msm/sde/sde_encoder_phys_cmd.c:2834: hunk start
+auto  msm/sde/sde_encoder_phys_cmd.c:2840: hunk start; hunk end
+auto  msm/sde/sde_encoder_phys_vid.c:521: hunk start; hunk end
+auto  msm/sde/sde_encoder_phys_vid.c:546: hunk start; hunk end
+auto  msm/sde/sde_encoder_phys_vid.c:653: hunk end
+auto  msm/sde/sde_encoder_phys_vid.c:1251: hunk start
+auto  msm/sde/sde_encoder_phys_vid.c:1298: hunk start
+auto  msm/sde/sde_formats.c:16: hunk start
+auto  msm/sde/sde_formats.c:1057: hunk end
+auto  msm/sde/sde_hw_catalog.c:26: hunk start
+auto  msm/sde/sde_hw_catalog.c:5811: hunk start; hunk end
+auto  msm/sde/sde_hw_intf.c:893: hunk start; hunk end
+auto  msm/sde/sde_hw_intf.h:166: hunk start
+auto  msm/sde/sde_hw_pingpong.c:194: hunk start; hunk end
+auto  msm/sde/sde_hw_pingpong.h:56: hunk start
+auto  msm/sde/sde_kms.c:81: hunk start
+auto  msm/sde/sde_kms.c:813: hunk start
+auto  msm/sde/sde_kms.c:2403: hunk start
+auto  msm/sde/sde_kms.c:2449: hunk start
+auto  msm/sde/sde_kms.c:2507: hunk start
+UNRESOLVED msm/sde/sde_kms.c:4180: no anchor for an insertion in the middle
+auto  msm/sde/sde_kms.c:4324: hunk start
+auto  msm/sde/sde_plane.c:43: hunk start
+auto  rotator/sde_rotator_debug.c:56: hunk start; hunk end
+auto  rotator/sde_rotator_dev.c:130: hunk start
+auto  rotator/sde_rotator_smmu.c:28: hunk start
+auto  rotator/sde_rotator_smmu.c:502: hunk start
+auto  msm/msm_atomic.c:532: both r7 and base only blank lines: samsung side taken
+auto  msm/msm_drv.c:1137: both r7 and base only blank lines: samsung side taken
+auto  msm/msm_smmu.c:39: both r7 and base only blank lines: samsung side taken
+UNRESOLVED msm/msm_smmu.c:521: no anchor for an insertion in the middle
+UNRESOLVED msm/sde_dbg.c:1488: no anchor for an insertion in the middle
+auto  msm/dsi/dsi_ctrl.h:668: both r7 and base only blank lines: samsung side taken
+auto  msm/dsi/dsi_display.c:4348: both r7 and base only blank lines: samsung side taken
+auto  msm/dsi/dsi_display.c:9030: both r7 and base only blank lines: samsung side taken
+auto  msm/dsi/dsi_panel.c:870: both r7 and base only blank lines: samsung side taken
+auto  msm/dsi/dsi_panel.c:5119: both r7 and base only blank lines: samsung side taken
+auto  msm/dsi/dsi_panel.c:5476: both r7 and base only blank lines: samsung side taken
+auto  msm/dsi/dsi_panel.h:432: both r7 and base only blank lines: samsung side taken
+auto  msm/dsi/dsi_phy.h:424: both r7 and base only blank lines: samsung side taken
+auto  msm/sde/sde_encoder.c:2363: both r7 and base only blank lines: samsung side taken
+UNRESOLVED msm/sde/sde_encoder_phys_cmd.c:1487: no anchor for an insertion in the middle
+UNRESOLVED msm/sde/sde_encoder_phys_cmd.c:1666: no anchor for an insertion in the middle
+UNRESOLVED msm/sde/sde_kms.c:4180: no anchor for an insertion in the middle
+DROPPED (r7 code kept) msm/msm_smmu.c:521
+    #if 0
+    #endif
+    
+    #if 0
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+    	ss_smmu_debug_log();
+    	SDE_DBG_DUMP(SDE_DBG_BUILT_IN_ALL, "panic"); // case 03250922
+    #endif
+    #endif
+    
+DROPPED (r7 code kept) msm/sde_dbg.c:1488
+    	return;
+    
+    
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG) && IS_ENABLED(CONFIG_SEC_DEBUG)
+            if (!sec_debug_is_enabled())
+    		return;
+    #else
+    	return;
+    #endif
+    
+    
+DROPPED (r7 code kept) msm/sde/sde_encoder_phys_cmd.c:1487
+    		if (qsync_min_fps >= default_fps) {
+    			SDE_ERROR_CMDENC(cmd_enc,
+    				"qsync fps:%d must be less than default:%d\n",
+    				qsync_min_fps, default_fps);
+    			goto exit;
+    		}
+    		if (qsync_min_fps >= default_fps) {
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+    			SDE_DEBUG_CMDENC(cmd_enc,
+    				"qsync fps:%d must be less than default:%d\n",
+    				qsync_min_fps, default_fps);
+    #else
+    			SDE_ERROR_CMDENC(cmd_enc,
+    				"qsync fps:%d must be less than default:%d\n",
+    				qsync_min_fps, default_fps);
+    #endif
+    			goto exit;
+    		}
+DROPPED (r7 code kept) msm/sde/sde_encoder_phys_cmd.c:1644
+    	/*
+    	 * By setting sync_cfg_height to near max register value, we essentially
+    	 * disable sde hw generated TE signal, since hw TE will arrive first.
+    	 * Only caveat is if due to error, we hit wrap-around.
+    	 */
+    	tc_cfg.sync_cfg_height = 0xFFF0;
+    	/*
+    	 * By setting sync_cfg_height to near max register value, we essentially
+    	 * disable sde hw generated TE signal, since hw TE will arrive first.
+    	 * Only caveat is if due to error, we hit wrap-around.
+    	 */
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+    	/* 9 * 16.6ms based on mode->vtotal (To cover 10Hz, Set 150ms)
+    	 * note : need to multiply current_fps / 60 to match 16ms regardless of current fps
+    	 * Remember that sync_cfg_height type is u16. Max value is 0xFFFF(65536).
+    	 */
+    	tc_cfg.sync_cfg_height = (mode->vtotal * 9 * vrefresh) / 12 / 5;
+    	pr_debug("mode->vtotal = %d, vrefresh = %d chg_height=%d\n",
+    		mode->vtotal, vrefresh, tc_cfg.sync_cfg_height);
+    #else
+    	tc_cfg.sync_cfg_height = 0xFFF0;
+    #endif
+DROPPED (r7 code kept) msm/sde/sde_kms.c:4180
+    
+    		if (sde_enc->vblank_enabled) {
+    			sde_encoder_wait_for_event(conn->encoder, MSM_ENC_VBLANK);
+    			if (priv->event_thread[crtc_id].thread) {
+    				kthread_flush_worker(
+    					&priv->event_thread[crtc_id].worker);
+    			}
+    		}
+    
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+    		SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc->vblank_enabled);
+    #endif
+    		if (sde_enc->vblank_enabled) {
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+    			SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc->vblank_enabled);
+    #endif
+    			sde_encoder_wait_for_event(conn->encoder, MSM_ENC_VBLANK);
+    			if (priv->event_thread[crtc_id].thread) {
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+    				SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc->vblank_enabled);
+    #endif
+    				kthread_flush_worker(
+    					&priv->event_thread[crtc_id].worker);
+    #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+    				SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc->vblank_enabled);
+    #endif
+    			}
+    		}

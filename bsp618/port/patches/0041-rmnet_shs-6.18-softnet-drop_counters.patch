@@ -1,0 +1,18 @@
+rmnet_shs: softnet_data.dropped became the per-NUMA drop_counters on 6.18
+
+rmnet_shs_drop_backlog() counts the backlog skbs it frees as softnet drops, as
+enqueue_to_backlog() does; 6.18 replaced atomic_t sd->dropped with struct
+numa_drop_counters drop_counters (numa_drop_add(), read back by /proc/net/softnet_stat).
+
+--- a/drivers612/conn/data/src/datarmnet-ext/shs/rmnet_shs_main.c
++++ b/drivers612/conn/data/src/datarmnet-ext/shs/rmnet_shs_main.c
+@@ -1594,7 +1594,8 @@
+ 			dev_core_stats_rx_dropped_inc(skb->dev);
+ #if (KERNEL_VERSION(6, 9, 0) <= LINUX_VERSION_CODE)
+ 			rps_input_queue_head_incr(sd);
+-			atomic_inc(&sd->dropped);
++			/* 6.18: softnet_data.dropped became drop_counters (as enqueue_to_backlog) */
++			numa_drop_add(&sd->drop_counters, 1);
+ #else
+ 			input_queue_head_incr(sd);
+ 			sd->dropped++;

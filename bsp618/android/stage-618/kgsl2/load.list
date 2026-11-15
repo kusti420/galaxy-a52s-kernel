@@ -1,0 +1,6 @@
+gpucc-sc7280.ko
+governor_msm_adreno_tz.ko
+governor_gpubw_mon.ko
+msm_sysstats.ko
+msm_performance.ko
+msm_kgsl.ko

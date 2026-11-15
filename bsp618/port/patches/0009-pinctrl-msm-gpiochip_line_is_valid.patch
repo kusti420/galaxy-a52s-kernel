@@ -1,0 +1,44 @@
+pinctrl-msm: gpio_chip.valid_mask moved into gpiolib (6.18); use gpiochip_line_is_valid()
+
+The register save/restore loops (tile and GPIO register state for deep sleep) tested
+chip->valid_mask directly. The mask is gpiolib-private in 6.18; gpiochip_line_is_valid() is
+the accessor upstream pinctrl-msm uses (and it is also safe when no mask was allocated).
+
+--- a/bsp612/soc-repo/drivers/pinctrl/qcom/pinctrl-msm.c
++++ b/bsp612/soc-repo/drivers/pinctrl/qcom/pinctrl-msm.c
+@@ -1911,7 +1911,7 @@
+ 
+ 	/* All normal gpios will have common registers, first save them */
+ 	for (i = 0; i < soc->ngpios; i++) {
+-		if (!test_bit(i, chip->valid_mask))
++		if (!gpiochip_line_is_valid(chip, i))
+ 			continue;
+ 
+ 		pgroup = &soc->groups[i];
+@@ -1929,7 +1929,7 @@
+ 	}
+ 
+ 	for ( ; i < soc->ngroups; i++) {
+-		if (!test_bit(i, chip->valid_mask))
++		if (!gpiochip_line_is_valid(chip, i))
+ 			continue;
+ 
+ 		pgroup = &soc->groups[i];
+@@ -1968,7 +1968,7 @@
+ 
+     /* Restore normal gpios */
+ 	for (i = 0; i < soc->ngpios; i++) {
+-		if (!test_bit(i, chip->valid_mask))
++		if (!gpiochip_line_is_valid(chip, i))
+ 			continue;
+ 
+ 		pgroup = &soc->groups[i];
+@@ -1983,7 +1983,7 @@
+ 	}
+ 
+ 	for ( ; i < soc->ngroups; i++) {
+-		if (!test_bit(i, chip->valid_mask))
++		if (!gpiochip_line_is_valid(chip, i))
+ 			continue;
+ 
+ 		pgroup = &soc->groups[i];

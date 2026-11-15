@@ -1,0 +1,18 @@
+soc-repo Kconfig: ARM_PARAVIRT_SMMU_V3 depends on IOMMU_API instead of selecting it
+
+6.18 VIDEO_QCOM_VENUS 'depends on IOMMU_API' and 'select QCOM_SCM'; with this entry's
+'depends on QCOM_SCM' + 'select IOMMU_API' Kconfig reports a recursive dependency and
+'make gki_defconfig' with the soc-repo hook aborts. IOMMU_API is =y in gki_defconfig, so
+the depends form changes no value.
+
+--- a/bsp612/soc-repo/drivers/iommu/Kconfig
++++ b/bsp612/soc-repo/drivers/iommu/Kconfig
+@@ -216,7 +216,7 @@
+         tristate "Paravirtualized ARM SMMU V3 driver support"
+         depends on ARM64
+         depends on QCOM_SCM
+-        select IOMMU_API
++        depends on IOMMU_API
+         select IOMMU_IO_PGTABLE_LPAE
+         select GENERIC_MSI_IRQ_DOMAIN
+         help

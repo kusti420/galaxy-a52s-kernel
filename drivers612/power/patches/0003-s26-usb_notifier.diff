@@ -1,0 +1,30 @@
+--- a/usb_notifier.c
++++ b/usb_notifier.c
+@@ -488,7 +488,7 @@
+ }
+ #endif
+ 
+-static int reverse_bypass_power(int mode)
++static int __maybe_unused reverse_bypass_power(int mode)
+ {
+ 	union power_supply_propval val;
+ 	int ret = 0;
+@@ -508,7 +508,7 @@
+ 	return ret;
+ }
+ 
+-static int get_support_reverse_bypass_en(void *data)
++static int __maybe_unused get_support_reverse_bypass_en(void *data)
+ {
+ 	struct usb_notifier_platform_data *pdata =
+ 		(struct usb_notifier_platform_data *)(data);
+@@ -518,8 +518,7 @@
+ 
+ static struct otg_notify sec_otg_notify = {
+ 	.vbus_drive	= otg_accessory_power,
+-	.reverse_bypass_drive = reverse_bypass_power,
+-	.get_support_reverse_bypass_en = get_support_reverse_bypass_en,
++	/* a52sxq: reverse bypass is S26-only; not in the physwizz usb_notify core used here */
+ 	.set_host = qcom_set_host,
+ 	.set_peripheral	= qcom_set_peripheral,
+ 	.get_gadget_speed = qcom_get_gadget_speed,

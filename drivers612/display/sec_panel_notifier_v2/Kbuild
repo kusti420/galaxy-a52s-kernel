@@ -1,0 +1,4 @@
+# Samsung panel notifier v2 (from the Galaxy S26 6.12 kernel, unchanged). Separate module so
+# that touch/fingerprint/sensor drivers can use it without depending on msm_drm.
+ccflags-y += -DCONFIG_SEC_PANEL_NOTIFIER_V2=1 -I$(src)/../techpack/display-drivers/include
+obj-m += sec_panel_notifier_v2.o

@@ -1,0 +1,43 @@
+audio machine_dlkm (lahaina.c): hostless .prepare only on FE (dynamic) links
+
+On top of patch 0021. qcom_link_is_hostless() matches by dai_link->id, but .id holds a
+value of a different enum on FE and BE links: MSM_FRONTEND_DAI_LSM1..7 = 43..49 and
+MSM_FRONTEND_DAI_VOICEMMODE1/2 = 52/53 (asoc/msm-pcm-routing-v2.h, FE enum), and the BE
+links in lahaina.c carry the same numbers:
+  PRI_MI2S_RX 43 (lahaina.c:6861)  PRI_MI2S_TX 44 (:6874)  TERT_MI2S_RX 45 (:6909)
+  TERT_MI2S_TX 46 (:6922)  SEC_AUXPCM_RX 48 (:7037)  SEC_AUXPCM_TX 49 (:7049)
+  QUIN_MI2S_RX 52 (:6957)  QUIN_MI2S_TX 53 (:6973)
+msm_hostless_set_fe_ops() walks every prelink, so these 8 BE links match. Today they all
+have .ops (msm_mi2s_be_ops / lahaina_aux_be_ops), so they are only skipped with a pr_warn
+on every probe attempt (the machine probe defers repeatedly at boot). A BE link without
+ops would get the FE .prepare, and since DPCM points the BE substream's runtime at the
+FE's (ack/sound/soc/soc-pcm.c:1360 be_substream->runtime = fe_substream->runtime) it
+would silently set stop_threshold = boundary on ordinary playback FEs routed to it.
+
+The 6.12 hook could only ever see FE substreams (it sat in snd_pcm_pre_start(), i.e. the
+SNDRV_PCM_IOCTL_START of a user-visible PCM; BE substreams are internal), so restricting
+the test to .dynamic links is exactly the 6.12 scope. All hostless links in the list are
+.dynamic = 1 (VoiceMMode1 lahaina.c:5918, VoiceMMode2 :6083, Listen 1 :6017 and 2-7 likewise, Secondary
+MI2S_TX Hostless :6446).
+
+Apply after 0021 (-p1 from bsp618/src).
+
+--- a/drivers612/audio/audio-kernel/asoc/lahaina.c	2026-11-14 15:44:02.882818747 +0200
++++ b/drivers612/audio/audio-kernel/asoc/lahaina.c	2026-11-14 15:44:19.166779733 +0200
+@@ -8343,6 +8343,16 @@
+  */
+ static bool qcom_link_is_hostless(const struct snd_soc_dai_link *link)
+ {
++	/*
++	 * bsp618/port: FE links only. The 6.12 hook only ever saw FE substreams (a BE never
++	 * goes through snd_pcm_pre_start()), but .id is a per-enum value: the BE links
++	 * PRI/TERT/QUIN_MI2S_RX/TX and SEC_AUXPCM_RX/TX carry MSM_BACKEND_DAI_* ids equal to
++	 * MSM_FRONTEND_DAI_LSM1..7/VOICEMMODE1..2 (43..49, 52, 53). A BE link that got this
++	 * .prepare would write the FE runtime (DPCM shares it with the BE substream).
++	 */
++	if (!link->dynamic)
++		return false;
++
+ 	switch (link->id) {
+ 	case MSM_FRONTEND_DAI_VOICEMMODE1:
+ 	case MSM_FRONTEND_DAI_VOICEMMODE2:

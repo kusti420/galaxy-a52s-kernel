@@ -1,0 +1,26 @@
+--- a/a52sxq/BoardConfig.mk	2026-11-11 20:50:10.083293319 +0200
++++ b/a52sxq/BoardConfig.mk	2026-11-11 20:50:10.107975329 +0200
+@@ -19,17 +19,17 @@
+ include device/samsung/sm7325-common/BoardConfigCommon.mk
+ 
+ # Kernel
++# Prebuilt Qualcomm 6.12 GKI (see sm7325-common/BoardConfigCommon.mk). TARGET_KERNEL_CONFIG
++# stays defined: LineageOS kernel.mk errors out with "NO KERNEL CONFIG" otherwise, and it is
++# what the 5.4 UAPI header generation uses.
+ TARGET_KERNEL_CONFIG        := vendor/lineage-a52sxq_defconfig
+ # IchthysOS/AOSP-17: LineageOS kernel.mk needs TARGET_KERNEL_VERSION (GKI/version logic).
+-# SM7325 kernel is 5.4 (see kernel/samsung/sm7325/Makefile: VERSION=5 PATCHLEVEL=4).
+-TARGET_KERNEL_VERSION       := 5.4
+-TARGET_KERNEL_ADDITIONAL_FLAGS := DISABLE_WRAPPER=1 KALLSYMS_EXTRA_PASS=1
++TARGET_KERNEL_VERSION       := 6.12
+ BOARD_NAME                  := SRPUE26A001
+ 
+ # Kernel modules
+-BOARD_VENDOR_KERNEL_MODULES_LOAD := $(strip $(shell cat $(DEVICE_PATH)/modules.load))
+-BOARD_RECOVERY_RAMDISK_KERNEL_MODULES_LOAD := $(strip $(shell cat $(DEVICE_PATH)/modules.load.recovery))
+-RECOVERY_KERNEL_MODULES := $(BOARD_RECOVERY_RAMDISK_KERNEL_MODULES_LOAD)
++# The 6.12 lists live next to the prebuilt kernel (BoardConfigCommon.mk); the 5.4 lists
++# modules.load / modules.load.recovery in this directory are unused and can be deleted.
+ 
+ # Recovery
+ TARGET_BOARD_INFO_FILE := $(DEVICE_PATH)/board-info.txt

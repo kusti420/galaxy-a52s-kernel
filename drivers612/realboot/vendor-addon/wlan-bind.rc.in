@@ -1,0 +1,17 @@
+
+# Wi-Fi: macloader (wifi_sec.rc, post-fs-data) writes /sys/kernel/icnss/wpss_boot (icnss2 provides
+# that link on 6.12 and 6.18) and then finit_module()s /vendor/lib/modules/qca_cld3_wlan.ko (5.4,
+# refused by 6.x) and, after that fails, /vendor/lib/modules/5.4-gki/qca_cld3_wlan.ko. That path is
+# fixed in the ROM and holds ONE 6.x wlan.ko: the other 6.x kernel's (the phones carry the 6.12 one
+# there). This kernel's own copy is in /vendor/lib/modules/@WLD@ (same files as a 5.4-gki dir:
+# empty modules.dep, so neither vendor_modprobe.sh nor init.target.rc's "modprobe -d
+# /vendor/lib/modules/5.4-gki qca_cld3_wlan" (on boot) can load it beside macloader). On post-fs, before
+# macloader starts, that dir is bind-mounted over 5.4-gki: macloader then loads this kernel's wlan.ko
+# by the same path and in the same wpss_boot -> finit_module order as on the other kernel. The bind
+# lives in RAM until reboot; 5.4 and the other 6.x kernel never make it (gate property), so their
+# files stay as they are. init runs `mount` itself (not in vendor_init) and may mounton vendor_file
+# directories (system/sepolicy private/init.te); "/" is shared in both init mount namespaces, so
+# every service sees the bind. /vendor/lib/modules/5.4-gki must exist (mkdir -p at install time;
+# it does wherever a 6.12 add-on is installed). drivers612/realboot/README.md section 2g.
+on post-fs && property:ro.boot.a52sxq.@KT@=1
+    mount none /vendor/lib/modules/@WLD@ /vendor/lib/modules/5.4-gki bind

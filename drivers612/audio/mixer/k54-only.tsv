@@ -1,0 +1,169 @@
+RX_RX0 HPH Digital Volume	asoc/codecs/bolero/rx-macro.c
+RX_RX1 HPH Digital Volume	asoc/codecs/bolero/rx-macro.c
+DMIC_RATE OVERRIDE	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX0	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX1	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX2	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX3	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX4	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX5	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX6	asoc/codecs/bolero/tx-macro.c
+HPF cut off TX7	asoc/codecs/bolero/tx-macro.c
+External HDMI Device	asoc/codecs/msm_hdmi_codec_rx.c
+TAS25XX_ALGO_DIGITAL_GAIN_A	asoc/codecs/tas256x/algo/src/tas25xx-algo-common.c
+TAS25XX_ALGO_DIGITAL_GAIN_B	asoc/codecs/tas256x/algo/src/tas25xx-algo-common.c
+TAS25XX_ALGO_RX_CH_MAP	asoc/codecs/tas256x/algo/src/tas25xx-algo-common.c
+SmartPA Mute	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+SmartPA System Mute	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X ASI Left Switch	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X ASI Right Switch	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X ASI Switch	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X ASI1 SEL	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X ASI1 SEL LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X ASI1 SEL RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X DAC Mute	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X ICN Switch	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X IVSENSE ENABLE	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X_RX_SLOT_MAP	asoc/codecs/tas256x/os_layer/src/tas256x-codec.c
+TAS256X AMP OUTPUT LVL LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X AMP OUTPUT LVL RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOOST CURRENT LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOOST CURRENT RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOOST VOLTAGE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOOST VOLTAGE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP ATTACK RATE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP ATTACK RATE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP ATTACK STEP LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP ATTACK STEP RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP ENABLE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP ENABLE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP HOLD TIME LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP HOLD TIME RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP MUTE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP MUTE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP THR LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOP THR RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOSD THR LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BOSD THR RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BROWNOUT SHUTDOWN LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X BROWNOUT SHUTDOWN RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X CLASSH TIMER LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X CLASSH TIMER RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM ATTACK STEP LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM ATTACK STEP RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM ATTACT RATE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM ATTACT RATE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM INFLECTION POINT LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM INFLECTION POINT RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM MAX ATTN LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM MAX ATTN RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM RELEASE RATE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM RELEASE RATE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM RELEASE STEP LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM RELEASE STEP RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM SLOPE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM SLOPE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM THR MAX LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM THR MAX RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM THR MIN LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIM THR MIN RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIMITER SWITCH LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X LIMITER SWITCH RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X PLAYBACK VOLUME LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X PLAYBACK VOLUME RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X RECEIVER ENABLE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X RECEIVER ENABLE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X RX MODE LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X RX MODE RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X VBAT LPF LEFT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X VBAT LPF RIGHT	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+TAS256X Version	asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c
+DMIC8_MIXER Switch	asoc/codecs/wcd938x/wcd938x.c
+MIC BIAS1 Standalone	asoc/codecs/wcd938x/wcd938x.c
+MIC BIAS2 Standalone	asoc/codecs/wcd938x/wcd938x.c
+MIC BIAS3 Standalone	asoc/codecs/wcd938x/wcd938x.c
+MIC BIAS4 Standalone	asoc/codecs/wcd938x/wcd938x.c
+Codec CLK Source	asoc/lahaina.c
+DAI Clocks	asoc/lahaina.c
+DAI Mode	asoc/lahaina.c
+DAI Polarity	asoc/lahaina.c
+Force Frame32	asoc/lahaina.c
+Static MCLK Mode	asoc/lahaina.c
+AFE Dynamic Bitrate	asoc/msm-dai-q6-v2.c
+SBM Delay	asoc/msm-dai-q6-v2.c
+SEC_MI2S_RX AFE A2dp Suspend	asoc/msm-dai-q6-v2.c
+SEC_MI2S_RX AFE Dynamic Bitrate	asoc/msm-dai-q6-v2.c
+SEC_MI2S_RX AFE Input Bit Format	asoc/msm-dai-q6-v2.c
+SEC_MI2S_RX AFE Input Channels	asoc/msm-dai-q6-v2.c
+SEC_MI2S_RX AFE Peer Mtu	asoc/msm-dai-q6-v2.c
+SEC_MI2S_RX Encoder Config	asoc/msm-dai-q6-v2.c
+SEC_MI2S_RX SBM Delay	asoc/msm-dai-q6-v2.c
+QUAT_TDM_RX_7 Port Mixer TERT_TDM_TX_7	asoc/msm-pcm-routing-auto.c
+SEC_TDM_RX_0 ADM Channels	asoc/msm-pcm-routing-auto.c
+SEC_TDM_TX_0 ADM Channels	asoc/msm-pcm-routing-auto.c
+TERT_TDM_RX_0 ADM Channels	asoc/msm-pcm-routing-auto.c
+CDC_DMA_RX_0_VI_FB_MUX	asoc/msm-pcm-routing-v2.c
+CDC_DMA_RX_1_VI_FB_MUX	asoc/msm-pcm-routing-v2.c
+FNN STM Audio Tx INT3_MI2S	asoc/msm-pcm-routing-v2.c
+FNN STM Audio Tx PRIMARY_TDM	asoc/msm-pcm-routing-v2.c
+FNN STM Audio Tx QUIN_TDM_TX_0	asoc/msm-pcm-routing-v2.c
+FNN STM Audio Tx SLIMBUS_0	asoc/msm-pcm-routing-v2.c
+FNN STM Audio Tx TERT_MI2S	asoc/msm-pcm-routing-v2.c
+FNN STM Audio Tx TX_CDC_DMA_TX_3	asoc/msm-pcm-routing-v2.c
+FNN STM Audio Tx VA_CDC_DMA_TX_0	asoc/msm-pcm-routing-v2.c
+FNN STM Voice Tx INT3_MI2S	asoc/msm-pcm-routing-v2.c
+FNN STM Voice Tx QUIN_TDM_TX_0	asoc/msm-pcm-routing-v2.c
+FNN STM Voice Tx SLIMBUS_0	asoc/msm-pcm-routing-v2.c
+FNN STM Voice Tx TERT_MI2S	asoc/msm-pcm-routing-v2.c
+FNN STM Voice Tx TX_CDC_DMA_TX_3	asoc/msm-pcm-routing-v2.c
+FNN STM Voice Tx VA_CDC_DMA_TX_0	asoc/msm-pcm-routing-v2.c
+Incall_Music Audio Mixer MultiMedia11	asoc/msm-pcm-routing-v2.c
+Incall_Music_2 Audio Mixer MultiMedia11	asoc/msm-pcm-routing-v2.c
+MultiMedia6 Mixer SLIM_8_TX	asoc/msm-pcm-routing-v2.c
+PROXY_RX_Voice Mixer Voip	asoc/msm-pcm-routing-v2.c
+QUAT_TDM_RX_0_Voice Mixer VoiceMMode1	asoc/msm-pcm-routing-v2.c
+QUAT_TDM_RX_0_Voice Mixer VoiceMMode2	asoc/msm-pcm-routing-v2.c
+QUAT_TDM_RX_0_Voice Mixer Voip	asoc/msm-pcm-routing-v2.c
+QUIN_TDM_RX_0_Voice Mixer VoiceMMode1	asoc/msm-pcm-routing-v2.c
+QUIN_TDM_RX_0_Voice Mixer VoiceMMode2	asoc/msm-pcm-routing-v2.c
+QUIN_TDM_RX_0_Voice Mixer Voip	asoc/msm-pcm-routing-v2.c
+USB_AUDIO_RX Port Mixer SLIM_8_TX	asoc/msm-pcm-routing-v2.c
+USB_AUDIO_RX Port Mixer TX_CDC_DMA_TX_3	asoc/msm-pcm-routing-v2.c
+TX_CDC_DMA_TX_3 LOOPBACK Volume	asoc/msm-qti-pp-config.c
+USB_AUDIO_TX LOOPBACK Volume	asoc/msm-qti-pp-config.c
+Transcode Loopback Rx Volume	asoc/msm-transcode-loopback-q6-v2.c
+PRI_TDM Paired_Rx	asoc/sa6155.c
+QUAT_TDM Paired_Rx	asoc/sa6155.c
+QUIN_TDM Paired_Rx	asoc/sa6155.c
+SEC_TDM Paired_Rx	asoc/sa6155.c
+TERT_TDM Paired_Rx	asoc/sa6155.c
+Audio DHA data	asoc/sec_audio_adaptation.c
+DA data	asoc/sec_audio_adaptation.c
+LRSM data	asoc/sec_audio_adaptation.c
+Listenback Enable	asoc/sec_audio_adaptation.c
+MSP data	asoc/sec_audio_adaptation.c
+Remote Mic Vol Index	asoc/sec_audio_adaptation.c
+SA LISTENBACK RX data	asoc/sec_audio_adaptation.c
+SA LISTENBACK RX volume	asoc/sec_audio_adaptation.c
+SA data	asoc/sec_audio_adaptation.c
+SB FM RX Volume	asoc/sec_audio_adaptation.c
+SB RX Volume	asoc/sec_audio_adaptation.c
+SB enable	asoc/sec_audio_adaptation.c
+SB flatmotion	asoc/sec_audio_adaptation.c
+SB rotation	asoc/sec_audio_adaptation.c
+UPSCALER	asoc/sec_audio_adaptation.c
+VM Energy	asoc/sec_audio_adaptation.c
+VM data	asoc/sec_audio_adaptation.c
+VSP data	asoc/sec_audio_adaptation.c
+VoiceTrackInfo	asoc/sec_audio_adaptation.c
+BT SCO Rx Volume	asoc/sec_voice_adaptation.c
+DSP AEC Effect	asoc/sec_voice_adaptation.c
+Echo Ref Mute	asoc/sec_voice_adaptation.c
+Loopback Enable	asoc/sec_voice_adaptation.c
+NB Mode	asoc/sec_voice_adaptation.c
+REF LCH MUTE	asoc/sec_voice_adaptation.c
+Receiver Sensor Mode	asoc/sec_voice_adaptation.c
+Sec Set DHA data	asoc/sec_voice_adaptation.c
+Speaker Sensor Mode	asoc/sec_voice_adaptation.c
+Voice Device Info	asoc/sec_voice_adaptation.c
+Voice Isolation Mode	asoc/sec_voice_adaptation.c

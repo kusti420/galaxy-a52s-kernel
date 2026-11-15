@@ -1,0 +1,29 @@
+# Stage "modem" (synchronous: loaded by the test helper BEFORE Android's init starts).
+# These are the TARGETS in load order; build.sh resolves their dependencies with depmod over
+# bsp612/out/dist + conn/data + our modules, drops everything an earlier stage (first stage,
+# secure, display, kgsl, i2c, nfc, touch, fingerprint, power, vibrator, camera, dsp) already
+# loaded, and writes out/stage-modem/load.list. Lines: "<file>.ko [module params]".
+#
+# 1. safety net first: no panic on a modem crash / failed SSR, recovery kept on, no coredump
+a52_modem_guard.ko
+# 2. rmt_storage's shared buffer (/dev/uio0 "rmtfs"): without it rmt_storage logs "Mmap Failed
+#    for rmts (-1)...pausing execution!" (run ab-s18) and the modem cannot read its EFS
+msm_sharedmem.ko
+# 3. memshare QMI service (modem heap requests: GPS client 0 at boot, client 1 on request)
+heap_mem_ext_v01.ko
+msm_memshare.ko
+# 4. glink packet ports on the mpss edge (/dev/smd4 smd7 smd8 smd11 smdcntl8 at_mdm0 apr_apps2)
+glink_pkt.ko
+# 5. IPA (modem data path; ipam hard-depends on usb_f_gsi -> dwc3-msm). /dev/ipa must exist
+#    before Android's early-boot "write /dev/ipa 1" (ipa_fws.rc), else init creates a plain
+#    file there (run ab-s18 avc: "create ... name=ipa")
+rmnet_mem.ko
+gsim.ko
+ipam.ko
+ipanetm.ko
+# 6. rmnet (rild's rmnet_data* links, netlink kind "rmnet"); the 5.4 phone loads exactly these
+#    four. netmgrd.rc's modprobe of the ROM's 5.4 rmnet_ctl/rmnet_core then finds them loaded.
+rmnet_ctl.ko
+rmnet_core.ko
+rmnet_offload.ko
+rmnet_shs.ko

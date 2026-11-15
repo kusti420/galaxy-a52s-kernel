@@ -1,0 +1,60 @@
+/* ==== /soc/qcom,spmi@c440000/qcom,pm7325@1/pinctrl@8800/bat_thm/bat_thm_default  (r02 lines 4827-4832) ==== */
+						bat_thm_default: bat_thm_default {
+							phandle = <0x572>;
+							bias-high-impedance;
+							function = "normal";
+							pins = "gpio3";
+						};
+/* ==== /soc/qcom,spmi@c440000/qcom,pm7325@1/pinctrl@8800/chg_thm/chg_thm_default  (r02 lines 4817-4822) ==== */
+						chg_thm_default: chg_thm_default {
+							phandle = <0x573>;
+							bias-high-impedance;
+							function = "normal";
+							pins = "gpio2";
+						};
+/* ==== /soc/qcom,spmi@c440000/qcom,pm7325@1/pinctrl@8800/gpio1_adc_default  (r02 lines 4835-4840) ==== */
+					gpio1_adc_default: gpio1_adc_default {
+						phandle = <0x577>;
+						bias-high-impedance;
+						function = "normal";
+						pins = "gpio1";
+					};
+/* ==== /soc/qcom,spmi@c440000/qcom,pm7325@1/pinctrl@8800/gpio4_adc_default  (r02 lines 4842-4847) ==== */
+					gpio4_adc_default: gpio4_adc_default {
+						phandle = <0x578>;
+						bias-high-impedance;
+						function = "normal";
+						pins = "gpio4";
+					};
+/* ==== /soc/pinctrl@f000000/if_pmic_irq  (r02 lines 13605-13619) ==== */
+			if_pmic_irq: if_pmic_irq {
+				phandle = <0x5b5>;
+
+				config {
+					bias-disable;
+					input-enable;
+					drive-strength = <0x02>;
+					pins = "gpio54";
+				};
+
+				mux {
+					function = "gpio";
+					pins = "gpio54";
+				};
+			};
+/* ==== /soc/pinctrl@f000000/usbpd_irq  (r02 lines 13589-13603) ==== */
+			usbpd_irq: usbpd_irq {
+				phandle = <0x5b6>;
+
+				config {
+					bias-disable;
+					input-enable;
+					drive-strength = <0x08>;
+					pins = "gpio140";
+				};
+
+				mux {
+					function = "gpio";
+					pins = "gpio140";
+				};
+			};

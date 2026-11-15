@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * a52sxq Bluetooth (WCN6750 "moselle") for the Qualcomm 6.12 base (yupik.dtb,
+ * downstream bindings). To be included from a52sxq-conn.dtsi.
+ *
+ * Source of every value: downstream-dt/a52sxq-r02.dts (the tree the phone boots).
+ * Samsung's a52 dts files do not touch any of these nodes (grep of
+ * arch/arm64/boot/dts/samsung/a52 finds no bluetooth/se7/btfmslim override), so
+ * hardware revisions 3 and 4 are identical here: everything comes from Qualcomm's
+ * 5.4 yupik.dtsi, and the 6.12 yupik.dtsi already carries the same bt_wcn6750
+ * node. This fragment (a) states the node in full so that a change of the base
+ * cannot silently alter it, (b) fixes the two real differences (UART default-state
+ * RX bias, SLIMbus node), (c) pins what the closed HAL depends on.
+ *
+ * Consumer: closed android.hardware.bluetooth@1.0-service-qti (64-bit):
+ *   /dev/btpower (conn/bt/btpower, 5.4 ABI), /dev/ttyHS0 (alias hsuart0),
+ *   rfkill type "bluetooth" + device/extldo, /dev/btfmslim (bt_fm_slim.ko).
+ * DO NOT add a serdev child ("qcom,wcn6750-bt" under the UART): GKI has
+ * SERIAL_DEV_BUS=y and hci_uart.ko (BT_HCIUART_QCA=y); a child node under
+ * &qupv3_se7_4uart would bind hci_qca and take ttyHS0 away from the HAL.
+ */
+
+/*
+ * /dev/ttyHS0: msm_geni_serial.c uses of_alias_get_id(.., "hsuart"). The 6.12 yupik base
+ * already has "hsuart0 = &qupv3_se7_4uart" (yupik.dtsi), and an overlay cannot turn a label
+ * into an alias path anyway, so nothing is set here (2026-11-13).
+ */
+
+&soc {
+	/* same path and label as on 5.4: /soc/bt_wcn6750 */
+	bluetooth: bt_wcn6750 {
+		compatible = "qcom,wcn6750-bt";
+		pinctrl-names = "default";
+		pinctrl-0 = <&bt_en_sleep>;
+		qcom,bt-reset-gpio = <&tlmm 85 0>;	/* BT_EN */
+		qcom,bt-sw-ctrl-gpio = <&tlmm 86 0>;	/* SW_CTRL (input) */
+		qcom,wl-reset-gpio = <&tlmm 84 0>;	/* WL_EN, read only here; icnss2 owns it */
+
+		qcom,bt-vdd-io-supply = <&L19B>;	/* pm7325 l19 */
+		qcom,bt-vdd-aon-supply = <&S7B>;	/* pm7325 s7  */
+		qcom,bt-vdd-dig-supply = <&S7B>;
+		qcom,bt-vdd-rfacmn-supply = <&S7B>;
+		qcom,bt-vdd-rfa-0p8-supply = <&S7B>;
+		qcom,bt-vdd-rfa1-supply = <&S1B>;	/* pm7325 s1  */
+		qcom,bt-vdd-rfa2-supply = <&S8B>;	/* pm7325 s8  */
+		qcom,bt-vdd-ipa-2p2-supply = <&S1C>;	/* pm8350c s1 */
+		qcom,bt-vdd-asd-supply = <&L11C>;	/* pm8350c l11 */
+
+		/* <min_uV max_uV load_uA retention>, exactly the phone's 5.4 values */
+		qcom,bt-vdd-io-config = <1800000 2000000 0 1>;
+		qcom,bt-vdd-aon-config = <824000 1120000 0 1>;
+		qcom,bt-vdd-dig-config = <824000 1120000 0 1>;
+		qcom,bt-vdd-rfacmn-config = <824000 1120000 0 1>;
+		qcom,bt-vdd-rfa-0p8-config = <824000 1120000 0 1>;
+		qcom,bt-vdd-rfa1-config = <1872000 2040000 0 1>;
+		qcom,bt-vdd-rfa2-config = <1256000 1500000 0 1>;
+		qcom,bt-vdd-ipa-2p2-config = <2200000 2210000 0 1>;
+		qcom,bt-vdd-asd-config = <2800000 3544000 0 1>;
+		/*
+		 * No "tcs_cmd" reg on the phone: btpower logs "Failed to get TCS
+		 * table info" once at probe on 5.4 too; BT_CMD_SET_IPA_TCS_INFO then
+		 * returns an error the HAL tolerates (same as today).
+		 */
+	};
+};
+
+/*
+ * Regulator table of the phone (pm7325/pm8350c, downstream-dt/regulators-r02.txt),
+ * for whoever writes the regulator fragment. btpower calls regulator_set_voltage
+ * with the -config ranges above, so the rails must ALLOW these ranges:
+ *   L19B pm7325_l19   1800000..2000000  init 1800000 (init-mode 4)
+ *   S7B  pm7325_s7     535000..1120000  init  972000
+ *   S1B  pm7325_s1    1856000..2040000  init 1872000
+ *   S8B  pm7325_s8    1200000..1500000  init 1272000 (init-mode 1)
+ *   S1C  pm8350c_s1   2190000..2210000  init 2190000
+ *   L11C pm8350c_l11  2800000..3544000  init 2800000 (init-mode 4)
+ * These rails are shared with icnss2 (Wi-Fi) and the RF front end: do not pin
+ * them min==max below what the consumers request.
+ */
+
+&tlmm {
+	/* GPIO 85 BT_EN: low + pull-down until btpower drives it */
+	bt_en_sleep: bt_en_sleep {
+		mux {
+			pins = "gpio85";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio85";
+			drive-strength = <2>;
+			output-low;
+			bias-pull-down;
+		};
+	};
+};
+
+/*
+ * BT HCI UART: QUP SE7, 0x99c000, GPIO 28 CTS / 29 RTS / 30 TX / 31 RX,
+ * wake interrupt on GPIO 31, compatible "qcom,msm-geni-serial-hs" -> ttyHS0.
+ * The 6.12 base already has the node and all pin states; it is "ok" in
+ * yupik.dtsi. Only difference to the phone: in the default/shutdown state the
+ * phone pulls RX (gpio31) DOWN together with RTS (5.4 qupv3_se7_default_rtsrx),
+ * the 6.12 base pulls it UP.
+ */
+&qupv3_se7_4uart {
+	status = "ok";
+};
+
+&qupv3_se7_default_rx {
+	config {
+		/delete-property/ bias-pull-up;
+		bias-pull-down;
+	};
+};
+
+/*
+ * SLIMbus for BT audio (SCO / A2DP offload): 5.4 node was
+ *   slim_aud: slim@3ac0000 { compatible = "qcom,slim-ngd"; ...
+ *     btfmslim_codec: qca6490 { compatible = "qcom,btfmslim_slave";
+ *       elemental-addr = [00 01 21 02 17 02]; ifd ea = [00 00 21 02 17 02]; } }
+ * i.e. manufacturer 0x217, product 0x221, device index 1 (PGD) / 0 (IFD),
+ * instance 0. On the 6.12 (upstream-style) slimbus the same device is
+ * "slim217,221" with reg = <dev_index instance>; bt_fm_slim.ko builds the IFD
+ * address itself. The 6.12 yupik.dtsi has slim_msm disabled and without the
+ * ngd child, so both are added here (form copied from 6.12 lahaina.dtsi).
+ * NOT VERIFIED ON HARDWARE: qcom,ea-pc. 5.4 yupik had 0x3e0; 6.12 lahaina uses
+ * 0x350 and 6.12 yupik has none. Left out, as in 6.12 yupik.
+ */
+&slim_msm {
+	status = "ok";
+
+	ngd@1 {
+		reg = <1>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		btfmslim_codec: btfmslim-driver {
+			compatible = "slim217,221";
+			reg = <1 0>;
+		};
+	};
+};

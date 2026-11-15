@@ -1,0 +1,43 @@
+qcom dma heaps: ACK 6.18 dropped dma_heap_ops.get_pool_size
+
+The vendor hook behind the per-heap pool-size report is gone from android17-6.18, so the two
+system heaps no longer register it (the helper stays, __maybe_unused).
+
+--- a/bsp612/soc-repo/drivers/dma-buf/heaps/qcom_secure_system_heap.c
++++ b/bsp612/soc-repo/drivers/dma-buf/heaps/qcom_secure_system_heap.c
+@@ -406,7 +406,7 @@
+ 	return ERR_PTR(ret);
+ }
+ 
+-static long get_pool_size_bytes(struct dma_heap *heap)
++static long __maybe_unused get_pool_size_bytes(struct dma_heap *heap)
+ {
+ 	long total_size = 0;
+ 	int i;
+@@ -459,7 +459,6 @@
+ 
+ static const struct dma_heap_ops system_heap_ops = {
+ 	.allocate = system_heap_allocate,
+-	.get_pool_size = get_pool_size_bytes,
+ };
+ 
+ void qcom_secure_system_heap_create(const char *name, const char *secure_system_alias, int vmid)
+--- a/bsp612/soc-repo/drivers/dma-buf/heaps/qcom_system_heap.c
++++ b/bsp612/soc-repo/drivers/dma-buf/heaps/qcom_system_heap.c
+@@ -566,7 +566,7 @@
+ 	return ERR_PTR(ret);
+ }
+ 
+-static long get_pool_size_bytes(struct dma_heap *heap)
++static long __maybe_unused get_pool_size_bytes(struct dma_heap *heap)
+ {
+ 	long total_size = 0;
+ 	int i;
+@@ -580,7 +580,6 @@
+ 
+ static const struct dma_heap_ops system_heap_ops = {
+ 	.allocate = system_heap_allocate,
+-	.get_pool_size = get_pool_size_bytes,
+ };
+ 
+ void qcom_system_heap_create(const char *name, const char *system_alias, bool uncached)

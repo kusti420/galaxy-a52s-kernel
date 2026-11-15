@@ -1,0 +1,528 @@
+msm_drm (display techpack, Qualcomm r7 + Samsung panel framework): 6.18 DRM core
+
+Every change follows a 6.12 -> 6.18 change of the DRM/IOMMU/MM core API; the Samsung
+panel code (msm/samsung, S6E3FC3_AMS646YD01) needed none. Nothing in the UBWC / SSPP /
+panel command paths is touched.
+
+- drm_bridge_funcs.attach(bridge, encoder, flags): dsi, dp, dp_mst bridges take
+  the encoder argument (unused; they get it from bridge->encoder as before).
+- drm_connector_helper_funcs.mode_valid takes a const mode: sde_connector's hook is
+  const and casts for the c_conn->ops.mode_valid chain (the mode is a probed_modes entry,
+  not a const object; dsi/dp/Samsung mode_valid callees keep their prototypes).
+- drm_driver.date is gone.
+- device_match_t takes const void * (compare_name_mdp, MDP5-only path).
+- iommu_present() is gone: msm_iommu_present() (IS_ENABLED(CONFIG_IOMMU_API)); on
+  this platform the SMMU is a load dependency and the SDE context banks are components of
+  the display device, so the old call was always true when the driver bound.
+- mipi_dsi_dcs_set_tear_off() is gone: its body, mipi_dsi_dcs_write(dsi,
+  MIPI_DCS_SET_TEAR_OFF, NULL, 0) (poms TE work).
+- linux/pfn_t.h is gone: vmf_insert_mixed() takes the pfn (6.12 passed
+  PFN_DEV without PFN_MAP, i.e. not devmap: same special PTE either way on arm64).
+- drm_get_format_info(dev, format, modifier); mode_config_funcs.fb_create receives
+  the format info from the core; drm_helper_mode_fill_fb_struct() takes it too.
+- drm_device.struct_mutex is gone: the driver used it as a device-wide lock around
+  GEM frees and MADVISE; one msm_drm device, so one driver mutex (msm_drm_struct_mutex).
+- FB_EVENT_BLANK left <linux/fb.h>: the Samsung suspend/resume notifier chain
+  (msm_drm_register_notifier_client, exported) still sends it with the old value 0x09.
+- DRM bridges are refcounted: drm_bridge_attach() takes a reference and
+  drm_bridge_chain_get_first_bridge() returns one. msm_drm kzallocs/kfrees its bridges
+  (dsi, dp, dp_mst), so their refcount was 0 and the first attach would WARN ("refcount_t:
+  addition on 0; use-after-free") and saturate it. Now kref_init() before attach (msm_drm
+  keeps owning the memory; the core never reaches 0) and msm_drm_first_bridge() drops the
+  getter's reference at once (9 call sites), as 6.12 took none.
+- drm_dp_dpcd_read_link_status() returns 0 on success (was the byte count 6): the DP
+  link-status checks test for < 0, otherwise every read would be reported as a failure and
+  dp_ctrl's ACT wait loop would bail out (DP only; the A52s has no DP output).
+
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/dp/dp_ctrl.c b/drivers612/display/techpack/display-drivers/msm/dp/dp_ctrl.c
+--- a/drivers612/display/techpack/display-drivers/msm/dp/dp_ctrl.c
++++ b/drivers612/display/techpack/display-drivers/msm/dp/dp_ctrl.c
+@@ -273,7 +273,7 @@
+ 	while (--link_status_read_max_retries) {
+ 		len = drm_dp_dpcd_read_link_status(ctrl->aux->drm_aux,
+ 			link_status);
+-		if (len != DP_LINK_STATUS_SIZE) {
++		if (len < 0) {  /* bsp618: 0 on success in 6.18, no longer the byte count */
+ 			DP_ERR("DP link status read failed, err: %d\n", len);
+ 			ret = len;
+ 			break;
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/dp/dp_drm.c b/drivers612/display/techpack/display-drivers/msm/dp/dp_drm.c
+--- a/drivers612/display/techpack/display-drivers/msm/dp/dp_drm.c
++++ b/drivers612/display/techpack/display-drivers/msm/dp/dp_drm.c
+@@ -60,6 +60,7 @@
+ }
+ 
+ static int dp_bridge_attach(struct drm_bridge *dp_bridge,
++				struct drm_encoder *encoder,
+ 				enum drm_bridge_attach_flags flags)
+ {
+ 	struct dp_bridge *bridge = to_dp_bridge(dp_bridge);
+@@ -701,6 +702,8 @@
+ 	bridge->display = display;
+ 	bridge->base.funcs = &dp_bridge_ops;
+ 	bridge->base.encoder = encoder;
++	/* bsp618: refcounted bridges (6.18); msm_drm keeps owning the memory (kfree) */
++	kref_init(&bridge->base.refcount);
+ 
+ 	priv = dev->dev_private;
+ 
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/dp/dp_link.c b/drivers612/display/techpack/display-drivers/msm/dp/dp_link.c
+--- a/drivers612/display/techpack/display-drivers/msm/dp/dp_link.c
++++ b/drivers612/display/techpack/display-drivers/msm/dp/dp_link.c
+@@ -900,7 +900,7 @@
+ 
+ 	len = drm_dp_dpcd_read_link_status(link->aux->drm_aux,
+ 		link->link_status);
+-	if (len < DP_LINK_STATUS_SIZE)
++	if (len < 0)  /* bsp618: 0 on success in 6.18, no longer the byte count */
+ 		DP_ERR("DP link status read failed\n");
+ 	dp_link_parse_request(link);
+ }
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/dp/dp_mst_drm.c b/drivers612/display/techpack/display-drivers/msm/dp/dp_mst_drm.c
+--- a/drivers612/display/techpack/display-drivers/msm/dp/dp_mst_drm.c
++++ b/drivers612/display/techpack/display-drivers/msm/dp/dp_mst_drm.c
+@@ -402,6 +402,7 @@
+ /* DP MST Bridge OPs */
+ 
+ static int dp_mst_bridge_attach(struct drm_bridge *dp_bridge,
++				struct drm_encoder *encoder,
+ 				enum drm_bridge_attach_flags flags)
+ {
+ 	struct dp_mst_bridge *bridge;
+@@ -1129,6 +1130,8 @@
+ 	bridge->display = display;
+ 	bridge->base.funcs = &dp_mst_bridge_ops;
+ 	bridge->base.encoder = encoder;
++	/* bsp618: refcounted bridges (6.18); msm_drm keeps owning the memory (kfree) */
++	kref_init(&bridge->base.refcount);
+ 
+ 	priv = dev->dev_private;
+ 
+@@ -1516,7 +1519,7 @@
+ 			goto end;
+ 		}
+ 
+-		drm_bridge = drm_bridge_chain_get_first_bridge(
++		drm_bridge = msm_drm_first_bridge(
+ 				old_conn_state->best_encoder);
+ 		if (WARN_ON(!drm_bridge)) {
+ 			rc = -EINVAL;
+@@ -1571,7 +1574,7 @@
+ 			goto end;
+ 		}
+ 
+-		drm_bridge = drm_bridge_chain_get_first_bridge(
++		drm_bridge = msm_drm_first_bridge(
+ 				new_conn_state->best_encoder);
+ 		if (WARN_ON(!drm_bridge)) {
+ 			rc = -EINVAL;
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_ctrl.c b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_ctrl.c
+--- a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_ctrl.c
++++ b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_ctrl.c
+@@ -2010,9 +2010,9 @@
+ 
+ 		msm_gem_put_iova(dsi_ctrl->tx_cmd_buf, aspace);
+ 
+-		mutex_lock(&dsi_ctrl->drm_dev->struct_mutex);
++		mutex_lock(&msm_drm_struct_mutex);
+ 		msm_gem_free_object(dsi_ctrl->tx_cmd_buf);
+-		mutex_unlock(&dsi_ctrl->drm_dev->struct_mutex);
++		mutex_unlock(&msm_drm_struct_mutex);
+ 		dsi_ctrl->tx_cmd_buf = NULL;
+ 	}
+ 
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_display.c b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_display.c
+--- a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_display.c
++++ b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_display.c
+@@ -626,9 +626,9 @@
+ 	msm_gem_address_space_unregister_cb(display->aspace,
+ 			dsi_display_aspace_cb_locked, display);
+ free_gem:
+-	mutex_lock(&display->drm_dev->struct_mutex);
++	mutex_lock(&msm_drm_struct_mutex);
+ 	msm_gem_free_object(display->tx_cmd_buf);
+-	mutex_unlock(&display->drm_dev->struct_mutex);
++	mutex_unlock(&msm_drm_struct_mutex);
+ error:
+ 	return rc;
+ }
+@@ -7023,7 +7023,7 @@
+ 		return -EINVAL;
+ 
+ 	drm = encoder->dev;
+-	bridge = drm_bridge_chain_get_first_bridge(encoder);
++	bridge = msm_drm_first_bridge(encoder);
+ 	sde_conn = to_sde_connector(connector);
+ 	prev_bridge = bridge;
+ 
+@@ -9532,7 +9532,7 @@
+ 	}
+ 
+ 	dsi = &panel->mipi_device;
+-	rc = mipi_dsi_dcs_set_tear_off(dsi);
++	rc = mipi_dsi_dcs_write(dsi, MIPI_DCS_SET_TEAR_OFF, NULL, 0);
+ 
+ error:
+ 	mutex_unlock(&panel->panel_lock);
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_drm.c b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_drm.c
+--- a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_drm.c
++++ b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_drm.c
+@@ -178,6 +178,7 @@
+ }
+ 
+ static int dsi_bridge_attach(struct drm_bridge *bridge,
++			struct drm_encoder *encoder,
+ 			enum drm_bridge_attach_flags flags)
+ {
+ 	struct dsi_bridge *c_bridge = to_dsi_bridge(bridge);
+@@ -1398,7 +1399,7 @@
+ 		return 0;
+ 	}
+ 
+-	bridge = drm_bridge_chain_get_first_bridge(encoder);
++	bridge = msm_drm_first_bridge(encoder);
+ 	if (!bridge) {
+ 		DSI_DEBUG("bridge is not available\n");
+ 		return 0;
+@@ -1487,6 +1488,8 @@
+ 	bridge->display = display;
+ 	bridge->base.funcs = &dsi_bridge_ops;
+ 	bridge->base.encoder = encoder;
++	/* bsp618: refcounted bridges (6.18); msm_drm keeps owning the memory (kfree) */
++	kref_init(&bridge->base.refcount);
+ 
+ 	rc = drm_bridge_attach(encoder, &bridge->base, NULL,
+ 				DRM_BRIDGE_ATTACH_NO_CONNECTOR);
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/msm_atomic.c b/drivers612/display/techpack/display-drivers/msm/msm_atomic.c
+--- a/drivers612/display/techpack/display-drivers/msm/msm_atomic.c
++++ b/drivers612/display/techpack/display-drivers/msm/msm_atomic.c
+@@ -259,7 +259,7 @@
+ 		 * Each encoder has at most one connector (since we always steal
+ 		 * it away), so we won't call disable hooks twice.
+ 		 */
+-		bridge = drm_bridge_chain_get_first_bridge(encoder);
++		bridge = msm_drm_first_bridge(encoder);
+ 		DRM_ATOMIC_BRIDGE_CHAIN_DISABLE(bridge, old_state);
+ 
+ 		/* Right function depends upon target state. */
+@@ -387,7 +387,7 @@
+ 		if (funcs->mode_set)
+ 			funcs->mode_set(encoder, mode, adjusted_mode);
+ 
+-		bridge = drm_bridge_chain_get_first_bridge(encoder);
++		bridge = msm_drm_first_bridge(encoder);
+ 		drm_bridge_chain_mode_set(bridge, mode, adjusted_mode);
+ 		SDE_ATRACE_END("msm_set_mode");
+ 	}
+@@ -521,7 +521,7 @@
+ 		 * Each encoder has at most one connector (since we always steal
+ 		 * it away), so we won't call enable hooks twice.
+ 		 */
+-		bridge = drm_bridge_chain_get_first_bridge(encoder);
++		bridge = msm_drm_first_bridge(encoder);
+ 		DRM_ATOMIC_BRIDGE_CHAIN_PRE_ENABLE(bridge, old_state);
+ 		++bridge_enable_count;
+ 
+@@ -585,7 +585,7 @@
+ 		DRM_DEBUG_ATOMIC("bridge enable enabling [ENCODER:%d:%s]\n",
+ 				 encoder->base.id, encoder->name);
+ 
+-		bridge = drm_bridge_chain_get_first_bridge(encoder);
++		bridge = msm_drm_first_bridge(encoder);
+ 		DRM_ATOMIC_BRIDGE_CHAIN_ENABLE(bridge, old_state);
+ 	}
+ 	SDE_ATRACE_END("msm_enable");
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/msm_drv.c b/drivers612/display/techpack/display-drivers/msm/msm_drv.c
+--- a/drivers612/display/techpack/display-drivers/msm/msm_drv.c
++++ b/drivers612/display/techpack/display-drivers/msm/msm_drv.c
+@@ -99,6 +99,7 @@
+ 		    struct drm_file *file_priv);
+ 
+ static DEFINE_MUTEX(msm_release_lock);
++DEFINE_MUTEX(msm_drm_struct_mutex);
+ #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+ static BLOCKING_NOTIFIER_HEAD(msm_drm_notifier_list);
+ 
+@@ -657,7 +658,7 @@
+ 		 * Grab the entire CMA chunk carved out in early startup in
+ 		 * mach-msm:
+ 		 */
+-	} else if (!iommu_present(&platform_bus_type)) {
++	} else if (!msm_iommu_present()) {
+ 		u32 vram_size;
+ 
+ 		ret = of_property_read_u32(dev->dev->of_node,
+@@ -1166,10 +1167,10 @@
+ 	if (kms->funcs && kms->funcs->postclose)
+ 		kms->funcs->postclose(kms, file);
+ 
+-	mutex_lock(&dev->struct_mutex);
++	mutex_lock(&msm_drm_struct_mutex);
+ 	if (ctx == priv->lastctx)
+ 		priv->lastctx = NULL;
+-	mutex_unlock(&dev->struct_mutex);
++	mutex_unlock(&msm_drm_struct_mutex);
+ 
+ 	mutex_lock(&ctx->power_lock);
+ 	if (ctx->enable_refcnt) {
+@@ -1333,7 +1334,7 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	ret = mutex_lock_interruptible(&dev->struct_mutex);
++	ret = mutex_lock_interruptible(&msm_drm_struct_mutex);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1352,7 +1353,7 @@
+ 	drm_gem_object_put(obj);
+ 
+ unlock:
+-	mutex_unlock(&dev->struct_mutex);
++	mutex_unlock(&msm_drm_struct_mutex);
+ 	return ret;
+ }
+ 
+@@ -1937,7 +1938,6 @@
+ 	.fops               = &fops,
+ 	.name               = "msm_drm",
+ 	.desc               = "MSM Snapdragon DRM",
+-	.date               = "20130625",
+ 	.major              = MSM_VERSION_MAJOR,
+ 	.minor              = MSM_VERSION_MINOR,
+ 	.patchlevel         = MSM_VERSION_PATCHLEVEL,
+@@ -2110,7 +2110,7 @@
+ 	return 0;
+ }
+ 
+-static int compare_name_mdp(struct device *dev, void *data)
++static int compare_name_mdp(struct device *dev, const void *data)
+ {
+ 	return (strnstr(dev_name(dev), "mdp", strlen("mdp")) != NULL);
+ }
+@@ -2242,7 +2242,7 @@
+ 	const struct msm_kms_funcs *funcs;
+ 	struct msm_gem_address_space *aspace;
+ 
+-	if (!iommu_present(&platform_bus_type))
++	if (!msm_iommu_present())
+ 		return ERR_PTR(-ENODEV);
+ 
+ 	if ((!dev) || (!dev->dev_private))
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/msm_drv.h b/drivers612/display/techpack/display-drivers/msm/msm_drv.h
+--- a/drivers612/display/techpack/display-drivers/msm/msm_drv.h
++++ b/drivers612/display/techpack/display-drivers/msm/msm_drv.h
+@@ -1375,7 +1375,8 @@
+ 		const struct drm_mode_fb_cmd2 *mode_cmd,
+ 		struct drm_gem_object **bos);
+ struct drm_framebuffer *msm_framebuffer_create(struct drm_device *dev,
+-		struct drm_file *file, const struct drm_mode_fb_cmd2 *mode_cmd);
++		struct drm_file *file, const struct drm_format_info *info,
++		const struct drm_mode_fb_cmd2 *mode_cmd);
+ int msm_framebuffer_set_cache_hint(struct drm_framebuffer *fb,
+ 		u32 flags, u32 rd_type, u32 wr_type);
+ int msm_framebuffer_get_cache_hint(struct drm_framebuffer *fb,
+@@ -1390,7 +1391,46 @@
+ }
+ #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+ int __msm_drm_notifier_call_chain(unsigned long event, void *data);
++/*
++ * bsp618: FB_EVENT_BLANK left <linux/fb.h> with the fbdev notifier clients. The
++ * Samsung suspend/resume notifier (msm_drm_register_notifier_client) still sends it: keep
++ * the old value, which is what external clients of that exported chain compare against.
++ */
++#ifndef FB_EVENT_BLANK
++#define FB_EVENT_BLANK 0x09
+ #endif
++#endif
++
++/*
++ * bsp618: drm_device.struct_mutex is gone. The driver used it as a device-wide
++ * lock around GEM frees and madvise; there is one msm_drm device, so one driver mutex.
++ */
++extern struct mutex msm_drm_struct_mutex;
++
++/*
++ * bsp618: DRM bridges are refcounted in 6.18 and drm_bridge_chain_get_first_bridge()
++ * returns a reference. msm_drm allocates and frees its bridges itself (kzalloc/kfree, the
++ * refcount is set up with kref_init() before drm_bridge_attach()), so the reference is
++ * dropped at once: same as 6.12, where the getter took none.
++ */
++static inline struct drm_bridge *msm_drm_first_bridge(struct drm_encoder *encoder)
++{
++	struct drm_bridge *bridge = drm_bridge_chain_get_first_bridge(encoder);
++
++	drm_bridge_put(bridge);
++	return bridge;
++}
++
++/*
++ * bsp618: iommu_present(&platform_bus_type) is gone. It was true as soon as any
++ * IOMMU driver had registered for the platform bus; on this platform the SMMU (arm_smmu
++ * fork) is a load dependency of msm_drm and its context banks are components of the
++ * display device, so it is always true when the driver binds.
++ */
++static inline bool msm_iommu_present(void)
++{
++	return IS_ENABLED(CONFIG_IOMMU_API);
++}
+ 
+ static inline void __init msm_hdmi_register(void)
+ {
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/msm_fb.c b/drivers612/display/techpack/display-drivers/msm/msm_fb.c
+--- a/drivers612/display/techpack/display-drivers/msm/msm_fb.c
++++ b/drivers612/display/techpack/display-drivers/msm/msm_fb.c
+@@ -143,10 +143,9 @@
+ }
+ 
+ struct drm_framebuffer *msm_framebuffer_create(struct drm_device *dev,
+-		struct drm_file *file, const struct drm_mode_fb_cmd2 *mode_cmd)
++		struct drm_file *file, const struct drm_format_info *info,
++		const struct drm_mode_fb_cmd2 *mode_cmd)
+ {
+-	const struct drm_format_info *info = drm_get_format_info(dev,
+-								mode_cmd);
+ 	struct drm_gem_object *bos[4] = {0};
+ 	struct drm_framebuffer *fb;
+ 	int ret, i, n = info->num_planes;
+@@ -178,7 +177,7 @@
+ 		struct drm_gem_object **bos)
+ {
+ 	const struct drm_format_info *info = drm_get_format_info(dev,
+-								mode_cmd);
++								mode_cmd->pixel_format, mode_cmd->modifier[0]);
+ 	struct msm_drm_private *priv = dev->dev_private;
+ 	struct msm_kms *kms = priv->kms;
+ 	struct msm_framebuffer *msm_fb = NULL;
+@@ -267,7 +266,7 @@
+ 	for (i = 0; i < num_planes; i++)
+ 		msm_fb->base.obj[i] = bos[i];
+ 
+-	drm_helper_mode_fill_fb_struct(dev, fb, mode_cmd);
++	drm_helper_mode_fill_fb_struct(dev, fb, info, mode_cmd);
+ 
+ 	ret = drm_framebuffer_init(dev, fb, &msm_framebuffer_funcs);
+ 	if (ret) {
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/msm_gem.c b/drivers612/display/techpack/display-drivers/msm/msm_gem.c
+--- a/drivers612/display/techpack/display-drivers/msm/msm_gem.c
++++ b/drivers612/display/techpack/display-drivers/msm/msm_gem.c
+@@ -25,7 +25,6 @@
+ #include <linux/spinlock.h>
+ #include <linux/shmem_fs.h>
+ #include <linux/dma-buf.h>
+-#include <linux/pfn_t.h>
+ #include <linux/version.h>
+ #include <linux/vmalloc.h>
+ #include <linux/module.h>
+@@ -315,7 +314,7 @@
+ 	VERB("Inserting %pK pfn %lx, pa %lx", (void *)vmf->address,
+ 			pfn, pfn << PAGE_SHIFT);
+ 
+-	ret = vmf_insert_mixed(vma, vmf->address, __pfn_to_pfn_t(pfn, PFN_DEV));
++	ret = vmf_insert_mixed(vma, vmf->address, pfn);
+ out_unlock:
+ 	mutex_unlock(&msm_obj->lock);
+ out:
+@@ -820,7 +819,7 @@
+ 
+ 	mutex_lock(&msm_obj->lock);
+ 
+-	WARN_ON(!mutex_is_locked(&obj->dev->struct_mutex));
++	WARN_ON(!mutex_is_locked(&msm_drm_struct_mutex));
+ 
+ 	if (msm_obj->madv != __MSM_MADV_PURGED)
+ 		msm_obj->madv = madv;
+@@ -1084,7 +1083,7 @@
+ 
+ 	size = PAGE_ALIGN(size);
+ 
+-	if (!iommu_present(&platform_bus_type))
++	if (!msm_iommu_present())
+ 		use_vram = true;
+ 	else if ((flags & (MSM_BO_STOLEN | MSM_BO_SCANOUT)) && priv->vram.size)
+ 		use_vram = true;
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/msm_gem_prime.c b/drivers612/display/techpack/display-drivers/msm/msm_gem_prime.c
+--- a/drivers612/display/techpack/display-drivers/msm/msm_gem_prime.c
++++ b/drivers612/display/techpack/display-drivers/msm/msm_gem_prime.c
+@@ -196,7 +196,7 @@
+ 	 */
+ 	if (is_vmid_cp_pixel) {
+ 		attach_dev = kms->funcs->get_address_space_device(kms, MSM_SMMU_DOMAIN_SECURE);
+-	} else if (!iommu_present(&platform_bus_type) || is_vmid_tvm || is_vmid_cam_preview
++	} else if (!msm_iommu_present() || is_vmid_tvm || is_vmid_cam_preview
+ 			|| is_vmid_sec_display) {
+ 		attach_dev = dev->dev;
+ 		lazy_unmap = false;
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+@@ -2799,7 +2799,7 @@
+ 
+ static enum drm_mode_status
+ sde_connector_mode_valid(struct drm_connector *connector,
+-		struct drm_display_mode *mode)
++		const struct drm_display_mode *mode)
+ {
+ 	struct sde_connector *c_conn;
+ 	struct msm_resource_caps_info avail_res;
+@@ -2816,7 +2816,8 @@
+ 	sde_connector_get_avail_res_info(connector, &avail_res);
+ 
+ 	if (c_conn->ops.mode_valid)
+-		return c_conn->ops.mode_valid(connector, mode, c_conn->display,
++		/* bsp618: the helper hook is const in 6.18; the mode is a probed_modes entry */
++		return c_conn->ops.mode_valid(connector, (struct drm_display_mode *)mode, c_conn->display,
+ 				&avail_res);
+ 
+ 	/* assume all modes okay by default */
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder.c
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder.c
+@@ -6838,7 +6838,7 @@
+ 			drm_mode->hdisplay, drm_mode->vdisplay);
+ 	drm_set_preferred_mode(conn, drm_mode->hdisplay, drm_mode->vdisplay);
+ 
+-	bridge = drm_bridge_chain_get_first_bridge(encoder);
++	bridge = msm_drm_first_bridge(encoder);
+ 	if (bridge) {
+ 		SDE_DEBUG_ENC(sde_enc, "Bridge mapped to encoder\n");
+ 		/*
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder_phys_wb.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder_phys_wb.c
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder_phys_wb.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_encoder_phys_wb.c
+@@ -2375,7 +2375,7 @@
+ 	}
+ 
+ 	/* allocate gem tracking object */
+-	info = drm_get_format_info(dev, &mode_cmd);
++	info = drm_get_format_info(dev, mode_cmd.pixel_format, mode_cmd.modifier[0]);
+ 	nplanes = info->num_planes;
+ 	if (nplanes >= SDE_MAX_PLANES) {
+ 		SDE_ERROR("[enc:%d wb:%d] requested format has too many planes:%d\n",
+diff -ruN a/drivers612/display/techpack/display-drivers/msm/sde/sde_hw_reg_dma_v1.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_hw_reg_dma_v1.c
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_hw_reg_dma_v1.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_hw_reg_dma_v1.c
+@@ -1289,9 +1289,9 @@
+ 	msm_gem_address_space_unregister_cb(aspace,
+ 			sde_reg_dma_aspace_cb_locked, dma_buf);
+ free_gem:
+-	mutex_lock(&reg_dma->drm_dev->struct_mutex);
++	mutex_lock(&msm_drm_struct_mutex);
+ 	msm_gem_free_object(dma_buf->buf);
+-	mutex_unlock(&reg_dma->drm_dev->struct_mutex);
++	mutex_unlock(&msm_drm_struct_mutex);
+ fail:
+ 	kfree(dma_buf);
+ 	return ERR_PTR(rc);
+@@ -1308,9 +1308,9 @@
+ 		msm_gem_put_iova(dma_buf->buf, 0);
+ 		msm_gem_address_space_unregister_cb(dma_buf->aspace,
+ 				sde_reg_dma_aspace_cb_locked, dma_buf);
+-		mutex_lock(&reg_dma->drm_dev->struct_mutex);
++		mutex_lock(&msm_drm_struct_mutex);
+ 		msm_gem_free_object(dma_buf->buf);
+-		mutex_unlock(&reg_dma->drm_dev->struct_mutex);
++		mutex_unlock(&msm_drm_struct_mutex);
+ 	}
+ 
+ 	kfree(dma_buf);

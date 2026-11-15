@@ -1,0 +1,22 @@
+slim-qcom-ngd-ctrl: driver_override moved from platform_device into struct device
+
+Same change as upstream 6.18 qcom-ngd-ctrl.c: device_set_driver_override(&pdev->dev, name).
+The NGD child device still binds only to the ngd driver. Needed for Bluetooth audio
+(bt_fm_slim over the LPASS slimbus, loaded on 5.4 as slimbus_ngd + bt_fm_slim).
+
+--- a/bsp612/soc-repo/drivers/slimbus/qcom-ngd-ctrl.c
++++ b/bsp612/soc-repo/drivers/slimbus/qcom-ngd-ctrl.c
+@@ -1925,10 +1925,9 @@
+ 		ngd->id = id;
+ 		ngd->pdev->dev.parent = parent;
+ 
+-		ret = driver_set_override(&ngd->pdev->dev,
+-					  &ngd->pdev->driver_override,
+-					  QCOM_SLIM_NGD_DRV_NAME,
+-					  strlen(QCOM_SLIM_NGD_DRV_NAME));
++		/* 6.18: the override lives in struct device (as upstream) */
++		ret = device_set_driver_override(&ngd->pdev->dev,
++						 QCOM_SLIM_NGD_DRV_NAME);
+ 		if (ret) {
+ 			platform_device_put(ngd->pdev);
+ 			kfree(ngd);

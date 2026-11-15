@@ -1,0 +1,140 @@
+--- a/Kbuild
++++ b/Kbuild
+@@ -1,7 +1,16 @@
++ifneq ($(SOCINCLUDE),)
++LINUXINCLUDE := $(SOCINCLUDE) $(LINUXINCLUDE)
++endif
++
+ ifeq ($(CONFIG_CNSS_OUT_OF_TREE),y)
+ KBUILD_CPPFLAGS += -DCONFIG_CNSS_OUT_OF_TREE
+ endif
+ 
++# Samsung /sys/wifi (macloader) interface in icnss2
++ifeq ($(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS),y)
++KBUILD_CPPFLAGS += -DCONFIG_SEC_SS_CNSS_FEATURE_SYSFS
++endif
++
+ ifeq ($(CONFIG_CNSS2_DEBUG),y)
+ KBUILD_CPPFLAGS += -DCONFIG_CNSS2_DEBUG
+ endif
+--- a/icnss2/Makefile
++++ b/icnss2/Makefile
+@@ -16,3 +16,4 @@
+ icnss2-y += power.o
+ icnss2-y += genl.o
+ icnss2-$(CONFIG_ICNSS2_QMI) += qmi.o
++icnss2-$(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS) += sec_wifi_sysfs.o
+--- a/icnss2/main.c
++++ b/icnss2/main.c
+@@ -63,6 +63,7 @@
+ #include "debug.h"
+ #include "power.h"
+ #include "genl.h"
++#include "sec_wifi_sysfs.h"
+ 
+ #define MAX_PROP_SIZE			32
+ #define NUM_LOG_PAGES			10
+@@ -1101,7 +1102,8 @@
+ 		goto qmi_send;
+ 
+ 	/* DTSI property use-nv-mac is used to force DMS MAC address for WLAN.
+-	 * Thus assert on failure to get MAC from DMS even after retries
++	 * Without the modem there is no DMS: carry on with the firmware MAC
++	 * instead of taking the whole system down.
+ 	 */
+ 	if (priv->use_nv_mac) {
+ 		for (i = 0; i < ICNSS_DMS_QMI_CONNECTION_WAIT_RETRY; i++) {
+@@ -1114,9 +1116,8 @@
+ 			msleep(ICNSS_DMS_QMI_CONNECTION_WAIT_MS);
+ 		}
+ 		if (!priv->dms.nv_mac_not_prov && !priv->dms.mac_valid) {
+-			icnss_pr_err("Unable to get MAC from DMS after retries\n");
+-			ICNSS_ASSERT(0);
+-			return -EINVAL;
++			icnss_pr_err("Unable to get MAC from DMS after retries, using the firmware MAC\n");
++			return 0;
+ 		}
+ 	}
+ qmi_send:
+@@ -1282,6 +1283,9 @@
+ 	if (!priv)
+ 		return -ENODEV;
+ 
++	/* Samsung: give macloader time to write /sys/wifi/mac_addr and ant */
++	sec_wifi_wait_macloader();
++
+ 	set_bit(ICNSS_WLFW_EXISTS, &priv->state);
+ 	clear_bit(ICNSS_FW_DOWN, &priv->state);
+ 	clear_bit(ICNSS_FW_READY, &priv->state);
+@@ -6683,6 +6687,7 @@
+ 	icnss_debugfs_create(priv);
+ 
+ 	icnss_sysfs_create(priv);
++	sec_create_wifi_sysfs(priv);
+ 
+ 	ret = device_init_wakeup(&priv->pdev->dev, true);
+ 	if (ret)
+@@ -6817,6 +6822,7 @@
+ 
+ 	icnss_unregister_power_supply_notifier(penv);
+ 
++	sec_remove_wifi_sysfs(priv);
+ 	icnss_sysfs_destroy(priv);
+ 
+ 	complete_all(&priv->unblock_shutdown);
+--- a/icnss2/qmi.c
++++ b/icnss2/qmi.c
+@@ -30,6 +30,7 @@
+ #include <soc/qcom/of_common.h>
+ #include "wlan_firmware_service_v01.h"
+ #include "main.h"
++#include "sec_wifi_sysfs.h"
+ #include "qmi.h"
+ #include "debug.h"
+ #include "genl.h"
+@@ -1110,6 +1111,13 @@
+ 	qmi_handle_release(&priv->qmi_dms);
+ }
+ 
++static bool sec_wifi_bdf_suffix(void)
++{
++	int ant = sec_wifi_ant_info();
++
++	return ant == 1 || ant == 2 || ant == 10;
++}
++
+ static int icnss_get_bdf_file_name(struct icnss_priv *priv,
+ 				   u32 bdf_type, char *filename,
+ 				   u32 filename_len)
+@@ -1120,8 +1128,19 @@
+ 
+ 	switch (bdf_type) {
+ 	case ICNSS_BDF_ELF:
+-		if (priv->board_id == 0xFF)
++		/*
++		 * Samsung: macloader's antenna setting picks the board file
++		 * (bdwlan.elf1, .elf2; 10 = the GTX-disabled one), as on 5.4.
++		 */
++		if (priv->board_id == 0xFF && sec_wifi_bdf_suffix())
++			snprintf(filename_tmp, filename_len,
++				 ELF_BDF_FILE_NAME "%d", sec_wifi_ant_info());
++		else if (priv->board_id == 0xFF)
+ 			snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME);
++		else if (priv->board_id < 0xFF && sec_wifi_bdf_suffix())
++			snprintf(filename_tmp, filename_len,
++				 ELF_BDF_FILE_NAME_PREFIX "%02x%d",
++				 priv->board_id, sec_wifi_ant_info());
+ 		else if (priv->board_id < 0xFF)
+ 			snprintf(filename_tmp, filename_len,
+ 				 ELF_BDF_FILE_NAME_PREFIX "%02x",
+--- a/inc/icnss2.h
++++ b/inc/icnss2.h
+@@ -287,4 +287,8 @@
+ extern struct kobject *icnss_get_wifi_kobj(struct device *dev);
+ extern bool icnss_get_fw_cap(struct device *dev, enum icnss_fw_caps fw_cap);
+ extern int icnss_get_iova_info(struct device *dev, u64 *addr, u64 *size);
++/* Samsung /sys/wifi (CONFIG_SEC_SS_CNSS_FEATURE_SYSFS in icnss2) */
++extern int cnss_sysfs_get_pm_info(void);
++extern void cnss_sysfs_update_driver_status(int32_t new_status, void *version,
++					    void *softap);
+ #endif /* _ICNSS_WLAN_H_ */

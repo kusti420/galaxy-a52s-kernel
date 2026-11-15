@@ -1,0 +1,33 @@
+--- a/drivers/battery/common/sec_battery.c
++++ b/drivers/battery/common/sec_battery.c
+@@ -42,7 +42,7 @@
+ #include "battery_logger.h"
+ #include "sb_tx.h"
+ #include "sb_batt_dump.h"
+-#if IS_ENABLED(CONFIG_VBUS_NOTIFIER) && IS_ENABLED(CONFIG_LSI_IFPMIC)
++#if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
+ #include <linux/vbus_notifier.h>
+ #endif
+ 
+--- a/drivers/muic/common/muic_param.c
++++ b/drivers/muic/common/muic_param.c
+@@ -45,7 +45,7 @@
+ static int ccic_info = 1;
+ #endif
+ 
+-#if IS_BUILTIN(CONFIG_MUIC_NOTIFIER)
++#if 0 /* a52sxq: built as a module; cmdline values arrive as module params */
+ static int __init set_switch_sel(char *str)
+ {
+ 	get_option(&str, &muic_param_pmic_info);
+--- a/drivers/usb/typec/sm/sm5714/sm5714_pd.c
++++ b/drivers/usb/typec/sm/sm5714/sm5714_pd.c
+@@ -1453,7 +1453,7 @@
+ 
+ static void sm5714_disable_bc12(struct sm5714_phydrv_data *pdic_data)
+ {
+-#if defined(CONFIG_IF_CB_MANAGER)
++#if IS_ENABLED(CONFIG_IF_CB_MANAGER) /* a52sxq: was defined(); 5.4 had it =y, so BC1.2 is disabled here as on the phone */
+ 	muic_set_bc12(pdic_data->man, 0);
+ #endif
+ }

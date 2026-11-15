@@ -1,0 +1,89 @@
+# a52sxq power stack, out-of-tree against the Qualcomm 6.12 BSP (bsp612/out/lahaina).
+# Config switches follow the phone's 5.4 defconfig (lineage-a52sxq_defconfig) where the
+# donor still has them. DIRECT=1 adds sec-direct-charger + pca9468.
+# Tristate options are defined as CONFIG_x_MODULE (what the donor was built and run with on
+# its MediaTek GKI target: IS_ENABLED() true, IS_BUILTIN()/#ifdef false); bools as CONFIG_x.
+PDIC ?= 1
+DIRECT ?= 1
+PWR_M := LEDS_SM5714 REGULATOR_S2MPB03 BATTERY_SAMSUNG SB_CORE SEC_PD MFD_SM5714 CHARGER_SM5714 FUELGAUGE_SM5714 \
+ MUIC_SM5714 MUIC_NOTIFIER VBUS_NOTIFIER
+PWR_Y := BATTERY_GKI SB_PQUEUE SB_NOTIFY SB_SYSFS SB_VOTE STEP_CHARGING AFC_CHARGER \
+ AFC_CHARGER_MODE MUIC_HV MUIC_BCD_RESCAN HICCUP_CHARGER SM5714_WATER_DETECTION_ENABLE \
+ SM5714_SUPPORT_SBU SM5714_FACTORY_MODE DISABLE_LOCKSCREEN_USB_RESTRICTION DRV_SAMSUNG \
+ ANDROID_SWITCH SWITCH
+ifeq ($(PDIC),1)
+PWR_M += PDIC_NOTIFIER MUIC_SUPPORT_PDIC PDIC_SM5714 USB_TYPEC_MANAGER_NOTIFIER IF_CB_MANAGER \
+ USB_NOTIFY_LAYER USB_NOTIFIER
+PWR_Y += USB_HW_PARAM PDIC_USE_MODULE_PARAM USB_HOST_NOTIFY USB_NOTIFY_PROC_LOG USB_EXTERNAL_NOTIFY \
+ SUPPORT_USB_TYPEC_OPS USB_AUDIO_ENHANCED_DETECT_TIME
+endif
+ifeq ($(DIRECT),1)
+PWR_M += DIRECT_CHARGING CHARGER_PCA9468
+endif
+PWR_DEFS := $(foreach c,$(PWR_M),-DCONFIG_$(c)_MODULE=1) $(foreach c,$(PWR_Y),-DCONFIG_$(c)=1)
+
+ccflags-y += $(PWR_DEFS) -I$(src)/../../bsp612/soc-repo/include -I$(src)/include -I$(src)/src/battery/common \
+ -I$(src)/src/battery/charger/sm5714_charger -I$(src)/src/battery/fuelgauge/sm5714_fuelgauge \
+ -I$(src)/../../samsung612/modules/sec_core/include -Wformat
+
+obj-m += sb-core.o
+sb-core-y := src/battery/core/sb_core.o src/battery/core/sb_pqueue.o src/battery/core/sb_notify.o \
+ src/battery/core/sb_sysfs.o src/battery/core/sb_vote.o
+
+obj-m += common_muic.o
+common_muic-y := src/muic/common/muic-core.o src/muic/common/muic_notifier.o src/muic/common/muic_param.o
+
+obj-m += mfd_sm5714.o
+mfd_sm5714-y := src/mfd/sm/sm5714/sm5714_core.o src/mfd/sm/sm5714/sm5714-irq.o
+
+obj-m += src/battery/fuelgauge/sm5714_fuelgauge/sm5714_fuelgauge.o
+
+obj-m += sm5714-charger.o
+sm5714-charger-y := src/battery/charger/sm5714_charger/sm5714_charger.o \
+ src/battery/charger/sm5714_charger/sm5714_charger_oper.o
+
+obj-m += src/battery/common/sec_pd.o
+
+obj-m += muic_sm5714.o
+muic_sm5714-y := src/muic/sm/sm5714/sm5714-muic.o src/muic/sm/sm5714/sm5714-muic-afc.o
+ifeq ($(PDIC),1)
+muic_sm5714-y += src/muic/sm/sm5714/sm5714-muic-pdic.o
+endif
+
+obj-m += sec-battery.o
+sec-battery-y := $(addprefix src/battery/common/, sec_charging_modprobe.o sec_battery.o \
+ sec_battery_vote.o sec_battery_thermal.o sec_battery_sysfs.o sec_battery_dt.o \
+ sec_battery_ttf.o sec_adc.o sec_cisd.o sb_full_soc.o sec_step_charging.o)
+
+obj-m += src/switch/switch_class.o
+obj-m += src/vbus_notifier/vbus_notifier.o
+
+ifeq ($(PDIC),1)
+obj-m += pdic_notifier_module.o
+pdic_notifier_module-y := $(addprefix src/usb/typec/common/, pdic_notifier.o pdic_sysfs.o pdic_core.o pdic_misc.o pdic_param.o)
+obj-m += usb_typec_manager.o
+usb_typec_manager-y := src/usb/typec/manager/usb_typec_manager_notifier.o src/usb/typec/manager/usb_typec_manager_hwparam.o
+obj-m += src/usb/typec/manager/if_cb_manager.o
+obj-m += pdic_sm5714.o
+pdic_sm5714-y := $(addprefix src/usb/typec/sm/sm5714/, sm5714_typec.o sm5714_policy.o sm5714_pd.o)
+endif
+
+ifeq ($(PDIC),1)
+ccflags-y += -I$(src)/src/glue -I$(src)/src/usb/notify
+obj-m += src/glue/a52sxq_usb_glue.o
+obj-m += usb_notify_layer.o
+usb_notify_layer-y := $(addprefix src/usb/notify/, usb_notify.o usb_notify_sysfs.o dock_notify.o \
+ host_notify_class.o external_notify.o usblog_proc_notify.o)
+obj-m += src/usb/notify/usb_notifier.o
+endif
+
+ifeq ($(DIRECT),1)
+ccflags-y += -I$(src)/src/battery/charger/pca9468_charger
+obj-m += sec-direct-charger.o
+sec-direct-charger-y := src/battery/common/sb_pass_through.o src/battery/common/sec_direct_charger.o
+obj-m += src/battery/charger/pca9468_charger/pca9468_charger.o
+endif
+
+obj-m += src/regulator/s2mpb03/s2mpb03.o
+obj-m += src/leds54/leds-sm5714-fled.o
+obj-m += src/sec_thermistor/sec_thermistor.o

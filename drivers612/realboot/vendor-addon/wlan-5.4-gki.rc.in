@@ -1,0 +1,10 @@
+
+# Wi-Fi needs nothing here: macloader (wifi_sec.rc, post-fs-data) writes
+# /sys/kernel/icnss/wpss_boot (icnss2 provides that link on 6.12 and 6.18) and then
+# finit_module()s /vendor/lib/modules/qca_cld3_wlan.ko (5.4, refused by 6.x) and, after that
+# fails, /vendor/lib/modules/5.4-gki/qca_cld3_wlan.ko, where this kernel's wlan.ko is installed.
+# init.target.rc's "modprobe -d /vendor/lib/modules/5.4-gki qca_cld3_wlan" (on boot) finds
+# nothing on purpose (5.4-gki/modules.dep is empty), so it cannot race macloader's wpss_boot ->
+# finit_module order (the order that ran on the phone). That path is fixed in the ROM, so only ONE 6.x
+# kernel's wlan.ko can be there: installing the other kernel's add-on replaces it (Wi-Fi off on
+# the kernel whose wlan.ko is not there: vermagic refusal, nothing else breaks).

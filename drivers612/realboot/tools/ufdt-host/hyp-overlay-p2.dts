@@ -1,0 +1,55 @@
+/*
+ * Stand-in for the hypervisor resource manager's overlay(s) that phone 2's ABL (A528BXXS2DWB5)
+ * appends to the dtbo list. Content = what phone 2's live 5.4 tree shows the RM added
+ * (testdev-PHONE2/live.dtb: /hypervisor, wdt status, timer always-on). Total size of the
+ * real list = 0x4f8 bytes, measured from the ABL crash registers (out buffer 0xa1d86 = rb5 main
+ * 0xa1693 + dtbo 0x1fb + 0x4f8): build with  dtc -@ -S 1272  so totalsize matches.
+ * Fragment nodes are named f0..f3 (libufdt tries every root subnode) to stay under 1272 bytes.
+ * The empty fragment only provides the __fixups__ node this libufdt insists on.
+ */
+/dts-v1/;
+/plugin/;
+/ {
+	f0 {
+		target-path = "/";
+		__overlay__ {
+			hypervisor {
+				#address-cells = <0x02>;
+				#size-cells = <0x00>;
+				compatible = "qcom,haven-hypervisor-1.0", "qcom,haven-hypervisor", "simple-bus";
+				qcom,haven-vm {
+					compatible = "qcom,haven-vm-id-1.0", "qcom,haven-vm-id";
+					qcom,vmid = <0x03>;
+					qcom,vendor = "Qualcomm";
+				};
+				qcom,hh-watchdog {
+					compatible = "qcom,hh-watchdog";
+					interrupts = <0x00 0x00 0x04>;
+				};
+				qcom,resource-manager-rpc@039acdf92ca175e3 {
+					compatible = "qcom,resource-manager-1-0", "qcom,resource-manager", "qcom,haven-message-queue", "qcom,haven-capability";
+					reg = <0x39acdf9 0x2ca175e3 0x39acdf9 0x2ca1e571>;
+					interrupts = <0x00 0x3a0 0x01 0x00 0x3a1 0x01>;
+					qcom,free-irq-start = <0x3c0>;
+					qcom,is-full-duplex;
+					qcom,tx-message-size = <0xf0>;
+					qcom,rx-message-size = <0xf0>;
+					qcom,tx-queue-depth = <0x08>;
+					qcom,rx-queue-depth = <0x08>;
+				};
+			};
+		};
+	};
+	f1 {
+		target-path = "/soc/qcom,wdt@17c10000";
+		__overlay__ { status = "disabled"; };
+	};
+	f2 {
+		target-path = "/soc/timer";
+		__overlay__ { always-on; };
+	};
+	f3 {
+		target = <&soc>;
+		__overlay__ { };
+	};
+};

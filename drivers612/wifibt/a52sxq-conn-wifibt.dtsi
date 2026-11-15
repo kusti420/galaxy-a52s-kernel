@@ -1,0 +1,263 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * a52sxq connectivity fragment for the Qualcomm 6.12 base (bsp612 yupik.dtsi,
+ * downstream bindings): remote processors, IPA, Wi-Fi (icnss2), Bluetooth,
+ * modem glink ports, Samsung's radio UART.
+ *
+ * Source of every hardware value: downstream-dt/a52sxq-r02.dts (the merged
+ * tree the phone boots). Samsung's overlay a52sxq_kor_single_w00_r02.dts is
+ * used for hardware revisions 2..0x20 (dtbo-hw_rev 2, dtbo-hw_rev_end 0x20),
+ * so revisions 3 and 4 (both on the bench) get the SAME tree: there is no
+ * per-revision difference in anything below. (r00/r01 are older boards.)
+ *
+ * Include after yupik.dtsi, the pinctrl and the regulator fragment (labels
+ * used by the sub-fragments: S1B S7B S8B S1C L19B L11C, tlmm, apps_smmu, ...).
+ *
+ * State: sub-fragments compile-checked with cpp + dtc against yupik.dtsi
+ * (see rild/dtcheck/check.sh and STATUS.md). Not booted.
+ *
+ * What the Samsung tree does NOT have (searched a52sxq_kor_single_w00_r0x.dts
+ * and the merged tree): no AP-side SIM-detect GPIO, no antenna/RF-switch
+ * GPIO, no "sec,cp"/SAR-switch node. SIM presence and all RF front-end
+ * control are done by the modem itself (MPSS-owned pins / RFFE), so there is
+ * nothing for the AP device tree to describe. The only AP-side radio
+ * additions by Samsung are: the SE5 high-speed UART (ttyHS8, below), the
+ * "smd4" glink port (below), the grip/SAR sensor (SX9360 on I2C, belongs to
+ * the sensors fragment; it reaches rild through /dev/drb) and net_boost
+ * (a Samsung netdev tuning table, not ported).
+ */
+
+/*
+ * drivers612/wifibt copy of drivers612/conn/a52sxq-conn.dtsi (2026-11-13), changes:
+ *  - FIX: include the clock and GIC binding headers it uses (boarddt: "conn does not build:
+ *    uses GCC_QUPV3_WRAP0_S5_CLK without including the clock header").
+ *  - FIX: "qcom,wlan;" on the icnss2 node (see below).
+ *  - guards so that an overlay can take only parts of it: A52SXQ_CONN_NO_MODEM (leave
+ *    &modem_pas alone), A52SXQ_CONN_NO_IPA, A52SXQ_CONN_NO_GLINKPKT, A52SXQ_CONN_NO_HSUART
+ *    (the board tree already has the SE5 node and its pin labels), A52SXQ_CONN_NO_ALIASES.
+ */
+#include <dt-bindings/clock/qcom,gcc-sc7280.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interconnect/qcom,yupik.h>
+
+/* ------------------------------------------------------------------ */
+/* Remote processors: firmware names as the phone's images name them.  */
+/* ------------------------------------------------------------------ */
+/*
+ * 5.4 (PIL)                      file on the phone                    6.12 firmware-name
+ *   modem  qcom,firmware-name="modem"  /vendor/firmware-modem/image/modem.mdt   "modem.mdt" (base ok)
+ *   adsp   "adsp"                      /vendor/firmware_mnt/image/adsp.mdt      "adsp.mdt"  (base ok)
+ *   cdsp   "cdsp"                      /vendor/firmware_mnt/image/cdsp.mdt      "cdsp.mdt"  (base ok)
+ *   wpss   "wpss"                      /vendor/firmware/wpss.mdt (bind-mounted  "wpss.mdt"  (base says
+ *                                      from /vendor/firmware/wlan/a528b/revN,    "qca6750/wpss.mdt": wrong
+ *                                      device/samsung/a52sxq/init/wifi_firmware.rc) for this phone)
+ * Three different directories: the kernel's single firmware_class.path cannot
+ * cover them. Android: ueventd firmware_directories + the sysfs fallback
+ * (GKI has FW_LOADER_USER_HELPER=y but not ..._FALLBACK: write 1 to
+ * /proc/sys/kernel/firmware_config/force_sysfs_fallback early in init, or
+ * every load fails with -ENOENT instead of reaching ueventd). Test ramdisk:
+ * see README.md (symlink farm + firmware_class.path).
+ */
+#ifndef A52SXQ_CONN_NO_MODEM
+&modem_pas {
+	firmware-name = "modem.mdt";
+	status = "ok";
+};
+#endif
+
+&adsp_pas {
+	firmware-name = "adsp.mdt";
+};
+
+&cdsp_pas {
+	firmware-name = "cdsp.mdt";
+};
+
+&wpss_pas {
+	firmware-name = "wpss.mdt";
+};
+
+/* ------------------------------------------------------------------ */
+/* IPA v4.11 + GSI + rmnet_ipa (6.12 yupik.dtsi has none).             */
+/* ------------------------------------------------------------------ */
+#ifndef A52SXQ_CONN_NO_IPA
+#include "data/a52sxq-ipa.dtsi"
+#endif
+
+/* ------------------------------------------------------------------ */
+/* Wi-Fi: icnss2 for the WCN6750 on the WPSS (6.12 yupik.dtsi has none) */
+/* ------------------------------------------------------------------ */
+#ifndef A52SXQ_CONN_NO_WLAN
+#include "wlan/icnss2-node.dtsi"
+/*
+ * FIX (wifibt run wb1): cnss_nl, cnss_prealloc, cnss_utils and wlan_firmware_service return
+ * -ENODEV from module_init unless an available node has the boolean "qcom,wlan"
+ * (for_each_node_with_property); icnss2 then misses their symbols. conn's icnss2-node.dtsi
+ * lacks it (redwood-wlan.dtsi and ravelin-wcn6750.dtsi have it).
+ */
+/*
+ * FIX (wifibt run wb3): with the soc-wake/ep-power-save smp2p entries [612-c] qcacld logged
+ * "hif_prevent_link_low_power_states: Unable to wakeup pci ep" (EP never acknowledged
+ * wlan_ep_power_save). The phone's 5.4 icnss2 sends EP power save + soc wake over the ONE
+ * legacy entry (wlan-smp2p-out); the 6.12 driver does the same with this property.
+ */
+&icnss2 {
+	qcom,wlan;
+	qcom,wlan-legacy-ipc-transport;
+};
+#endif
+
+/* ------------------------------------------------------------------ */
+/* Bluetooth: btpower node, UART SE7 (ttyHS0), SLIMbus child            */
+/* ------------------------------------------------------------------ */
+#ifndef A52SXQ_CONN_NO_BT
+#include "bt/bt-node.dtsi"
+#endif
+
+/* ------------------------------------------------------------------ */
+/* glink_pkt ports (soc-repo glink_pkt.ko, CONFIG_QCOM_GLINK_PKT=m).    */
+/* ------------------------------------------------------------------ */
+/*
+ * The base already has at_mdm0, apr_apps2, smdcntl8, smd7, smd8, smd11 with
+ * the phone's channel names. The phone has one more (a52sxq-r02.dts,
+ * /soc/qcom,glinkpkt/qcom,glinkpkt-glinkbridge): /dev/smd4.
+ */
+#ifndef A52SXQ_CONN_NO_GLINKPKT
+&soc {
+	qcom,glinkpkt {
+		qcom,glinkpkt-glinkbridge {
+			qcom,glinkpkt-edge = "mpss";
+			qcom,glinkpkt-ch-name = "glink_bridge";
+			qcom,glinkpkt-dev-name = "smd4";
+		};
+	};
+};
+#endif
+
+/* ------------------------------------------------------------------ */
+/* rmt_storage shared memory (UIO).                                     */
+/* ------------------------------------------------------------------ */
+/*
+ * Nothing to add: yupik.dtsi 6.12 has the same node as the phone
+ * (/soc/qcom,rmtfs_sharedmem@0: compatible "qcom,sharedmem-uio", reg <0x0
+ * 0x280000>, reg-names "rmtfs", qcom,client-id <1>, qcom,vm-nav-path) and
+ * soc-repo builds the driver (msm_sharedmem.ko, CONFIG_UIO_MSM_SHAREDMEM=m).
+ * reg address 0 = the 2.5 MiB are allocated at probe (dma_alloc), then
+ * assigned to the modem VM through the hypervisor. The phone's tree does NOT
+ * set qcom,guard-memory, so no 4K guard pages are added (the property would
+ * make the driver allocate size + 8K and hide the two guard pages).
+ * UIO name seen by rmt_storage: "rmtfs", version "1.0", map0 size 0x280000.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Samsung radio UART: QUP SE5 as high-speed UART, /dev/ttyHS8.         */
+/* ------------------------------------------------------------------ */
+/*
+ * Samsung overlay fragment@81/82 (a52sxq_kor_single_w00_r02.dts lines
+ * 5216-5300): alias hsuart8 = /soc/qcom,qup_hsuart@994000, compatible
+ * "qcom,msm-geni-serial-hs", GIC_SPI 606, pins gpio22 (TX) / gpio23 (RX),
+ * function qup05, always-on-clock. ueventd.qcom.rc: "/dev/ttyHS8 0660 root
+ * radio". Which process opens it was not caught in the blob inventory's
+ * snapshot (candidates: rild factory/AT path, Samsung "DR" debug bridge):
+ * UNVERIFIED consumer, so the node is written but left disabled; enable it
+ * when the Android boot shows who wants ttyHS8.
+ *
+ * Conflict to resolve at the same time: in the 6.12 base the same SE5 is the
+ * debug console (qupv3_se5_2uart, "qcom,geni-debug-uart", serial0, chosen
+ * stdout-path). On the A52s these pins are not a console. When enabling the
+ * node below, set &qupv3_se5_2uart status = "disabled" and drop stdout-path.
+ */
+#ifndef A52SXQ_CONN_NO_HSUART
+#ifndef A52SXQ_CONN_NO_ALIASES	/* an overlay cannot resolve a label in /aliases */
+/ {
+	aliases {
+		hsuart8 = &qupv3_se5_2hsuart;
+	};
+};
+#endif
+
+&tlmm {
+	qupv3_se5_2hsuart_pins: qupv3_se5_2hsuart_pins {
+		/* values: a52sxq-r02.dts /soc/pinctrl@f000000/qupv3_se5_2hsuart_pins */
+		qupv3_se5_2hsuart_tx_active: qupv3_se5_2hsuart_tx_active {
+			mux {
+				pins = "gpio22";
+				function = "qup05";
+			};
+
+			config {
+				pins = "gpio22";
+				drive-strength = <2>;
+				bias-pull-up;
+			};
+		};
+
+		qupv3_se5_2hsuart_rx_active: qupv3_se5_2hsuart_rx_active {
+			mux {
+				pins = "gpio23";
+				function = "qup05";
+			};
+
+			config {
+				pins = "gpio23";
+				drive-strength = <2>;
+				bias-pull-down;
+			};
+		};
+
+		qupv3_se5_2hsuart_tx_sleep: qupv3_se5_2hsuart_tx_sleep {
+			mux {
+				pins = "gpio22";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio22";
+				drive-strength = <2>;
+				bias-pull-up;
+				input-enable;
+			};
+		};
+
+		qupv3_se5_2hsuart_rx_sleep: qupv3_se5_2hsuart_rx_sleep {
+			mux {
+				pins = "gpio23";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio23";
+				drive-strength = <2>;
+				bias-pull-down;
+			};
+		};
+	};
+};
+
+&qupv3_0 {
+	/*
+	 * 6.12 binding of msm_geni_serial HS (as qupv3_se7_4uart in
+	 * yupik-qupv3.dtsi): one "se-clk" + three interconnect paths instead
+	 * of the 5.4 "se-clk","m-ahb","s-ahb" + qcom,wrapper-core.
+	 */
+	qupv3_se5_2hsuart: qcom,qup_hsuart@994000 {
+		compatible = "qcom,msm-geni-serial-hs";
+		reg = <0x994000 0x4000>;
+		reg-names = "se_phys";
+		interrupts = <GIC_SPI 606 IRQ_TYPE_LEVEL_HIGH>;
+		clock-names = "se-clk";
+		clocks = <&gcc GCC_QUPV3_WRAP0_S5_CLK>;
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&qupv3_se5_2hsuart_tx_active>,
+			    <&qupv3_se5_2hsuart_rx_active>;
+		pinctrl-1 = <&qupv3_se5_2hsuart_tx_sleep>,
+			    <&qupv3_se5_2hsuart_rx_sleep>;
+		interconnect-names = "qup-core", "qup-config", "qup-memory";
+		interconnects = <&clk_virt MASTER_QUP_CORE_0 &clk_virt SLAVE_QUP_CORE_0>,
+				<&gem_noc MASTER_APPSS_PROC &cnoc2 SLAVE_QUP_0>,
+				<&aggre1_noc MASTER_QUP_0 &mc_virt SLAVE_EBI1>;
+		always-on-clock;	/* Samsung */
+		status = "disabled";	/* see comment above */
+	};
+};
+#endif

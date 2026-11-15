@@ -1,0 +1,139 @@
+arm_smmu + qcom_iommu_util (soc-repo forks): 6.18 IOMMU core
+
+The forks stay: the vendor DT's SMMUs are "qcom,qsmmu-v500" (upstream arm-smmu does not match
+it), and kgsl, msm_drm, camera, coresight-tmc and ipam call qcom_iommu_util APIs that only
+work through the qcom_iommu_ops the forked arm_smmu registers (see PORT-STATUS.md).
+
+- arm-smmu: iommu_fwspec_free() is gone (the core frees the fwspec on a failed probe).
+- arm-smmu: iommu_ops.pgsize_bitmap is gone; every paging domain carries its own from
+  allocation (as upstream 6.18: smmu->pgsize_bitmap, narrowed to the io-pgtable's on attach
+  as before), and the global "restricted during device attach" accumulation goes.
+- arm-smmu: iommu_domain_ops.enable_nesting is gone (iommufd nest parents replaced it); the
+  vendor stack has no caller.
+- io-pgtable-fast, qcom-io-pgtable-alloc: the struct-page helpers __iommu_alloc_pages() /
+  __iommu_free_pages() of the 6.12 drivers/iommu/iommu-pages.h are gone; local versions over
+  iommu_alloc_pages_node_sz()/iommu_free_pages() (same NR_IOMMU_PAGES /
+  NR_SECONDARY_PAGETABLE accounting). Every caller allocates and frees single pages.
+
+--- a/bsp612/soc-repo/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/bsp612/soc-repo/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -1789,6 +1789,7 @@
+ static struct iommu_domain *arm_smmu_domain_alloc_paging(struct device *dev)
+ {
+ 	struct arm_smmu_domain *smmu_domain;
++	struct arm_smmu_master_cfg *cfg = dev_iommu_priv_get(dev);
+ 
+ 	/*
+ 	 * Allocate the domain and initialise some of its data structures.
+@@ -1804,6 +1805,11 @@
+ 	spin_lock_init(&smmu_domain->sync_lock);
+ 	spin_lock_init(&smmu_domain->iotlb_gather_lock);
+ 	smmu_domain->secure_vmid = VMID_INVAL;
++	/*
++	 * bsp618/port: iommu_ops.pgsize_bitmap is gone in 6.18, every paging domain carries its
++	 * own from allocation (as upstream); attach still narrows it to the io-pgtable's.
++	 */
++	smmu_domain->domain.pgsize_bitmap = cfg->smmu->pgsize_bitmap;
+ 
+ 	return &smmu_domain->domain;
+ }
+@@ -2780,7 +2786,7 @@
+ out_cfg_free:
+ 	kfree(cfg);
+ out_free:
+-	iommu_fwspec_free(dev);
++	/* bsp618/port: iommu_fwspec_free() is gone, the 6.18 core frees the fwspec itself */
+ 	return ERR_PTR(ret);
+ }
+ 
+@@ -2873,7 +2879,7 @@
+ 	return group;
+ }
+ 
+-static int arm_smmu_enable_nesting(struct iommu_domain *domain)
++static int __maybe_unused arm_smmu_enable_nesting(struct iommu_domain *domain)
+ {
+ 	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+ 	int ret = 0;
+@@ -3197,7 +3203,7 @@
+ 		.flush_iotlb_all	= arm_smmu_flush_iotlb_all,
+ 		.iotlb_sync		= arm_smmu_iotlb_sync,
+ 		.iova_to_phys		= arm_smmu_iova_to_phys,
+-		.enable_nesting		= arm_smmu_enable_nesting,
++		/* bsp618/port: iommu_domain_ops.enable_nesting is gone in 6.18 (iommufd nest parents) */
+ 		.set_pgtable_quirks	= arm_smmu_set_pgtable_quirks,
+ 		.free			= arm_smmu_domain_free,
+ 	},
+@@ -3214,7 +3220,6 @@
+ 		.of_xlate		= arm_smmu_of_xlate,
+ 		.get_resv_regions	= arm_smmu_get_resv_regions,
+ 		.def_domain_type	= arm_smmu_def_domain_type,
+-		.pgsize_bitmap		= -1UL, /* Restricted during device attach */
+ 		.owner			= THIS_MODULE,
+ 		.default_domain_ops	= &arm_smmu_ops.domain_ops,
+ 	},
+@@ -3607,10 +3612,6 @@
+ 	if (smmu->features & ARM_SMMU_FEAT_FMT_AARCH64_64K)
+ 		smmu->pgsize_bitmap |= SZ_64K | SZ_512M;
+ 
+-	if (arm_smmu_ops.iommu_ops.pgsize_bitmap == -1UL)
+-		arm_smmu_ops.iommu_ops.pgsize_bitmap = smmu->pgsize_bitmap;
+-	else
+-		arm_smmu_ops.iommu_ops.pgsize_bitmap |= smmu->pgsize_bitmap;
+ 	dev_notice(smmu->dev, "\tSupported page sizes: 0x%08lx\n",
+ 		   smmu->pgsize_bitmap);
+ 
+--- a/bsp612/soc-repo/drivers/iommu/io-pgtable-fast.c
++++ b/bsp612/soc-repo/drivers/iommu/io-pgtable-fast.c
+@@ -21,6 +21,24 @@
+ #include <linux/qcom-io-pgtable.h>
+ #include "drivers/iommu/iommu-pages.h"
+ 
++/*
++ * bsp618/port: the struct-page helpers of the 6.12 iommu-pages.h are gone in 6.18 (virtual
++ * address + folio API with the same NR_IOMMU_PAGES / NR_SECONDARY_PAGETABLE accounting).
++ * Every caller here allocates and frees single pages.
++ */
++static inline struct page *__iommu_alloc_pages(gfp_t gfp, int order)
++{
++	void *virt = iommu_alloc_pages_node_sz(NUMA_NO_NODE, gfp, PAGE_SIZE << order);
++
++	return virt ? virt_to_page(virt) : NULL;
++}
++
++static inline void __iommu_free_pages(struct page *page, int order)
++{
++	if (page)
++		iommu_free_pages(page_address(page));
++}
++
+ #define AV8L_FAST_MAX_ADDR_BITS		48
+ 
+ /* Page table bits */
+--- a/bsp612/soc-repo/drivers/iommu/qcom-io-pgtable-alloc.c
++++ b/bsp612/soc-repo/drivers/iommu/qcom-io-pgtable-alloc.c
+@@ -12,6 +12,24 @@
+ #include <soc/qcom/secure_buffer.h>
+ #include "drivers/iommu/iommu-pages.h"
+ 
++/*
++ * bsp618/port: the struct-page helpers of the 6.12 iommu-pages.h are gone in 6.18 (virtual
++ * address + folio API with the same NR_IOMMU_PAGES / NR_SECONDARY_PAGETABLE accounting).
++ * Every caller here allocates and frees single pages.
++ */
++static inline struct page *__iommu_alloc_pages(gfp_t gfp, int order)
++{
++	void *virt = iommu_alloc_pages_node_sz(NUMA_NO_NODE, gfp, PAGE_SIZE << order);
++
++	return virt ? virt_to_page(virt) : NULL;
++}
++
++static inline void __iommu_free_pages(struct page *page, int order)
++{
++	if (page)
++		iommu_free_pages(page_address(page));
++}
++
+ struct io_pgtable_pool {
+ 	u32 vmid;
+ 	struct kref ref;

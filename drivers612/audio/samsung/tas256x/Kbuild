@@ -1,0 +1,22 @@
+# TI TAS256x smart amplifier (Samsung A52s 5.4 techpack/audio/asoc/codecs/tas256x), out-of-tree for 6.12.
+# Module name kept as on 5.4: tas256x_dlkm.ko. Config set = techpack config/lahaina_a52s.conf.
+# AUDIO_ROOT: the 6.12 legacy audio techpack (for <dsp/apr_audio-v2.h>).
+AUDIO_ROOT ?= $(abspath $(src)/../../audio-kernel)
+ifeq ($(wildcard $(AUDIO_ROOT)/include/dsp/apr_audio-v2.h),)
+AUDIO_ROOT := $(abspath $(src)/../../../../donors/audio-kernel)
+endif
+SEC_AUDIO ?= $(abspath $(src)/../sec_audio)
+
+ccflags-y += -I$(src) -I$(src)/include -I$(SEC_AUDIO)/include \
+	-I$(AUDIO_ROOT)/include -I$(AUDIO_ROOT)/include/uapi -I$(AUDIO_ROOT)/include/uapi/audio \
+	-include $(AUDIO_ROOT)/config/lahainaautoconf.h \
+	-DCONFIG_SND_SOC_TAS256x=1 -DCONFIG_TAS256X_REGMAP=1 -DCONFIG_TAS256X_CODEC=1 \
+	-DCONFIG_TAS256X_MISC=1 -DCONFIG_TAS25XX_ALGO=1 -DCONFIG_TAS25XX_CALIB_VAL_BIG=1 \
+	-DCONFIG_PLATFORM_QCOM=1 -DCONFIG_SND_SOC_SAMSUNG_AUDIO=1
+
+obj-m += tas256x_dlkm.o
+tas256x_dlkm-y := os_layer/src/tas256x-codec.o os_layer/src/tas256x-regmap.o \
+	physical_layer/src/tas256x.o logical_layer/src/tas256x-logic.o \
+	algo/src/tas25xx-algo-common.o algo/src/tas25xx-calib.o algo/src/tas25xx-algo-intf.o \
+	algo/src/tas25xx-calib-validation.o bigdata_tas_sysfs_cb.o \
+	algo/platform/qcom/tas25xx-algo-qdsp-intf.o misc/tas256x-misc.o

@@ -1,0 +1,70 @@
+thermal: qcom: tsens: drop __init from the init callbacks
+
+The probe can be deferred (it waits for clocks/nvmem on yupik). When it runs after the
+module's init sections were freed, priv->ops->init points into freed memory that the next
+module reuses: on the A52s (2026-11-12) the call landed in qcom_ipcc_irq_fn and kCFI killed
+the kernel ("CFI failure at tsens_probe+0x1a8 ... target: qcom_ipcc_irq_fn+0x9c").
+
+diff --color -ru tsens-orig/tsens.c b/drivers/thermal/qcom/tsens.c
+--- tsens-orig/tsens.c	2026-11-12 20:25:40.459975925 +0200
++++ b/drivers/thermal/qcom/tsens.c	2026-11-12 20:25:40.460735114 +0200
+@@ -1047,7 +1047,7 @@
+ 	return ret;
+ }
+ 
+-int __init init_common(struct tsens_priv *priv)
++int init_common(struct tsens_priv *priv)
+ {
+ 	void __iomem *tm_base, *srot_base;
+ 	struct device *dev = priv->dev;
+diff --color -ru tsens-orig/tsens-v0_1.c b/drivers/thermal/qcom/tsens-v0_1.c
+--- tsens-orig/tsens-v0_1.c	2026-11-12 20:25:40.459917085 +0200
++++ b/drivers/thermal/qcom/tsens-v0_1.c	2026-11-12 20:25:40.461791619 +0200
+@@ -208,7 +208,7 @@
+ 	return 0;
+ }
+ 
+-static int __init init_8226(struct tsens_priv *priv)
++static int init_8226(struct tsens_priv *priv)
+ {
+ 	priv->sensor[0].slope = 2901;
+ 	priv->sensor[1].slope = 2846;
+@@ -220,7 +220,7 @@
+ 	return init_common(priv);
+ }
+ 
+-static int __init init_8909(struct tsens_priv *priv)
++static int init_8909(struct tsens_priv *priv)
+ {
+ 	int i;
+ 
+@@ -241,7 +241,7 @@
+ 	return init_common(priv);
+ }
+ 
+-static int __init init_8939(struct tsens_priv *priv) {
++static int init_8939(struct tsens_priv *priv) {
+ 	priv->sensor[0].slope = 2911;
+ 	priv->sensor[1].slope = 2789;
+ 	priv->sensor[2].slope = 2906;
+@@ -256,7 +256,7 @@
+ 	return init_common(priv);
+ }
+ 
+-static int __init init_9607(struct tsens_priv *priv)
++static int init_9607(struct tsens_priv *priv)
+ {
+ 	int i;
+ 
+diff --color -ru tsens-orig/tsens-v1.c b/drivers/thermal/qcom/tsens-v1.c
+--- tsens-orig/tsens-v1.c	2026-11-12 20:25:40.459933746 +0200
++++ b/drivers/thermal/qcom/tsens-v1.c	2026-11-12 20:25:40.462013564 +0200
+@@ -137,7 +137,7 @@
+ 	[TRDY] = REG_FIELD(TM_TRDY_OFF, 0, 0),
+ };
+ 
+-static int __init init_8956(struct tsens_priv *priv) {
++static int init_8956(struct tsens_priv *priv) {
+ 	priv->sensor[0].slope = 3313;
+ 	priv->sensor[1].slope = 3275;
+ 	priv->sensor[2].slope = 3320;

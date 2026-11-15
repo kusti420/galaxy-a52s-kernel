@@ -1,0 +1,93 @@
+backlight brightness               ABSENT in both
+backlight max_brightness           ABSENT in both
+backlight weakness_ccb             identical
+backlight weakness_hbm_comp        ABSENT in both
+lcd      actual_mask_brightness   identical
+lcd      adaptive_control         store body differs, same formats
+lcd      alpm                     show body differs, same formats; store body differs, same formats
+lcd      brightdot                show body differs, same formats; store body differs, same formats
+lcd      brt_avg                  show body differs, same formats
+lcd      ccd_state                show body differs, same formats
+lcd      cell_id                  show FORMAT differs: 5.4 "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n" | S23 
+lcd      conn_det                 show body differs, same formats; store body differs, same formats
+lcd      copr                     show body differs, same formats; store body differs, same formats
+lcd      copr_roi                 show body differs, same formats; store body differs, same formats
+lcd      cover_control            ABSENT in both
+lcd      demux_stress             ABSENT in both
+lcd      dia                      store body differs, same formats
+lcd      dpci                     identical
+lcd      dpci_dbg                 identical
+lcd      dpui                     identical
+lcd      dpui_dbg                 identical
+lcd      dynamic_fps_use_te       ABSENT in both
+lcd      dynamic_freq             show body differs, same formats; store body differs, same formats
+lcd      dynamic_hlpm             store body differs, same formats
+lcd      force_flip               ABSENT in both
+lcd      fp_green_circle          store body differs, same formats
+lcd      gamma_check              show body differs, same formats
+lcd      gamma_flash              show body differs, same formats; store body differs, same formats
+lcd      gct                      show body differs, same formats; store body differs, same formats
+lcd      grayspot                 store body differs, same formats
+lcd      hmt_bright               show body differs, same formats; store body differs, same formats
+lcd      hmt_on                   show body differs, same formats; store body differs, same formats
+lcd      hw_cursor                store body differs, same formats
+lcd      ioctl_power_ctrl         identical
+lcd      irc_mode                 show body differs, same formats; store body differs, same formats
+lcd      irc_onoff                ABSENT in both
+lcd      isc_defect               store body differs, same formats
+lcd      lcd_type                 show body differs, same formats
+lcd      ldu_correction           identical
+lcd      lux                      show body differs, same formats; store body differs, same formats
+lcd      mafpc_check              show body differs, same formats
+lcd      mask_brightness          store body differs, same formats
+lcd      mcd_mode                 store body differs, same formats
+lcd      mcd_resistance           ABSENT in both
+lcd      mipi_switch              ABSENT in both
+lcd      motto                    ABSENT in both
+lcd      mst                      store body differs, same formats
+lcd      octa_id                  show FORMAT differs: 5.4 "%d%d%d%02x%02x%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c\n" | S23 
+lcd      partial_disp             store body differs, same formats
+lcd      poc                      show body differs, same formats; store body differs, same formats
+lcd      poc_info                 show body differs, same formats
+lcd      poc_mca                  show body differs, same formats
+lcd      poc_onoff                ABSENT in both
+lcd      power_reduce             show body differs, same formats; store body differs, same formats
+lcd      read_copr                show body differs, same formats
+lcd      self_mask                store body differs, same formats
+lcd      self_mask_check          show body differs, same formats
+lcd      self_move                store body differs, same formats
+lcd      siop_enable              show body differs, same formats; store body differs, same formats
+lcd      spi_if_sel               store body differs, same formats
+lcd      SVC_OCTA                 show FORMAT differs: 5.4 "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n" | S23 
+lcd      SVC_OCTA_CHIPID          show FORMAT differs: 5.4 "%d%d%d%02x%02x%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c\n" | S23 
+lcd      SVC_OCTA_DDI_CHIPID      show FORMAT differs: 5.4 "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n" "%02x%02x%02x%02x%02x%02x\n" "%02x%02x%02x%02x%02x\n" | S23 
+lcd      temperature              show body differs, same formats; store body differs, same formats
+lcd      tuning                   show body differs, same formats; store body differs, same formats
+lcd      vrr                      show body differs, same formats
+lcd      vrr_lfd                  show FORMAT differs: 5.4 "- client: %s\n" "[result]\n" "\n" "fix=%d " "max=%d " "min=%d " "no support LFD\n" "scalability=%d " "scope=%s: " "scope=%s: LFD freq: %dhz ~ %dhz, div: %d ~ %d\n" | S23 "- client: %s\n" "[result]\n" "\n" "fix=%d " "max=%d " "min=%d " "no support LFD\n" "scalability=%d " "scope=%s: " "scope=%s: LFD freq: %d.%1dhz ~ %d.%1dhz, div: %d ~ %d\n"; store body differs, same formats
+lcd      vrr_state                MISSING in S23 (5.4 mode S_IRUGO|S_IWUSR|S_IWGRP)
+lcd      window_type              show body differs, same formats
+lcd      xtalk_mode               store body differs, same formats
+mdnie    accessibility            show body differs, same formats
+mdnie    afc                      show body differs, same formats
+mdnie    bypass                   show body differs, same formats
+mdnie    cabc                     show body differs, same formats
+mdnie    color_lens               show body differs, same formats; store body differs, same formats
+mdnie    hdr                      show body differs, same formats
+mdnie    hmt_color_temperature    identical
+mdnie    lcd_power                ABSENT in both
+mdnie    lcdtype                  ABSENT in both
+mdnie    light_notification       show body differs, same formats
+mdnie    lux                      ABSENT in both
+mdnie    mdnie_ldu                show body differs, same formats
+mdnie    mdnie_temp               ABSENT in both
+mdnie    mode                     show body differs, same formats
+mdnie    mode_max                 MISSING in S23 (5.4 mode 0444)
+mdnie    negative                 ABSENT in both
+mdnie    night_mode               show body differs, same formats; store body differs, same formats
+mdnie    outdoor                  show body differs, same formats
+mdnie    playspeed                ABSENT in both
+mdnie    scenario                 show body differs, same formats
+mdnie    sensorRGB                show body differs, same formats; store body differs, same formats
+mdnie    tuning                   ABSENT in both
+mdnie    whiteRGB                 show body differs, same formats

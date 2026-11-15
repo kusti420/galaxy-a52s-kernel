@@ -1,0 +1,39 @@
+#!/bin/busybox sh
+# Clean way out of a test boot: mark the log, then reboot into Download mode (the PC's
+# `heimdall print-pit` then clears the bootloader's recovery flag and Android starts).
+# On the 6.12 BSP the Download-mode request is written by sec_core.ko (PON reason 0x15 in the
+# PMK8350 SDAM, register 0x7148 bits 7:1). Fallback when sec_core is not loaded but the SDAM
+# driver is: write the same bits through the nvmem sysfs file (offset 0x48, bit 0 kept).
+# With neither, this is a plain restart and the bootloader's sticky recovery flag brings the
+# phone back into this image.
+B=/bin/busybox
+k() { echo "a52sxq-init: $*" > /dev/kmsg; }
+# Started by kexec from the 6.18 harness: do NOT go to Download mode from here. A plain restart
+# lands in the harness (bootloader's recovery flag), which reads this kernel's console from
+# ramoops and then leaves by itself. Going to Download directly would lose that log.
+case " $($B cat /proc/cmdline) " in *" a52.kexeced="*)
+	k "clean exit"
+	$B sync
+	( $B sleep 20; echo b > /proc/sysrq-trigger ) &
+	$B reboot -f
+	$B sleep 5
+	exec /rb reboot;;
+esac
+if [ "$($B cat /tmp/sec_core 2>/dev/null)" != 1 ]; then
+	DONE=0
+	for d in /sys/bus/nvmem/devices/spmi_sdam*; do
+		[ -e "$d/nvmem" ] || continue
+		case "$($B readlink -f "$d/of_node" 2>/dev/null)$($B readlink -f "$d/device/of_node" 2>/dev/null)" in *sdam@7100*) ;; *) continue;; esac
+		old=$($B dd if="$d/nvmem" bs=1 skip=72 count=1 2>/dev/null | $B hexdump -v -e '1/1 "%u"')
+		[ -n "$old" ] || continue
+		new=$(( (old & 1) | (0x15 << 1) ))
+		$B printf "\\x$($B printf %02x $new)" | $B dd of="$d/nvmem" bs=1 seek=72 count=1 conv=notrunc 2>/dev/null
+		chk=$($B dd if="$d/nvmem" bs=1 skip=72 count=1 2>/dev/null | $B hexdump -v -e '1/1 "%u"')
+		k "leave without sec_core: SDAM 0x7148 $old -> $chk (want $new) via $d"
+		[ "$chk" = "$new" ] && DONE=1
+	done
+	[ $DONE = 1 ] || k "leave WITHOUT sec_core and without SDAM: plain restart, expect to come back here"
+fi
+k "clean exit"
+$B sync
+exec /rb download

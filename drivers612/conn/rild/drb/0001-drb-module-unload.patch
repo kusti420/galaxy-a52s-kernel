@@ -1,0 +1,22 @@
+--- dev_ril_bridge.c.orig	2026-11-11 20:41:55.757013419 +0200
++++ dev_ril_bridge.c	2026-11-11 20:42:08.291648450 +0200
+@@ -296,12 +296,19 @@
+ 
+ out:
+ 	drb_info("err = %d ---\n", err);
++	kfree(drb_dev);
++	drb_dev = NULL;
+ 	return err;
+ }
+ 
+ static void __exit dev_ril_bridge_exit(void)
+ {
+ 	drb_info("\n");
++	/* 6.12 port: built as a module here (5.4 had it built in), so undo init */
++	misc_deregister(&drb_dev->miscdev);
++	skb_queue_purge(&drb_dev->sk_rx_q);
++	kfree(drb_dev);
++	drb_dev = NULL;
+ }
+ 
+ module_init(dev_ril_bridge_init);

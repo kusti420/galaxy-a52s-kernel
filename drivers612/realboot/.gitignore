@@ -1,0 +1,11 @@
+# build output (images are 100 MB each) and kbuild artifacts stay local
+/out/
+modules/dspboot/*.ko
+modules/dspboot/*.o
+modules/dspboot/*.mod
+modules/dspboot/*.mod.c
+modules/dspboot/.*.cmd
+modules/dspboot/Module.symvers
+modules/dspboot/modules.order
+modules/dspboot/.module-common.o
+tools/__pycache__/

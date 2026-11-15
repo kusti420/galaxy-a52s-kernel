@@ -1,0 +1,495 @@
+diff --color -ruN a/rmtfs/rmtfs.c b/rmtfs/rmtfs.c
+--- a/rmtfs/rmtfs.c	2026-11-14 19:15:21.259219150 +0200
++++ b/rmtfs/rmtfs.c	2026-11-14 19:19:11.679164782 +0200
+@@ -127,7 +127,7 @@
+ 	rmtfs_mem_free(rmem);
+ 
+ respond:
+-	dbgprintf("[RMTFS] close %s => %d (%d:%d)\n",
++	dbgprintf("[RMTFS] close %u => %d (%d:%d)\n",
+ 		  req.caller_id, resp.result.result, resp.result.error);
+ 
+ 	len = qmi_encode_message(&resp_buf,
+@@ -316,7 +316,7 @@
+ 	}
+ 
+ 	rmtfd = storage_get(pkt->node, req.caller_id);
+-	if (rmtfd) {
++	if (!rmtfd) {	/* a52sxq: upstream tested "if (rmtfd)" and then dereferenced NULL */
+ 		qmi_result_error(&resp.result, QMI_RMTFS_ERR_INTERNAL);
+ 		goto respond;
+ 	}
+@@ -561,6 +561,16 @@
+ 		}
+ 	}
+ 
++	/* a52sxq: logs go to a file in the test ramdisk; keep them line by line */
++	setvbuf(stdout, NULL, _IOLBF, 0);
++	setvbuf(stderr, NULL, _IONBF, 0);
++	if (use_partitions) {
++		fprintf(stderr, "rmtfs (a52sxq RAM-only build): -P is not supported\n");
++		return 1;
++	}
++	read_only = true;
++	printf("rmtfs (a52sxq RAM-only build): EFS from RAM copies only, never from a block device\n");
++
+ 	sigemptyset(&action.sa_mask);
+ 	action.sa_handler = sig_int_handler;
+ 	action.sa_flags = 0;
+@@ -568,22 +578,22 @@
+ 	sigaction(SIGINT, &action, NULL);
+ 	sigaction(SIGTERM, &action, NULL);
+ 
+-	rmem = rmtfs_mem_open();
+-	if (!rmem)
+-		return 1;
+-
++	/* a52sxq: check the RAM storage first, before the shared buffer is mapped */
+ 	ret = storage_init(storage_root, read_only, use_partitions);
+ 	if (ret) {
+ 		fprintf(stderr, "failed to initialize storage system\n");
+-		goto close_rmtfs_mem;
++		return 1;
+ 	}
+ 
++	rmem = rmtfs_mem_open();
++	if (!rmem)
++		return 1;
++
+ 	do {
+ 		ret = run_rmtfs(rprocfd);
+ 	} while (ret == -ENETRESET);
+ 
+ 	storage_exit();
+-close_rmtfs_mem:
+ 	rmtfs_mem_close(rmem);
+ 
+ 	return 0;
+diff --color -ruN a/rmtfs/sharedmem.c b/rmtfs/sharedmem.c
+--- a/rmtfs/sharedmem.c	2026-11-14 19:15:21.259304580 +0200
++++ b/rmtfs/sharedmem.c	2026-11-14 19:15:46.648422466 +0200
+@@ -5,7 +5,9 @@
+ #include <errno.h>
+ #include <fcntl.h>
+ #include <inttypes.h>
+-#ifndef ANDROID
++#if defined(A52SXQ_RAM_EFS)
++#include <endian.h>
++#elif !defined(ANDROID)
+ #include <libudev.h>
+ #else
+ #include <sys/endian.h>
+@@ -18,7 +20,9 @@
+ #include <unistd.h>
+ #include "rmtfs.h"
+ 
++#if !defined(A52SXQ_RAM_EFS)
+ static int rmtfs_mem_enumerate(struct rmtfs_mem *rmem);
++#endif
+ 
+ struct rmtfs_mem {
+ 	uint64_t address;
+@@ -27,7 +31,117 @@
+ 	int fd;
+ };
+ 
+-#ifndef ANDROID
++#if defined(A52SXQ_RAM_EFS)
++/*
++ * a52sxq (Qualcomm 6.12 BSP, kernel-only test): the buffer is msm_sharedmem's UIO device with
++ * name "rmtfs" (/sys/class/uio/uioN, map0 = physical address + size, mmap offset 0 = map0).
++ * Found by name in sysfs (no udev in the test ramdisk). The upstream qcom_rmtfs_mem and
++ * /dev/mem paths are compiled out: on this setup /proc/device-tree/reserved-memory/rmtfs* is
++ * the 6.18 harness's region that is stage-2 assigned to the modem, touching it from HLOS
++ * would fault.
++ */
++static int read_sys_hex(const char *path, uint64_t *value)
++{
++	char buf[64];
++	char *end;
++	ssize_t n;
++	int fd;
++
++	fd = open(path, O_RDONLY | O_CLOEXEC);
++	if (fd < 0)
++		return -errno;
++	n = read(fd, buf, sizeof(buf) - 1);
++	close(fd);
++	if (n <= 0)
++		return -EINVAL;
++	buf[n] = '\0';
++	errno = 0;
++	*value = strtoull(buf, &end, 16);
++	if (errno || end == buf)
++		return -EINVAL;
++	return 0;
++}
++
++static int rmtfs_mem_open_uio_by_name(struct rmtfs_mem *rmem)
++{
++	char path[PATH_MAX];
++	char name[64];
++	struct dirent *de;
++	struct stat sb;
++	DIR *dir;
++	ssize_t n;
++	int found = 0;
++	int fd;
++
++	dir = opendir("/sys/class/uio");
++	if (!dir) {
++		fprintf(stderr, "[RMTFS] no /sys/class/uio: %s\n", strerror(errno));
++		return -ENOENT;
++	}
++	while ((de = readdir(dir)) != NULL) {
++		if (strncmp(de->d_name, "uio", 3))
++			continue;
++		snprintf(path, sizeof(path), "/sys/class/uio/%s/name", de->d_name);
++		fd = open(path, O_RDONLY | O_CLOEXEC);
++		if (fd < 0)
++			continue;
++		n = read(fd, name, sizeof(name) - 1);
++		close(fd);
++		if (n <= 0)
++			continue;
++		name[n] = '\0';
++		if (name[n - 1] == '\n')
++			name[n - 1] = '\0';
++		if (strcmp(name, "rmtfs"))
++			continue;
++		found = 1;
++		break;
++	}
++	if (!found) {
++		closedir(dir);
++		fprintf(stderr, "[RMTFS] no UIO device named rmtfs (msm_sharedmem loaded?)\n");
++		return -ENOENT;
++	}
++
++	snprintf(path, sizeof(path), "/sys/class/uio/%s/maps/map0/addr", de->d_name);
++	if (read_sys_hex(path, &rmem->address) < 0) {
++		closedir(dir);
++		fprintf(stderr, "[RMTFS] cannot read %s\n", path);
++		return -EINVAL;
++	}
++	snprintf(path, sizeof(path), "/sys/class/uio/%s/maps/map0/size", de->d_name);
++	if (read_sys_hex(path, &rmem->size) < 0 || !rmem->size) {
++		closedir(dir);
++		fprintf(stderr, "[RMTFS] cannot read %s\n", path);
++		return -EINVAL;
++	}
++	snprintf(path, sizeof(path), "/dev/%s", de->d_name);
++	closedir(dir);
++
++	fd = open(path, O_RDWR | O_CLOEXEC);
++	if (fd < 0) {
++		fprintf(stderr, "[RMTFS] failed to open %s: %s\n", path, strerror(errno));
++		return -errno;
++	}
++	if (fstat(fd, &sb) < 0 || !S_ISCHR(sb.st_mode)) {
++		fprintf(stderr, "[RMTFS] %s is not a character device: refusing\n", path);
++		close(fd);
++		return -EINVAL;
++	}
++	rmem->fd = fd;
++	rmem->base = mmap(0, rmem->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++	if (rmem->base == MAP_FAILED) {
++		fprintf(stderr, "[RMTFS] failed to mmap %s: %s\n", path, strerror(errno));
++		rmem->base = NULL;
++		close(fd);
++		return -EINVAL;
++	}
++	printf("[RMTFS] shared memory: %s (uio name rmtfs) phys 0x%" PRIx64 " size 0x%" PRIx64 "\n",
++	       path, rmem->address, rmem->size);
++	return 0;
++}
++
++#elif !defined(ANDROID)
+ 
+ static int parse_hex_sysattr(struct udev_device *dev, const char *name,
+ 			     uint64_t *value)
+@@ -268,9 +382,11 @@
+ struct rmtfs_mem *rmtfs_mem_open(void)
+ {
+ 	struct rmtfs_mem *rmem;
++#if !defined(A52SXQ_RAM_EFS)
+ 	void *base;
+-	int ret;
+ 	int fd;
++#endif
++	int ret;
+ 
+ 	rmem = malloc(sizeof(*rmem));
+ 	if (!rmem)
+@@ -278,6 +394,15 @@
+ 
+ 	memset(rmem, 0, sizeof(*rmem));
+ 
++#if defined(A52SXQ_RAM_EFS)
++	ret = rmtfs_mem_open_uio_by_name(rmem);
++	if (ret < 0) {
++		free(rmem);
++		return NULL;
++	}
++	return rmem;
++#else
++
+ 	ret = rmtfs_mem_open_rfsa(rmem, 1);
+ 	if (ret < 0 && ret != -ENOENT) {
+ 		goto err;
+@@ -317,6 +442,7 @@
+ err:
+ 	free(rmem);
+ 	return NULL;
++#endif
+ }
+ 
+ int64_t rmtfs_mem_alloc(struct rmtfs_mem *rmem, size_t alloc_size)
+@@ -400,6 +526,7 @@
+ 	free(rmem);
+ }
+ 
++#if !defined(A52SXQ_RAM_EFS)
+ static int rmtfs_mem_enumerate(struct rmtfs_mem *rmem)
+ {
+ 	union {
+@@ -467,3 +594,4 @@
+ 	close(basefd);
+ 	return ret;
+ }
++#endif
+diff --color -ruN a/rmtfs/storage.c b/rmtfs/storage.c
+--- a/rmtfs/storage.c	2026-11-14 19:15:21.259321231 +0200
++++ b/rmtfs/storage.c	2026-11-14 19:16:24.318365018 +0200
+@@ -1,4 +1,5 @@
+ #include <sys/stat.h>
++#include <sys/statfs.h>
+ #include <sys/types.h>
+ #include <errno.h>
+ #include <fcntl.h>
+@@ -8,6 +9,20 @@
+ #include <unistd.h>
+ #include "rmtfs.h"
+ 
++/*
++ * a52sxq RAM-only build (drivers612/modem/userspace/patches): the EFS partitions (modemst1,
++ * modemst2, fsg, fsc) hold the phone's IMEI and RF calibration and are NEVER opened by this
++ * program. It serves only regular files on a tmpfs/ramfs (the RAM copies made by efsdump), it
++ * opens them O_RDONLY, reads each one once into a private buffer and keeps every modem write in
++ * that buffer (upstream's -r "shadow" mode, forced on). There is no read-write code path left:
++ * no O_RDWR, no pwrite(), no fdatasync(), no -P (raw partitions).
++ */
++#ifndef A52SXQ_RAM_EFS
++#error "this storage.c is the a52sxq RAM-only variant: build with -DA52SXQ_RAM_EFS (userspace/build.sh)"
++#endif
++#define A52_TMPFS_MAGIC 0x01021994
++#define A52_RAMFS_MAGIC 0x858458f6
++
+ #define MAX_CALLERS 10
+ #define STORAGE_MAX_SIZE (16 * 1024 * 1024)
+ 
+@@ -56,20 +71,48 @@
+ 
+ static int storage_populate_shadow_buf(struct rmtfd *rmtfd, const char *file);
+ 
++static int a52_on_ram_fs(int fd)
++{
++	struct statfs sfs;
++
++	if (fstatfs(fd, &sfs) < 0)
++		return 0;
++	return sfs.f_type == A52_TMPFS_MAGIC || sfs.f_type == A52_RAMFS_MAGIC;
++}
++
+ int storage_init(const char *storage_root, bool read_only, bool use_partitions)
+ {
++	struct stat sb;
++	int dfd;
+ 	int i;
+ 
+-	if (storage_root)
+-		storage_dir = storage_root;
+-
++	(void)read_only;
+ 	if (use_partitions) {
+-		if (!storage_root)
+-			storage_dir = BY_PARTLABEL_PATH;
+-		storage_use_partitions = true;
++		fprintf(stderr, "[storage] -P (raw EFS partitions) is not supported by this build: refusing\n");
++		return -1;
+ 	}
+-
+-	storage_read_only = read_only;
++	if (!storage_root) {
++		fprintf(stderr, "[storage] -o <dir with the RAM copies> is required by this build\n");
++		return -1;
++	}
++	dfd = open(storage_root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
++	if (dfd < 0 || fstat(dfd, &sb) < 0 || !S_ISDIR(sb.st_mode)) {
++		fprintf(stderr, "[storage] %s: not a directory: refusing\n", storage_root);
++		if (dfd >= 0)
++			close(dfd);
++		return -1;
++	}
++	if (!a52_on_ram_fs(dfd)) {
++		fprintf(stderr, "[storage] %s is not on tmpfs/ramfs: refusing (RAM copies only)\n", storage_root);
++		close(dfd);
++		return -1;
++	}
++	close(dfd);
++	storage_dir = storage_root;
++	storage_use_partitions = false;
++	storage_read_only = true;	/* always: modem writes stay in this process's memory */
++	printf("[storage] RAM-only: serving copies in %s (tmpfs), read-only, writes kept in memory\n",
++	       storage_dir);
+ 
+ 	for (i = 0; i < MAX_CALLERS; i++) {
+ 		rmtfds[i].id = i;
+@@ -86,25 +129,15 @@
+ 	int ret;
+ 	int fd;
+ 
+-	if (!storage_read_only) {
+-		fd = open(fspath, O_RDWR);
+-		if (fd < 0) {
+-			saved_errno = errno;
+-			fprintf(stderr, "[storage] failed to open '%s' (requested '%s'): %s\n",
+-					fspath, part->path, strerror(saved_errno));
+-			return saved_errno;
+-		}
+-		rmtfd->fd = fd;
+-		rmtfd->shadow_len = 0;
+-	} else {
+-		ret = storage_populate_shadow_buf(rmtfd, fspath);
+-		if (ret < 0) {
+-			saved_errno = errno;
+-			fprintf(stderr, "[storage] failed to open '%s' (requested '%s'): %s\n",
+-					fspath, part->path, strerror(saved_errno));
+-			return saved_errno;
+-		}
++	(void)fd;
++	ret = storage_populate_shadow_buf(rmtfd, fspath);
++	if (ret < 0) {
++		saved_errno = errno ? errno : EINVAL;
++		fprintf(stderr, "[storage] failed to open '%s' (requested '%s'): %s\n",
++				fspath, part->path, strerror(saved_errno));
++		return saved_errno;
+ 	}
++	printf("[storage] open %s -> %s (%zu bytes in memory)\n", part->path, fspath, rmtfd->shadow_len);
+ 
+ 	return 0;
+ }
+@@ -223,15 +256,11 @@
+ {
+ 	ssize_t n;
+ 
+-	if (!storage_read_only) {
+-		n = pread(rmtfd->fd, buf, nbyte, offset);
+-	} else {
+-		n = MIN((ssize_t)nbyte, (ssize_t)rmtfd->shadow_len - offset);
+-		if (n > 0)
+-			memcpy(buf, (char*)rmtfd->shadow_buf + offset, n);
+-		else
+-			n = 0;
+-	}
++	n = MIN((ssize_t)nbyte, (ssize_t)rmtfd->shadow_len - offset);
++	if (n > 0)
++		memcpy(buf, (char*)rmtfd->shadow_buf + offset, n);
++	else
++		n = 0;
+ 
+ 	if (n < nbyte)
+ 		memset((char*)buf + n, 0, nbyte - n);
+@@ -244,10 +273,7 @@
+ 	size_t new_len = offset + nbyte;
+ 	void *new_buf;
+ 
+-	if (!storage_read_only)
+-		return pwrite(rmtfd->fd, buf, nbyte, offset);
+-
+-	if (new_len >= STORAGE_MAX_SIZE) {
++	if (offset < 0 || new_len >= STORAGE_MAX_SIZE) {
+ 		fprintf(stderr, "write to %zd bytes exceededs max size\n", new_len);
+ 		errno = -EINVAL;
+ 		return -1;
+@@ -260,6 +286,7 @@
+ 			return -1;
+ 		}
+ 
++		memset((char *)new_buf + rmtfd->shadow_len, 0, new_len - rmtfd->shadow_len);
+ 		rmtfd->shadow_buf = new_buf;
+ 		rmtfd->shadow_len = new_len;
+ 	}
+@@ -271,10 +298,8 @@
+ 
+ int storage_sync(struct rmtfd *rmtfd)
+ {
+-	if (storage_read_only)
+-		return 0;
+-	
+-	return fdatasync(rmtfd->fd);
++	(void)rmtfd;
++	return 0;	/* nothing to sync: writes live in memory only */
+ }
+ 
+ static int storage_populate_shadow_buf(struct rmtfd *rmtfd, const char *file)
+@@ -285,17 +310,28 @@
+ 	int ret;
+ 	int fd;
+ 
+-	fd = open(file, O_RDONLY);
++	struct stat sb;
++	ssize_t got = 0;
++
++	fd = open(file, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+ 	if (fd < 0)
+ 		return -1;
+ 
+-	len = lseek(fd, 0, SEEK_END);
+-	if (len < 0) {
++	/* only regular files on tmpfs/ramfs: never a block device, never a disk file system */
++	if (fstat(fd, &sb) < 0 || !S_ISREG(sb.st_mode) || !a52_on_ram_fs(fd)) {
++		fprintf(stderr, "[storage] %s is not a regular file on tmpfs/ramfs: refusing\n", file);
++		errno = EPERM;
+ 		ret = -1;
+ 		goto err_close_fd;
+ 	}
+ 
+-	lseek(fd, 0, SEEK_SET);
++	len = sb.st_size;
++	if (len <= 0 || len >= STORAGE_MAX_SIZE) {
++		fprintf(stderr, "[storage] %s: size %zd out of range: refusing\n", file, len);
++		errno = EINVAL;
++		ret = -1;
++		goto err_close_fd;
++	}
+ 
+ 	buf = calloc(1, len);
+ 	if (!buf) {
+@@ -303,14 +339,23 @@
+ 		goto err_close_fd;
+ 	}
+ 
+-	n = read(fd, buf, len);
+-	if (n < 0) {
++	while (got < len) {
++		n = read(fd, (char *)buf + got, len - got);
++		if (n < 0 && errno == EINTR)
++			continue;
++		if (n <= 0)
++			break;
++		got += n;
++	}
++	if (got != len) {
++		free(buf);
++		errno = EIO;
+ 		ret = -1;
+ 		goto err_close_fd;
+ 	}
+ 
+ 	rmtfd->shadow_buf = buf;
+-	rmtfd->shadow_len = n;
++	rmtfd->shadow_len = got;
+ 
+ 	ret = 0;
+ 

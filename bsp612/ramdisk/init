@@ -1,0 +1,258 @@
+#!/bin/busybox sh
+# Bring-up init for the Qualcomm 6.12 BSP on the a52sxq (GKI 6.12.81 Image + vendor modules).
+# Adapted from ramdisk/init of the 6.18 flow; same contract for test-cycle.sh:
+# USB gadget 1209:a528 (NCM network 172.16.<net>.1 + ACM), telnet shell, /leave, /tmp/crashed,
+# pstore, hypervisor watchdog, dead-man timer into Download mode.
+# Differences from 6.18:
+#  - GKI has no built-in SoC driver and no devtmpfs: /dev is a tmpfs filled from /sys (mkdevs),
+#    and the first-stage modules in /lib/modules/load.list are insmod'ed in order before the
+#    gadget is set up. Each insmod is announced in the kernel log BEFORE it runs, so the
+#    ramoops console of a boot that died names the module that killed it.
+#  - Crash guard: the module a crashed boot died in (and every module skipped before) is
+#    skipped on the next boot.
+#  - dwc3-msm starts in role NONE: device mode is forced through its "mode" attribute.
+#  - Download mode needs sec_core.ko (PON reason 0x15 in the PMK8350 SDAM).
+# Cmdline: a52.net=<n> (172.16.<n>.1, default 42), a52.wdt=<s> (default 30; 0 = off),
+# a52.deadman=<s> (default 300; 0 = never; `touch /tmp/keep` cancels),
+# a52.skip=<mod1,mod2> (never load these), a52.nomods=1 (load nothing: GKI only).
+B=/bin/busybox
+$B mkdir -p /proc /sys /dev /tmp /config /run
+$B mount -t proc proc /proc
+$B mount -t sysfs sysfs /sys
+# devtmpfs exists only if the kernel was built with it (not in GKI); else tmpfs + mknod.
+$B mount -t devtmpfs devtmpfs /dev 2>/dev/null || $B mount -t tmpfs -o mode=755 tmpfs /dev
+[ -c /dev/null ] || $B mknod -m 666 /dev/null c 1 3
+[ -c /dev/zero ] || $B mknod -m 666 /dev/zero c 1 5
+[ -c /dev/kmsg ] || $B mknod -m 600 /dev/kmsg c 1 11
+[ -c /dev/urandom ] || $B mknod -m 666 /dev/urandom c 1 9
+[ -c /dev/random ] || $B mknod -m 666 /dev/random c 1 8
+[ -c /dev/tty ] || $B mknod -m 666 /dev/tty c 5 0
+[ -c /dev/console ] || $B mknod -m 600 /dev/console c 5 1
+[ -c /dev/ptmx ] || $B mknod -m 666 /dev/ptmx c 5 2
+exec </dev/null >/dev/null 2>&1
+$B mkdir -p /dev/pts
+$B mount -t devpts devpts /dev/pts
+$B mount -t tmpfs tmpfs /tmp
+$B mount -t configfs configfs /config
+$B mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+$B mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+for a in sh ls cat echo dmesg mount umount ifconfig ip sleep ps kill grep sed head tail cut tr wc dd hexdump find mkdir rm ln cp mv sync reboot poweroff vi top free df lsmod insmod rmmod modprobe uname date printf seq test true false stat touch chmod devmem setsid watchdog killall pkill mknod basename readlink sort uniq usleep timeout; do
+	[ -e /bin/$a ] || $B ln -s busybox /bin/$a
+done
+export PATH=/bin:/sbin:/usr/bin
+log() { echo "a52sxq-init: $*" > /dev/kmsg; }
+
+# Without devtmpfs nothing creates device nodes: make them from sysfs (uevent has
+# MAJOR/MINOR/DEVNAME). Also installed as /bin/mkdevs for use from the telnet shell.
+mkdevs() {
+	for u in /sys/dev/char/*/uevent /sys/dev/block/*/uevent; do
+		[ -r "$u" ] || continue
+		MAJOR=; MINOR=; DEVNAME=
+		while IFS='=' read -r k v; do
+			case "$k" in MAJOR) MAJOR=$v;; MINOR) MINOR=$v;; DEVNAME) DEVNAME=$v;; esac
+		done < "$u"
+		[ -n "$DEVNAME" ] && [ -n "$MAJOR" ] || continue
+		[ -e "/dev/$DEVNAME" ] && continue
+		case "$u" in /sys/dev/block/*) t=b;; *) t=c;; esac
+		case "$DEVNAME" in */*) mkdir -p "/dev/${DEVNAME%/*}";; esac
+		mknod -m 660 "/dev/$DEVNAME" $t "$MAJOR" "$MINOR" 2>/dev/null
+	done
+}
+NODEVTMPFS=1
+grep -q "^devtmpfs /dev" /proc/mounts && NODEVTMPFS=0
+[ $NODEVTMPFS = 1 ] && mkdevs
+
+# ---------------------------------------------------------------- crash guard
+# The previous boot's kernel log survives in ramoops. If it was one of our test boots and did
+# not end with "clean exit", it hung (watchdog bite) or panicked: keep the log for the PC,
+# find the module it died in, and leave quickly.
+CRASHED=0
+SKIP=
+PREV=/sys/fs/pstore/console-ramoops-0
+if [ -e $PREV ]; then
+	cp $PREV /tmp/prev-console.txt
+	if grep -q "a52sxq-init: start" $PREV && ! grep -q "a52sxq-init: clean exit" $PREV; then
+		CRASHED=1; touch /tmp/crashed
+		# modules skipped by that boot stay skipped
+		SKIP=$(grep "a52sxq-init: skip " $PREV | sed 's/.*a52sxq-init: skip \([^ ]*\).*/\1/' | sort -u | tr '\n' ' ')
+		# the boot died inside the module stage if its last stage line is an "insmod"
+		LASTST=$(grep "a52sxq-init: \(insmod\|modules done\)" $PREV | tail -1)
+		case "$LASTST" in
+		*"a52sxq-init: insmod "*)
+			CULPRIT=$(echo "$LASTST" | sed 's/.*a52sxq-init: insmod \([^ ]*\).*/\1/')
+			SKIP="$SKIP $CULPRIT"
+			echo "$CULPRIT" > /tmp/culprit;;
+		esac
+	fi
+fi
+log "start bsp612 (previous test boot crashed: $CRASHED)"
+
+# ---------------------------------------------------------------- started by kexec?
+# Since 2026-11-12 this ramdisk is normally started by kexec from the 6.18 harness
+# (/kexec-run adds a52.kexeced=<name>). Then the harness is the safety net: no safe mode here,
+# and the inherited hypervisor watchdog (milliseconds of busy time, at most 60 s) is pet
+# before every module and switched off once the shell is reachable.
+KEXECED=0
+case " $(cat /proc/cmdline) " in *" a52.kexeced="*) KEXECED=1;; esac
+WRAW=/sys/module/hhwdt/parameters/raw
+if [ $KEXECED = 1 ]; then
+	CRASHED=0; rm -f /tmp/crashed
+	insmod /lib/modules/hhwdt.ko 2>/dev/null
+	[ -e $WRAW ] && log "kexec'd boot: petting the inherited watchdog" || log "kexec'd boot: hhwdt missing, inherited watchdog NOT pet"
+fi
+pet() { [ $KEXECED = 1 ] && [ -e $WRAW ] && echo "7 0 0" > $WRAW; return 0; }
+DEADMAN=300
+WDT=0
+NET=42
+NOMODS=0
+for w in $(cat /proc/cmdline); do case "$w" in
+	a52.deadman=*) DEADMAN=${w#a52.deadman=};;
+	a52.wdt=*) WDT=${w#a52.wdt=};;
+	a52.net=*) NET=${w#a52.net=};;
+	a52.nomods=*) NOMODS=${w#a52.nomods=};;
+	a52.skip=*) SKIP="$SKIP $(echo "${w#a52.skip=}" | tr ',' ' ')";;
+esac; done
+[ $CRASHED = 1 ] && DEADMAN=90
+
+# ---------------------------------------------------------------- escape chain first
+# Before anything that could hang or reset the phone, load the four modules that make
+# "reboot download" work (PMIC arbiter -> PMIC -> SDAM nvmem -> sec_core writes PON 0x15).
+# They have no other dependencies (modules.dep). RULE (owner, 2026-11-11: no key presses):
+# after a crashed boot, or with a52.escapetest=1, load ONLY this chain and leave at once.
+# A boot that crashes is never retried with a different module set; the PC decides.
+M=/lib/modules
+ESCAPE=0
+for m in spmi-pmic-arb qti-regmap-debugfs qcom-spmi-pmic nvmem_qcom-spmi-sdam; do
+	insmod $M/$m.ko 2>/tmp/insmod.err && log "escape: $m ok" || log "escape: $m FAILED: $(cat /tmp/insmod.err)"
+done
+i=0
+[ $KEXECED = 1 ] && i=19	# one try only: the escape matters only for a bootloader boot
+while [ $i -lt 20 ]; do
+	if insmod $M/sec_core.ko clear_on_load=0 2>/tmp/insmod.err; then ESCAPE=1; break; fi
+	sleep 1; i=$((i + 1))
+done
+log "escape chain: sec_core=$ESCAPE after ${i}s $(cat /tmp/insmod.err 2>/dev/null)"
+ESCTEST=0
+for w in $(cat /proc/cmdline); do [ "$w" = a52.escapetest=1 ] && ESCTEST=1; done
+if [ $CRASHED = 1 ] || [ $ESCTEST = 1 ]; then
+	log "safe mode (crashed=$CRASHED escapetest=$ESCTEST): leaving for Download mode now"
+	sleep 2
+	/leave
+	sleep 30
+	log "safe mode: /leave did not reboot"
+fi
+SKIP="$SKIP spmi-pmic-arb qti-regmap-debugfs qcom-spmi-pmic nvmem_qcom-spmi-sdam sec_core"
+
+# ---------------------------------------------------------------- scheduler
+# a52.eas=0 turns energy-aware scheduling off before any module loads (2026-11-14 test: once
+# qcom-cpufreq-hw created the EM perf domains, kthreads on all CPUs looked corrupted with WALT).
+case " $(cat /proc/cmdline) " in *" a52.eas=0 "*)
+	echo 0 > /proc/sys/kernel/sched_energy_aware 2>/dev/null; log "sched_energy_aware=$(cat /proc/sys/kernel/sched_energy_aware 2>/dev/null)";;
+esac
+
+# ---------------------------------------------------------------- watchdog first
+# hhwdt needs nothing but SMC calls: arm it before the vendor modules, so that a module that
+# hangs the kernel ends in a watchdog reset instead of a dead phone.
+if [ "$WDT" != 0 ] && insmod $M/hhwdt.ko 2>/tmp/hhwdt.err; then
+	[ $NODEVTMPFS = 1 ] && mkdevs
+	if [ -e /dev/watchdog0 ] && $B watchdog -T "$WDT" -t 5 /dev/watchdog0; then
+		log "watchdog armed, ${WDT}s"
+	else
+		log "watchdog feeder failed"
+	fi
+else
+	log "watchdog not armed: $(cat /tmp/hhwdt.err 2>/dev/null)"
+fi
+
+# ---------------------------------------------------------------- first-stage modules
+skipped() { for s in $SKIP; do [ "$s" = "$1" ] && return 0; done; return 1; }
+NFAIL=0; NOK=0
+if [ "$NOMODS" = 1 ]; then
+	log "a52.nomods=1: no vendor modules loaded"
+else
+	while read -r m args; do
+		case "$m" in ''|'#'*) continue;; esac
+		n=${m%.ko}
+		if skipped "$n"; then continue; fi
+		pet
+		log "insmod $n"
+		if insmod "$M/$m" $args 2>/tmp/insmod.err; then
+			NOK=$((NOK + 1))
+		else
+			NFAIL=$((NFAIL + 1))
+			log "insmod FAILED $n: $(cat /tmp/insmod.err)"
+			echo "$n: $(cat /tmp/insmod.err)" >> /tmp/insmod-failed.txt
+		fi
+	done < $M/load.list
+	log "modules done: $NOK loaded, $NFAIL failed"
+fi
+[ $NODEVTMPFS = 1 ] && mkdevs
+
+# sec_core: Samsung restart reasons ("download" = PON 0x15). Its init returns -EPROBE_DEFER
+# until the PMK8350 SDAM nvmem provider has probed, so retry for a while.
+# clear_on_load=0: leave the IMEM restart-reason cell as the bootloader set it (6.18 flow).
+SECCORE=$ESCAPE
+echo $SECCORE > /tmp/sec_core
+
+# ---------------------------------------------------------------- USB gadget
+G=/config/usb_gadget/g1
+mkdir -p $G/strings/0x409 $G/configs/c.1/strings/0x409 $G/functions/ncm.usb0 $G/functions/acm.usb0
+echo 0x1209 > $G/idVendor; echo 0xa528 > $G/idProduct
+echo a52sxq-bsp612 > $G/strings/0x409/manufacturer
+echo "a52sxq test kernel $(uname -r)" > $G/strings/0x409/product
+echo a52sxqtest > $G/strings/0x409/serialnumber
+echo "ncm+acm" > $G/configs/c.1/strings/0x409/configuration
+ln -s $G/functions/ncm.usb0 $G/configs/c.1/
+ln -s $G/functions/acm.usb0 $G/configs/c.1/
+# dwc3-msm registers a role switch and waits in role NONE: ask for device mode. The attribute
+# is on the glue device (/soc/ssusb@a600000 -> a600000.ssusb); found by name to be safe.
+usbmode() {
+	for f in /sys/devices/platform/soc/a600000.ssusb/mode /sys/devices/platform/soc/*.ssusb/mode /sys/bus/platform/devices/*.ssusb/mode; do
+		[ -e "$f" ] || continue
+		echo peripheral > "$f" 2>/tmp/usbmode.err && { echo "$f" > /tmp/usbmode.path; return 0; }
+	done
+	# same request through the generic role-switch class (allow_userspace_control)
+	for f in /sys/class/usb_role/*ssusb*/role; do
+		[ -e "$f" ] || continue
+		echo device > "$f" 2>/tmp/usbmode.err && { echo "$f" > /tmp/usbmode.path; return 0; }
+	done
+	return 1
+}
+i=0; MODESET=0; UDC=
+while [ $i -lt 60 ]; do
+	if [ $MODESET = 0 ] && usbmode; then MODESET=1; log "usb mode=peripheral via $(cat /tmp/usbmode.path) after ${i}s"; fi
+	UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+	[ -n "$UDC" ] && break
+	sleep 1; i=$((i + 1))
+done
+[ $MODESET = 0 ] && log "usb mode attribute not found or refused: $(cat /tmp/usbmode.err 2>/dev/null)"
+if [ -n "$UDC" ]; then
+	# the UDC can appear before the role request was accepted: make sure it was made
+	[ $MODESET = 0 ] && usbmode && log "usb mode=peripheral (late)"
+	echo "$UDC" > $G/UDC && log "gadget on $UDC after ${i}s"
+	[ $NODEVTMPFS = 1 ] && mkdevs
+	ifconfig usb0 172.16.$NET.1 netmask 255.255.255.0 up
+	/usr/bin/unudhcpd -i usb0 -s 172.16.$NET.1 -c 172.16.$NET.2 >/dev/null 2>&1 &
+	/bin/busybox-extras telnetd -b 172.16.$NET.1:23 -l /bin/sh
+	[ -e /dev/ttyGS0 ] && setsid sh -c 'while :; do sh </dev/ttyGS0 >/dev/ttyGS0 2>&1; sleep 1; done' &
+else
+	log "no UDC appeared"
+fi
+
+# self-recovery (2026-11-15): a wedged test kernel must reboot by itself (hung task / soft lockup /
+# oops -> panic -> immediate restart -> harness crash guard -> Download -> PC dlexit), never need keys
+for kv in hung_task_panic:1 softlockup_panic:1 panic_on_oops:1 panic:-1 hung_task_timeout_secs:120; do
+	echo "${kv#*:}" > /proc/sys/kernel/${kv%%:*} 2>/dev/null; done
+if [ "$DEADMAN" != 0 ]; then
+	( sleep "$DEADMAN"; [ -e /tmp/keep ] || { log "dead-man timer"; /leave; } ) &
+fi
+[ $NODEVTMPFS = 1 ] && mkdevs
+log "UFS partitions: $(grep -c 'sd[a-f][0-9]' /proc/partitions)  block devices: $(ls /sys/block 2>/dev/null | tr '\n' ' ')"
+log "ready (deadman=${DEADMAN}s, modules ok=$NOK failed=$NFAIL, sec_core=$SECCORE, skipped:${SKIP:- none})"
+if [ $KEXECED = 1 ] && [ -e $WRAW ]; then echo "5 2 0" > $WRAW; log "kexec'd boot: inherited watchdog disabled"; fi
+
+# Late devices (UFS LUNs, ttyGS0, input) appear after probes finish: keep /dev current.
+if [ $NODEVTMPFS = 1 ]; then
+	( n=0; while [ $n -lt 30 ]; do sleep 4; mkdevs; n=$((n + 1)); done ) &
+fi
+while :; do sleep 3600; done

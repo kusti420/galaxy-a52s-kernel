@@ -1,0 +1,1685 @@
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cdm/cam_cdm_hw_core.c drivers/cam_cdm/cam_cdm_hw_core.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cdm/cam_cdm_hw_core.c	2026-07-17 18:14:47.247762606 +0300
++++ drivers/cam_cdm/cam_cdm_hw_core.c	2026-11-11 20:48:18.041026943 +0200
+@@ -2503,10 +2503,10 @@
+ 	return rc;
+ }
+ 
+-int cam_hw_cdm_remove(struct platform_device *pdev)
++void cam_hw_cdm_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_hw_cdm_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ struct platform_driver cam_hw_cdm_driver = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cdm/cam_cdm_intf.c drivers/cam_cdm/cam_cdm_intf.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cdm/cam_cdm_intf.c	2026-07-17 18:14:47.247762606 +0300
++++ drivers/cam_cdm/cam_cdm_intf.c	2026-11-11 20:48:18.123567418 +0200
+@@ -718,10 +718,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_cdm_intf_remove(struct platform_device *pdev)
++static void cam_cdm_intf_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_cdm_intf_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ struct platform_driver cam_cdm_intf_driver = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cpas/cam_cpas_hw.c drivers/cam_cpas/cam_cpas_hw.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cpas/cam_cpas_hw.c	2026-07-17 18:14:47.248402938 +0300
++++ drivers/cam_cpas/cam_cpas_hw.c	2026-11-11 20:48:18.656187935 +0200
+@@ -2400,10 +2400,10 @@
+ 	/* Store parent inode for cleanup in caller */
+ 	cpas_core->dentry = dbgfileptr;
+ 
+-	dbgfileptr = debugfs_create_bool("ahb_bus_scaling_disable", 0644,
++	debugfs_create_bool("ahb_bus_scaling_disable", 0644,
+ 		cpas_core->dentry, &cpas_core->ahb_bus_scaling_disable);
+ 
+-	dbgfileptr = debugfs_create_bool("full_state_dump", 0644,
++	debugfs_create_bool("full_state_dump", 0644,
+ 		cpas_core->dentry, &cpas_core->full_state_dump);
+ 
+ 	if (IS_ERR(dbgfileptr)) {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cpas/cam_cpas_intf.c drivers/cam_cpas/cam_cpas_intf.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cpas/cam_cpas_intf.c	2026-07-17 18:14:47.248848422 +0300
++++ drivers/cam_cpas/cam_cpas_intf.c	2026-11-11 20:48:18.736881326 +0200
+@@ -945,10 +945,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_cpas_dev_remove(struct platform_device *pdev)
++static void cam_cpas_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_cpas_dev_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_cpas_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cpas/cam_cpas_soc.c drivers/cam_cpas/cam_cpas_soc.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cpas/cam_cpas_soc.c	2026-07-17 18:14:47.248848422 +0300
++++ drivers/cam_cpas/cam_cpas_soc.c	2026-11-11 20:48:37.462624605 +0200
+@@ -328,6 +328,8 @@
+ 					cpas_core->axi_port[mnoc_idx].bus_client
+ 					.common_data.dst_id = dst_args.args[0];
+ 					cpas_core->axi_port[mnoc_idx].bus_client
++					.common_data.icc_np = mnoc_node;
++					cpas_core->axi_port[mnoc_idx].bus_client
+ 						.common_data.num_usecases = 2;
+ 				} else {
+ 					rc =  of_property_read_string(
+@@ -717,6 +719,7 @@
+ 		}
+ 
+ 		cpas_core->ahb_bus_client.common_data.dst_id = dst_args.args[0];
++		cpas_core->ahb_bus_client.common_data.icc_np = of_node;
+ 
+ 		rc = of_property_read_u32(of_node, "cam-ahb-num-cases",
+ 			&cpas_core->ahb_bus_client.common_data.num_usecases);
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cust/cam_custom_dev.c drivers/cam_cust/cam_custom_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cust/cam_custom_dev.c	2026-07-17 18:14:47.250222213 +0300
++++ drivers/cam_cust/cam_custom_dev.c	2026-11-11 20:48:19.820329132 +0200
+@@ -192,10 +192,10 @@
+ 	.unbind = cam_custom_component_unbind,
+ };
+ 
+-static int cam_custom_dev_remove(struct platform_device *pdev)
++static void cam_custom_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_custom_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static int cam_custom_dev_probe(struct platform_device *pdev)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cust/cam_custom_hw_mgr/cam_custom_csid/cam_custom_csid_dev.c drivers/cam_cust/cam_custom_hw_mgr/cam_custom_csid/cam_custom_csid_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_cust/cam_custom_hw_mgr/cam_custom_csid/cam_custom_csid_dev.c	2026-07-17 18:14:47.250402394 +0300
++++ drivers/cam_cust/cam_custom_hw_mgr/cam_custom_csid/cam_custom_csid_dev.c	2026-11-11 20:48:19.963620563 +0200
+@@ -154,10 +154,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_custom_csid_remove(struct platform_device *pdev)
++static void cam_custom_csid_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_custom_csid_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_custom_csid_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/camera_main.c drivers/camera_main.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/camera_main.c	2026-07-17 18:14:47.269802698 +0300
++++ drivers/camera_main.c	2026-11-11 20:48:37.467681351 +0200
+@@ -304,3 +304,5 @@
+ 
+ MODULE_DESCRIPTION("Spectra camera driver");
+ MODULE_LICENSE("GPL v2");
++
++MODULE_IMPORT_NS(DMA_BUF);
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_fd/cam_fd_dev.c drivers/cam_fd/cam_fd_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_fd/cam_fd_dev.c	2026-07-17 18:14:47.250928630 +0300
++++ drivers/cam_fd/cam_fd_dev.c	2026-11-11 20:48:20.054215235 +0200
+@@ -211,10 +211,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_fd_dev_remove(struct platform_device *pdev)
++static void cam_fd_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_fd_dev_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_fd_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_fd/fd_hw_mgr/fd_hw/cam_fd_hw_dev.c drivers/cam_fd/fd_hw_mgr/fd_hw/cam_fd_hw_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_fd/fd_hw_mgr/fd_hw/cam_fd_hw_dev.c	2026-07-17 18:14:47.251248927 +0300
++++ drivers/cam_fd/fd_hw_mgr/fd_hw/cam_fd_hw_dev.c	2026-11-11 20:48:20.313367723 +0200
+@@ -211,10 +211,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_fd_hw_dev_remove(struct platform_device *pdev)
++static void cam_fd_hw_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_fd_hw_dev_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_fd_hw_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/cam_icp_subdev.c drivers/cam_icp/cam_icp_subdev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/cam_icp_subdev.c	2026-07-17 18:14:47.251646580 +0300
++++ drivers/cam_icp/cam_icp_subdev.c	2026-11-11 20:48:20.397471822 +0200
+@@ -285,10 +285,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_icp_remove(struct platform_device *pdev)
++static void cam_icp_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_icp_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ struct platform_driver cam_icp_driver = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/a5_hw/a5_dev.c drivers/cam_icp/icp_hw/a5_hw/a5_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/a5_hw/a5_dev.c	2026-07-17 18:14:47.252051026 +0300
++++ drivers/cam_icp/icp_hw/a5_hw/a5_dev.c	2026-11-11 20:48:20.603430461 +0200
+@@ -235,10 +235,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_a5_remove(struct platform_device *pdev)
++static void cam_a5_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_a5_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_a5_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/bps_hw/bps_dev.c drivers/cam_icp/icp_hw/bps_hw/bps_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/bps_hw/bps_dev.c	2026-07-17 18:14:47.252270131 +0300
++++ drivers/cam_icp/icp_hw/bps_hw/bps_dev.c	2026-11-11 20:48:20.669792069 +0200
+@@ -211,10 +211,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_bps_remove(struct platform_device *pdev)
++static void cam_bps_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_bps_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_bps_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/icp_hw_mgr/cam_icp_hw_mgr.c drivers/cam_icp/icp_hw/icp_hw_mgr/cam_icp_hw_mgr.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/icp_hw_mgr/cam_icp_hw_mgr.c	2026-07-17 18:14:47.252270131 +0300
++++ drivers/cam_icp/icp_hw/icp_hw_mgr/cam_icp_hw_mgr.c	2026-11-11 20:48:21.073606588 +0200
+@@ -1909,16 +1909,16 @@
+ 	/* Store parent inode for cleanup in caller */
+ 	icp_hw_mgr.dentry = dbgfileptr;
+ 
+-	dbgfileptr = debugfs_create_bool("icp_pc", 0644, icp_hw_mgr.dentry,
++	debugfs_create_bool("icp_pc", 0644, icp_hw_mgr.dentry,
+ 		&icp_hw_mgr.icp_pc_flag);
+ 
+-	dbgfileptr = debugfs_create_bool("ipe_bps_pc", 0644, icp_hw_mgr.dentry,
++	debugfs_create_bool("ipe_bps_pc", 0644, icp_hw_mgr.dentry,
+ 		&icp_hw_mgr.ipe_bps_pc_flag);
+ 
+ 	dbgfileptr = debugfs_create_file("icp_debug_clk", 0644,
+ 		icp_hw_mgr.dentry, NULL, &cam_icp_debug_default_clk);
+ 
+-	dbgfileptr = debugfs_create_bool("icp_jtag_debug", 0644,
++	debugfs_create_bool("icp_jtag_debug", 0644,
+ 		icp_hw_mgr.dentry, &icp_hw_mgr.icp_jtag_debug);
+ 
+ 	dbgfileptr = debugfs_create_file("icp_debug_type", 0644,
+@@ -1930,7 +1930,7 @@
+ 	dbgfileptr = debugfs_create_file("icp_fw_dump_lvl", 0644,
+ 		icp_hw_mgr.dentry, NULL, &cam_icp_debug_fw_dump);
+ 
+-	dbgfileptr = debugfs_create_bool("disable_ubwc_comp", 0644,
++	debugfs_create_bool("disable_ubwc_comp", 0644,
+ 		icp_hw_mgr.dentry, &icp_hw_mgr.disable_ubwc_comp);
+ 
+ 	if (IS_ERR(dbgfileptr)) {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/ipe_hw/ipe_dev.c drivers/cam_icp/icp_hw/ipe_hw/ipe_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_icp/icp_hw/ipe_hw/ipe_dev.c	2026-07-17 18:14:47.252893381 +0300
++++ drivers/cam_icp/icp_hw/ipe_hw/ipe_dev.c	2026-11-11 20:48:21.164474876 +0200
+@@ -209,10 +209,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_ipe_remove(struct platform_device *pdev)
++static void cam_ipe_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_ipe_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_ipe_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/cam_isp_context.c drivers/cam_isp/cam_isp_context.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/cam_isp_context.c	2026-07-17 18:14:47.252893381 +0300
++++ drivers/cam_isp/cam_isp_context.c	2026-11-11 20:48:21.534455110 +0200
+@@ -6173,9 +6173,9 @@
+ 	/* Store parent inode for cleanup in caller */
+ 	isp_ctx_debug.dentry = dbgfileptr;
+ 
+-	dbgfileptr = debugfs_create_u32("enable_state_monitor_dump", 0644,
++	debugfs_create_u32("enable_state_monitor_dump", 0644,
+ 		isp_ctx_debug.dentry, &isp_ctx_debug.enable_state_monitor_dump);
+-	dbgfileptr = debugfs_create_u8("enable_cdm_cmd_buffer_dump", 0644,
++	debugfs_create_u8("enable_cdm_cmd_buffer_dump", 0644,
+ 		isp_ctx_debug.dentry, &isp_ctx_debug.enable_cdm_cmd_buff_dump);
+ 	if (IS_ERR(dbgfileptr)) {
+ 		if (PTR_ERR(dbgfileptr) == -ENODEV)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/cam_isp_dev.c drivers/cam_isp/cam_isp_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/cam_isp_dev.c	2026-07-17 18:14:47.253160426 +0300
++++ drivers/cam_isp/cam_isp_dev.c	2026-11-11 20:48:21.577780949 +0200
+@@ -263,10 +263,10 @@
+ 	.unbind = cam_isp_dev_component_unbind,
+ };
+ 
+-static int cam_isp_dev_remove(struct platform_device *pdev)
++static void cam_isp_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_isp_dev_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static int cam_isp_dev_probe(struct platform_device *pdev)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/cam_ife_hw_mgr.c drivers/cam_isp/isp_hw_mgr/cam_ife_hw_mgr.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/cam_ife_hw_mgr.c	2026-07-17 18:14:47.253160426 +0300
++++ drivers/cam_isp/isp_hw_mgr/cam_ife_hw_mgr.c	2026-11-11 20:48:22.083223638 +0200
+@@ -8179,21 +8179,21 @@
+ 
+ 	dbgfileptr = debugfs_create_file("ife_csid_debug", 0644,
+ 		g_ife_hw_mgr.debug_cfg.dentry, NULL, &cam_ife_csid_debug);
+-	dbgfileptr = debugfs_create_u32("enable_recovery", 0644,
++	debugfs_create_u32("enable_recovery", 0644,
+ 		g_ife_hw_mgr.debug_cfg.dentry,
+ 		&g_ife_hw_mgr.debug_cfg.enable_recovery);
+-	dbgfileptr = debugfs_create_bool("enable_req_dump", 0644,
++	debugfs_create_bool("enable_req_dump", 0644,
+ 		g_ife_hw_mgr.debug_cfg.dentry,
+ 		&g_ife_hw_mgr.debug_cfg.enable_req_dump);
+-	dbgfileptr = debugfs_create_u32("enable_csid_recovery", 0644,
++	debugfs_create_u32("enable_csid_recovery", 0644,
+ 		g_ife_hw_mgr.debug_cfg.dentry,
+ 		&g_ife_hw_mgr.debug_cfg.enable_csid_recovery);
+ 	dbgfileptr = debugfs_create_file("ife_camif_debug", 0644,
+ 		g_ife_hw_mgr.debug_cfg.dentry, NULL, &cam_ife_camif_debug);
+-	dbgfileptr = debugfs_create_bool("per_req_reg_dump", 0644,
++	debugfs_create_bool("per_req_reg_dump", 0644,
+ 		g_ife_hw_mgr.debug_cfg.dentry,
+ 		&g_ife_hw_mgr.debug_cfg.per_req_reg_dump);
+-	dbgfileptr = debugfs_create_bool("disable_ubwc_comp", 0644,
++	debugfs_create_bool("disable_ubwc_comp", 0644,
+ 		g_ife_hw_mgr.debug_cfg.dentry,
+ 		&g_ife_hw_mgr.debug_cfg.disable_ubwc_comp);
+ 
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/cam_tfe_hw_mgr.c drivers/cam_isp/isp_hw_mgr/cam_tfe_hw_mgr.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/cam_tfe_hw_mgr.c	2026-07-17 18:14:47.253606331 +0300
++++ drivers/cam_isp/isp_hw_mgr/cam_tfe_hw_mgr.c	2026-11-11 20:48:22.459618747 +0200
+@@ -5841,21 +5841,21 @@
+ 
+ 	dbgfileptr = debugfs_create_file("tfe_csid_debug", 0644,
+ 		g_tfe_hw_mgr.debug_cfg.dentry, NULL, &cam_tfe_csid_debug);
+-	dbgfileptr = debugfs_create_u32("enable_recovery", 0644,
++	debugfs_create_u32("enable_recovery", 0644,
+ 		g_tfe_hw_mgr.debug_cfg.dentry,
+ 		&g_tfe_hw_mgr.debug_cfg.enable_recovery);
+-	dbgfileptr = debugfs_create_u32("enable_reg_dump", 0644,
++	debugfs_create_u32("enable_reg_dump", 0644,
+ 		g_tfe_hw_mgr.debug_cfg.dentry,
+ 		&g_tfe_hw_mgr.debug_cfg.enable_reg_dump);
+-	dbgfileptr = debugfs_create_u32("enable_csid_recovery", 0644,
++	debugfs_create_u32("enable_csid_recovery", 0644,
+ 		g_tfe_hw_mgr.debug_cfg.dentry,
+ 		&g_tfe_hw_mgr.debug_cfg.enable_csid_recovery);
+-	dbgfileptr = debugfs_create_u32("set_tpg_pattern", 0644,
++	debugfs_create_u32("set_tpg_pattern", 0644,
+ 		g_tfe_hw_mgr.debug_cfg.dentry,
+ 		&g_tfe_hw_mgr.debug_cfg.set_tpg_pattern);
+ 	dbgfileptr = debugfs_create_file("tfe_camif_debug", 0644,
+ 		g_tfe_hw_mgr.debug_cfg.dentry, NULL, &cam_tfe_camif_debug);
+-	dbgfileptr = debugfs_create_u32("per_req_reg_dump", 0644,
++	debugfs_create_u32("per_req_reg_dump", 0644,
+ 		g_tfe_hw_mgr.debug_cfg.dentry,
+ 		&g_tfe_hw_mgr.debug_cfg.per_req_reg_dump);
+ 	if (IS_ERR(dbgfileptr)) {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.c drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.c	2026-07-17 18:14:47.254284094 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.c	2026-11-11 20:48:23.295462179 +0200
+@@ -147,10 +147,10 @@
+ 	return rc;
+ }
+ 
+-int cam_ife_csid_remove(struct platform_device *pdev)
++void cam_ife_csid_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_ife_csid_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ int cam_ife_csid_hw_init(struct cam_hw_intf **ife_csid_hw,
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.h drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.h	2026-07-17 18:14:47.254284094 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/ife_csid_hw/cam_ife_csid_dev.h	2026-11-11 20:48:23.297717329 +0200
+@@ -11,7 +11,7 @@
+ irqreturn_t cam_ife_csid_irq(int irq_num, void *data);
+ 
+ int cam_ife_csid_probe(struct platform_device *pdev);
+-int cam_ife_csid_remove(struct platform_device *pdev);
++void cam_ife_csid_remove(struct platform_device *pdev);
+ 
+ /**
+  * @brief : API to register CSID hw to platform framework.
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.c drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.c	2026-07-17 18:14:47.255363638 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.c	2026-11-11 20:48:23.560498534 +0200
+@@ -157,8 +157,8 @@
+ 	return rc;
+ }
+ 
+-int cam_csid_ppi_remove(struct platform_device *pdev)
++void cam_csid_ppi_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_ppi_component_ops);
+-	return 0;
++	return;
+ }
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.h drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.h	2026-07-17 18:14:47.255363638 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/ppi_hw/cam_csid_ppi_dev.h	2026-11-11 20:48:23.561491497 +0200
+@@ -10,6 +10,6 @@
+ 
+ irqreturn_t cam_csid_ppi_irq(int irq_num, void *data);
+ int cam_csid_ppi_probe(struct platform_device *pdev);
+-int cam_csid_ppi_remove(struct platform_device *pdev);
++void cam_csid_ppi_remove(struct platform_device *pdev);
+ 
+ #endif /*_CAM_CSID_PPI_DEV_H_ */
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/sfe_hw/cam_sfe_dev.c drivers/cam_isp/isp_hw_mgr/isp_hw/sfe_hw/cam_sfe_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/sfe_hw/cam_sfe_dev.c	2026-07-17 18:14:47.255583043 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/sfe_hw/cam_sfe_dev.c	2026-11-11 20:48:23.657114202 +0200
+@@ -205,10 +205,10 @@
+ 	return rc;
+ }
+ 
+-int cam_sfe_remove(struct platform_device *pdev)
++void cam_sfe_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_sfe_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ int cam_sfe_hw_init(struct cam_hw_intf **sfe_hw, uint32_t hw_idx)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.c drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.c	2026-07-17 18:14:47.256252291 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.c	2026-11-11 20:48:24.314147571 +0200
+@@ -143,10 +143,10 @@
+ 	return rc;
+ }
+ 
+-int cam_tfe_csid_remove(struct platform_device *pdev)
++void cam_tfe_csid_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_tfe_csid_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ int cam_tfe_csid_hw_init(struct cam_hw_intf **tfe_csid_hw,
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.h drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.h	2026-07-17 18:14:47.256252291 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_csid_hw/cam_tfe_csid_dev.h	2026-11-11 20:48:24.315025368 +0200
+@@ -11,6 +11,6 @@
+ irqreturn_t cam_tfe_csid_irq(int irq_num, void *data);
+ 
+ int cam_tfe_csid_probe(struct platform_device *pdev);
+-int cam_tfe_csid_remove(struct platform_device *pdev);
++void cam_tfe_csid_remove(struct platform_device *pdev);
+ 
+ #endif /*_CAM_TFE_CSID_DEV_H_ */
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_core.c drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_core.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_core.c	2026-07-17 18:14:47.256679369 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_core.c	2026-11-11 20:48:24.903153037 +0200
+@@ -175,9 +175,9 @@
+ 
+ void cam_tfe_get_timestamp(struct cam_isp_timestamp *time_stamp)
+ {
+-	struct timespec ts;
++	struct timespec64 ts;
+ 
+-	ts = ktime_to_timespec(ktime_get_boottime());
++	ts = ktime_to_timespec64(ktime_get_boottime());
+ 	time_stamp->mono_time.tv_sec    = ts.tv_sec;
+ 	time_stamp->mono_time.tv_usec   = ts.tv_nsec/1000;
+ }
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.c drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.c	2026-07-17 18:14:47.256679369 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.c	2026-11-11 20:48:24.958202386 +0200
+@@ -213,10 +213,10 @@
+ 	return rc;
+ }
+ 
+-int cam_tfe_remove(struct platform_device *pdev)
++void cam_tfe_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_tfe_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ int cam_tfe_hw_init(struct cam_isp_hw_intf_data **tfe_hw_intf,
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.h drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.h	2026-07-17 18:14:47.256679369 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/tfe_hw/cam_tfe_dev.h	2026-11-11 20:48:24.961391498 +0200
+@@ -30,7 +30,7 @@
+  * @Return:                  0: Success
+  *                           Non-zero: Failure
+  */
+-int cam_tfe_remove(struct platform_device *pdev);
++void cam_tfe_remove(struct platform_device *pdev);
+ 
+ int cam_tfe_init_module(void);
+ void cam_tfe_exit_module(void);
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.c drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.c	2026-07-17 18:14:47.257347354 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.c	2026-11-11 20:48:25.110137971 +0200
+@@ -141,10 +141,10 @@
+ 	return rc;
+ }
+ 
+-int cam_top_tpg_remove(struct platform_device *pdev)
++void cam_top_tpg_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_top_tpg_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ int cam_top_tpg_hw_init(struct cam_hw_intf **top_tpg_hw,
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.h drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.h	2026-07-17 18:14:47.257347354 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/top_tpg/cam_top_tpg_dev.h	2026-11-11 20:48:25.111381364 +0200
+@@ -7,6 +7,6 @@
+ #define _CAM_TOP_TPG_DEV_H_
+ 
+ int cam_top_tpg_probe(struct platform_device *pdev);
+-int cam_top_tpg_remove(struct platform_device *pdev);
++void cam_top_tpg_remove(struct platform_device *pdev);
+ 
+ #endif /*_CAM_TOP_TPG_DEV_H_ */
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_core.c drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_core.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_core.c	2026-07-17 18:14:47.257347354 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_core.c	2026-11-11 20:48:25.339073240 +0200
+@@ -385,9 +385,9 @@
+ 
+ void cam_isp_hw_get_timestamp(struct cam_isp_timestamp *time_stamp)
+ {
+-	struct timespec ts;
++	struct timespec64 ts;
+ 
+-	ts = ktime_to_timespec(ktime_get_boottime());
++	ts = ktime_to_timespec64(ktime_get_boottime());
+ 	time_stamp->mono_time.tv_sec    = ts.tv_sec;
+ 	time_stamp->mono_time.tv_usec   = ts.tv_nsec/1000;
+ }
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.c drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.c	2026-07-17 18:14:47.257874933 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.c	2026-11-11 20:48:25.382067217 +0200
+@@ -210,10 +210,10 @@
+ 	return rc;
+ }
+ 
+-int cam_vfe_remove(struct platform_device *pdev)
++void cam_vfe_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_vfe_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ int cam_vfe_hw_init(struct cam_isp_hw_intf_data **vfe_hw_intf,
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.h drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.h	2026-07-17 18:14:47.257874933 +0300
++++ drivers/cam_isp/isp_hw_mgr/isp_hw/vfe_hw/cam_vfe_dev.h	2026-11-11 20:48:25.384716176 +0200
+@@ -30,6 +30,6 @@
+  * @Return:                  0: Success
+  *                           Non-zero: Failure
+  */
+-int cam_vfe_remove(struct platform_device *pdev);
++void cam_vfe_remove(struct platform_device *pdev);
+ 
+ #endif /* _CAM_VFE_DEV_H_ */
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_jpeg/cam_jpeg_dev.c drivers/cam_jpeg/cam_jpeg_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_jpeg/cam_jpeg_dev.c	2026-07-17 18:14:47.260359067 +0300
++++ drivers/cam_jpeg/cam_jpeg_dev.c	2026-11-11 20:48:28.889050199 +0200
+@@ -191,10 +191,10 @@
+ 	.unbind = cam_jpeg_dev_component_unbind,
+ };
+ 
+-static int cam_jpeg_dev_remove(struct platform_device *pdev)
++static void cam_jpeg_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_jpeg_dev_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static int cam_jpeg_dev_probe(struct platform_device *pdev)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_jpeg/jpeg_hw/jpeg_dma_hw/jpeg_dma_dev.c drivers/cam_jpeg/jpeg_hw/jpeg_dma_hw/jpeg_dma_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_jpeg/jpeg_hw/jpeg_dma_hw/jpeg_dma_dev.c	2026-07-17 18:14:47.260694722 +0300
++++ drivers/cam_jpeg/jpeg_hw/jpeg_dma_hw/jpeg_dma_dev.c	2026-11-11 20:48:29.231726641 +0200
+@@ -217,10 +217,10 @@
+ 	.unbind = cam_jpeg_dma_component_unbind,
+ };
+ 
+-static int cam_jpeg_dma_remove(struct platform_device *pdev)
++static void cam_jpeg_dma_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_jpeg_dma_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static int cam_jpeg_dma_probe(struct platform_device *pdev)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_jpeg/jpeg_hw/jpeg_enc_hw/jpeg_enc_dev.c drivers/cam_jpeg/jpeg_hw/jpeg_enc_hw/jpeg_enc_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_jpeg/jpeg_hw/jpeg_enc_hw/jpeg_enc_dev.c	2026-07-17 18:14:47.260977929 +0300
++++ drivers/cam_jpeg/jpeg_hw/jpeg_enc_hw/jpeg_enc_dev.c	2026-11-11 20:48:29.393458252 +0200
+@@ -218,10 +218,10 @@
+ 	.unbind = cam_jpeg_enc_component_unbind,
+ };
+ 
+-static int cam_jpeg_enc_remove(struct platform_device *pdev)
++static void cam_jpeg_enc_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_jpeg_enc_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static int cam_jpeg_enc_probe(struct platform_device *pdev)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_lrme/cam_lrme_dev.c drivers/cam_lrme/cam_lrme_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_lrme/cam_lrme_dev.c	2026-07-17 18:14:47.261177136 +0300
++++ drivers/cam_lrme/cam_lrme_dev.c	2026-11-11 20:48:29.449387002 +0200
+@@ -233,10 +233,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_lrme_dev_remove(struct platform_device *pdev)
++static void cam_lrme_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_lrme_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_lrme_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_lrme/lrme_hw_mgr/cam_lrme_hw_mgr.c drivers/cam_lrme/lrme_hw_mgr/cam_lrme_hw_mgr.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_lrme/lrme_hw_mgr/cam_lrme_hw_mgr.c	2026-07-17 18:14:47.261177136 +0300
++++ drivers/cam_lrme/lrme_hw_mgr/cam_lrme_hw_mgr.c	2026-11-11 20:48:29.573284425 +0200
+@@ -1032,7 +1032,7 @@
+ 	/* Store parent inode for cleanup in caller */
+ 	g_lrme_hw_mgr.debugfs_entry.dentry = dbgfileptr;
+ 
+-	dbgfileptr = debugfs_create_bool("dump_register", 0644,
++	debugfs_create_bool("dump_register", 0644,
+ 		g_lrme_hw_mgr.debugfs_entry.dentry,
+ 		&g_lrme_hw_mgr.debugfs_entry.dump_register);
+ 	if (IS_ERR(dbgfileptr)) {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_lrme/lrme_hw_mgr/lrme_hw/cam_lrme_hw_dev.c drivers/cam_lrme/lrme_hw_mgr/lrme_hw/cam_lrme_hw_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_lrme/lrme_hw_mgr/lrme_hw/cam_lrme_hw_dev.c	2026-07-17 18:14:47.261449762 +0300
++++ drivers/cam_lrme/lrme_hw_mgr/lrme_hw/cam_lrme_hw_dev.c	2026-11-11 20:48:29.866223922 +0200
+@@ -293,10 +293,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_lrme_hw_dev_remove(struct platform_device *pdev)
++static void cam_lrme_hw_dev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_lrme_hw_dev_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_lrme_hw_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_ope/cam_ope_subdev.c drivers/cam_ope/cam_ope_subdev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_ope/cam_ope_subdev.c	2026-07-17 18:14:47.261696669 +0300
++++ drivers/cam_ope/cam_ope_subdev.c	2026-11-11 20:48:29.985614351 +0200
+@@ -279,10 +279,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_ope_subdev_remove(struct platform_device *pdev)
++static void cam_ope_subdev_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_ope_subdev_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_ope_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_mem_mgr.c drivers/cam_req_mgr/cam_mem_mgr.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_mem_mgr.c	2026-07-17 18:14:47.262811140 +0300
++++ drivers/cam_req_mgr/cam_mem_mgr.c	2026-11-11 20:48:37.467681351 +0200
+@@ -91,7 +91,7 @@
+ 		return rc;
+ 	}
+ 
+-	addr = dma_buf_vmap(dmabuf);
++	addr = cam_dma_buf_vmap(dmabuf);
+ 	if (!addr) {
+ 		CAM_ERR(CAM_MEM, "kernel map fail");
+ 		*vaddr = 0;
+@@ -119,7 +119,7 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	dma_buf_vunmap(dmabuf, (void *)vaddr);
++	cam_dma_buf_vunmap(dmabuf, (void *)vaddr);
+ 
+ 	/*
+ 	 * dma_buf_begin_cpu_access() and
+@@ -150,7 +150,7 @@
+ 	/* Store parent inode for cleanup in caller */
+ 	tbl.dentry = dbgfileptr;
+ 
+-	dbgfileptr = debugfs_create_bool("alloc_profile_enable", 0644,
++	debugfs_create_bool("alloc_profile_enable", 0644,
+ 		tbl.dentry, &tbl.alloc_profile_enable);
+ 	if (IS_ERR(dbgfileptr)) {
+ 		if (PTR_ERR(dbgfileptr) == -ENODEV)
+@@ -413,7 +413,7 @@
+ 		goto end;
+ 	}
+ 
+-	if (dmabuf_flag & ION_FLAG_CACHED) {
++	if (1) { /* 6.12: see port612.py */
+ 		switch (cmd->mem_cache_ops) {
+ 		case CAM_MEM_CLEAN_CACHE:
+ 			cache_dir = DMA_TO_DEVICE;
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_req_mgr_debug.c drivers/cam_req_mgr/cam_req_mgr_debug.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_req_mgr_debug.c	2026-07-17 18:14:47.262811140 +0300
++++ drivers/cam_req_mgr/cam_req_mgr_debug.c	2026-11-11 20:48:31.181989086 +0200
+@@ -130,9 +130,9 @@
+ 		core_dev, &session_info);
+ 	dbgfileptr = debugfs_create_file("bubble_recovery", 0644,
+ 		debugfs_root, core_dev, &bubble_recovery);
+-	dbgfileptr = debugfs_create_bool("recovery_on_apply_fail", 0644,
++	debugfs_create_bool("recovery_on_apply_fail", 0644,
+ 		debugfs_root, &core_dev->recovery_on_apply_fail);
+-	dbgfileptr = debugfs_create_u32("delay_detect_count", 0644,
++	debugfs_create_u32("delay_detect_count", 0644,
+ 		debugfs_root, &cam_debug_mgr_delay_detect);
+ 	if (IS_ERR(dbgfileptr)) {
+ 		if (PTR_ERR(dbgfileptr) == -ENODEV)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_req_mgr_dev.c drivers/cam_req_mgr/cam_req_mgr_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_req_mgr_dev.c	2026-07-17 18:14:47.262811140 +0300
++++ drivers/cam_req_mgr/cam_req_mgr_dev.c	2026-11-11 20:48:37.465776839 +0200
+@@ -9,7 +9,7 @@
+ #include <linux/highmem.h>
+ #include <linux/types.h>
+ 
+-#include <mm/slab.h>
++#include <linux/slab.h>
+ 
+ #include <media/v4l2-fh.h>
+ #include <media/v4l2-device.h>
+@@ -670,7 +670,7 @@
+ 
+ 
+ static int cam_req_mgr_ordered_list_cmp(void *priv,
+-	struct list_head *head_1, struct list_head *head_2)
++	const struct list_head *head_1, const struct list_head *head_2)
+ {
+ 	struct cam_subdev *entry_1 =
+ 		list_entry(head_1, struct cam_subdev, list);
+@@ -835,7 +835,7 @@
+ 				"Failed to create kmem_cache for crm_timer");
+ 		else
+ 			CAM_DBG(CAM_CRM, "Name : %s",
+-				g_cam_req_mgr_timer_cachep->name);
++				"crm_timer");
+ 	}
+ 
+ 	CAM_INFO(CAM_CRM, "All probes done, binding slave components");
+@@ -896,10 +896,10 @@
+ 	.unbind = cam_req_mgr_component_master_unbind,
+ };
+ 
+-static int cam_req_mgr_remove(struct platform_device *pdev)
++static void cam_req_mgr_remove(struct platform_device *pdev)
+ {
+ 	component_master_del(&pdev->dev, &cam_req_mgr_component_master_ops);
+-	return 0;
++	return;
+ }
+ 
+ static int cam_req_mgr_probe(struct platform_device *pdev)
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_req_mgr_util.c drivers/cam_req_mgr/cam_req_mgr_util.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_req_mgr/cam_req_mgr_util.c	2026-07-17 18:14:47.262811140 +0300
++++ drivers/cam_req_mgr/cam_req_mgr_util.c	2026-11-11 20:48:31.287212611 +0200
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+  */
+ 
++#undef pr_fmt
+ #define pr_fmt(fmt) "CAM-REQ-MGR_UTIL %s:%d " fmt, __func__, __LINE__
+ 
+ #include <linux/module.h>
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_actuator/cam_actuator_dev.c drivers/cam_sensor_module/cam_actuator/cam_actuator_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_actuator/cam_actuator_dev.c	2026-07-17 18:14:47.263986716 +0300
++++ drivers/cam_sensor_module/cam_actuator/cam_actuator_dev.c	2026-11-11 20:48:31.464106434 +0200
+@@ -164,9 +164,10 @@
+ 	return rc;
+ }
+ 
+-static int32_t cam_actuator_driver_i2c_probe(struct i2c_client *client,
+-	const struct i2c_device_id *id)
++static int32_t cam_actuator_driver_i2c_probe(struct i2c_client *client)
+ {
++	const struct i2c_device_id *id __maybe_unused = i2c_client_get_device_id(client);
++
+ 	int32_t                         rc = 0;
+ 	int32_t                         i = 0;
+ 	struct cam_actuator_ctrl_t      *a_ctrl;
+@@ -408,14 +409,14 @@
+ 	.unbind = cam_actuator_component_unbind,
+ };
+ 
+-static int32_t cam_actuator_platform_remove(
++static void cam_actuator_platform_remove(
+ 	struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_actuator_component_ops);
+-	return 0;
++	return;
+ }
+ 
+-static int32_t cam_actuator_driver_i2c_remove(struct i2c_client *client)
++static void cam_actuator_driver_i2c_remove(struct i2c_client *client)
+ {
+ 	struct cam_actuator_ctrl_t      *a_ctrl =
+ 		i2c_get_clientdata(client);
+@@ -425,7 +426,7 @@
+ 	/* Handle I2C Devices */
+ 	if (!a_ctrl) {
+ 		CAM_ERR(CAM_ACTUATOR, "Actuator device is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	CAM_INFO(CAM_ACTUATOR, "i2c remove invoked");
+@@ -444,7 +445,7 @@
+ 	v4l2_set_subdevdata(&a_ctrl->v4l2_dev_str.sd, NULL);
+ 	kfree(a_ctrl);
+ 
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_actuator_driver_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_cci/cam_cci_dev.c drivers/cam_sensor_module/cam_cci/cam_cci_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_cci/cam_cci_dev.c	2026-07-17 18:14:47.264286644 +0300
++++ drivers/cam_sensor_module/cam_cci/cam_cci_dev.c	2026-11-11 20:48:31.632236257 +0200
+@@ -585,10 +585,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_cci_device_remove(struct platform_device *pdev)
++static void cam_cci_device_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_cci_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_cci_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_csiphy/cam_csiphy_dev.c drivers/cam_sensor_module/cam_csiphy/cam_csiphy_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_csiphy/cam_csiphy_dev.c	2026-07-17 18:14:47.264583616 +0300
++++ drivers/cam_sensor_module/cam_csiphy/cam_csiphy_dev.c	2026-11-11 20:48:31.812205268 +0200
+@@ -300,10 +300,10 @@
+ }
+ 
+ 
+-static int32_t cam_csiphy_device_remove(struct platform_device *pdev)
++static void cam_csiphy_device_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_csiphy_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_csiphy_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_eeprom/cam_eeprom_dev.c drivers/cam_sensor_module/cam_eeprom/cam_eeprom_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_eeprom/cam_eeprom_dev.c	2026-07-17 18:14:47.265415561 +0300
++++ drivers/cam_sensor_module/cam_eeprom/cam_eeprom_dev.c	2026-11-11 20:48:32.541376196 +0200
+@@ -179,8 +179,7 @@
+ 	return rc;
+ }
+ 
+-static int cam_eeprom_i2c_driver_probe(struct i2c_client *client,
+-	 const struct i2c_device_id *id)
++static int cam_eeprom_i2c_driver_probe(struct i2c_client *client)
+ {
+ 	int                             rc = 0;
+ 	struct cam_eeprom_ctrl_t       *e_ctrl = NULL;
+@@ -255,7 +254,7 @@
+ 	return rc;
+ }
+ 
+-static int cam_eeprom_i2c_driver_remove(struct i2c_client *client)
++static void cam_eeprom_i2c_driver_remove(struct i2c_client *client)
+ {
+ 	int                             i;
+ 	struct v4l2_subdev             *sd = i2c_get_clientdata(client);
+@@ -265,20 +264,20 @@
+ 
+ 	if (!sd) {
+ 		CAM_ERR(CAM_EEPROM, "Subdevice is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	e_ctrl = (struct cam_eeprom_ctrl_t *)v4l2_get_subdevdata(sd);
+ 	if (!e_ctrl) {
+ 		CAM_ERR(CAM_EEPROM, "eeprom device is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	soc_private =
+ 		(struct cam_eeprom_soc_private *)e_ctrl->soc_info.soc_private;
+ 	if (!soc_private) {
+ 		CAM_ERR(CAM_EEPROM, "soc_info.soc_private is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	CAM_INFO(CAM_EEPROM, "i2c driver remove invoked");
+@@ -295,7 +294,7 @@
+ 	v4l2_set_subdevdata(&e_ctrl->v4l2_dev_str.sd, NULL);
+ 	kfree(e_ctrl);
+ 
+-	return 0;
++	return;
+ }
+ 
+ static int cam_eeprom_spi_setup(struct spi_device *spi)
+@@ -393,7 +392,7 @@
+ 	return cam_eeprom_spi_setup(spi);
+ }
+ 
+-static int cam_eeprom_spi_driver_remove(struct spi_device *sdev)
++static void cam_eeprom_spi_driver_remove(struct spi_device *sdev)
+ {
+ 	int                             i;
+ 	struct v4l2_subdev             *sd = spi_get_drvdata(sdev);
+@@ -403,13 +402,13 @@
+ 
+ 	if (!sd) {
+ 		CAM_ERR(CAM_EEPROM, "Subdevice is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	e_ctrl = (struct cam_eeprom_ctrl_t *)v4l2_get_subdevdata(sd);
+ 	if (!e_ctrl) {
+ 		CAM_ERR(CAM_EEPROM, "eeprom device is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	soc_info = &e_ctrl->soc_info;
+@@ -434,7 +433,7 @@
+ 	v4l2_set_subdevdata(&e_ctrl->v4l2_dev_str.sd, NULL);
+ 	kfree(e_ctrl);
+ 
+-	return 0;
++	return;
+ }
+ 
+ static int cam_eeprom_component_bind(struct device *dev,
+@@ -561,10 +560,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_eeprom_platform_driver_remove(struct platform_device *pdev)
++static void cam_eeprom_platform_driver_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_eeprom_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_eeprom_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_flash/cam_flash_dev.c drivers/cam_sensor_module/cam_flash/cam_flash_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_flash/cam_flash_dev.c	2026-07-17 18:14:47.265954992 +0300
++++ drivers/cam_sensor_module/cam_flash/cam_flash_dev.c	2026-11-11 20:48:32.858274236 +0200
+@@ -358,14 +358,14 @@
+ }
+ #endif
+ 
+-static int32_t cam_flash_i2c_driver_remove(struct i2c_client *client)
++static void cam_flash_i2c_driver_remove(struct i2c_client *client)
+ {
+-	int32_t rc = 0;
++	int32_t rc __maybe_unused = 0;
+ 	struct cam_flash_ctrl *fctrl = i2c_get_clientdata(client);
+ 	/* Handle I2C Devices */
+ 	if (!fctrl) {
+ 		CAM_ERR(CAM_FLASH, "Flash device is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	CAM_INFO(CAM_FLASH, "i2c driver remove invoked");
+@@ -373,7 +373,7 @@
+ 	kfree(fctrl->i2c_data.per_frame);
+ 	fctrl->i2c_data.per_frame = NULL;
+ 	kfree(fctrl);
+-	return rc;
++	return;
+ }
+ 
+ static struct v4l2_subdev_core_ops cam_flash_subdev_core_ops = {
+@@ -594,10 +594,10 @@
+ 	.unbind = cam_flash_component_unbind,
+ };
+ 
+-static int cam_flash_platform_remove(struct platform_device *pdev)
++static void cam_flash_platform_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_flash_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static int32_t cam_flash_platform_probe(struct platform_device *pdev)
+@@ -612,9 +612,10 @@
+ 	return rc;
+ }
+ 
+-static int32_t cam_flash_i2c_driver_probe(struct i2c_client *client,
+-	const struct i2c_device_id *id)
++static int32_t cam_flash_i2c_driver_probe(struct i2c_client *client)
+ {
++	const struct i2c_device_id *id __maybe_unused = i2c_client_get_device_id(client);
++
+ 	int32_t rc = 0, i = 0;
+ 	struct cam_flash_ctrl *fctrl;
+ 	struct cam_hw_soc_info *soc_info = NULL;
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_ois/cam_ois_core.c drivers/cam_sensor_module/cam_ois/cam_ois_core.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_ois/cam_ois_core.c	2026-07-17 18:14:47.265954992 +0300
++++ drivers/cam_sensor_module/cam_ois/cam_ois_core.c	2026-11-11 20:48:32.985572087 +0200
+@@ -5,7 +5,7 @@
+ 
+ #include <linux/module.h>
+ #include <linux/firmware.h>
+-#include <linux/dma-contiguous.h>
++#include <linux/dma-map-ops.h>
+ #include <cam_sensor_cmn_header.h>
+ #include "cam_ois_core.h"
+ #include "cam_ois_soc.h"
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_ois/cam_ois_dev.c drivers/cam_sensor_module/cam_ois/cam_ois_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_ois/cam_ois_dev.c	2026-07-17 18:14:47.266190418 +0300
++++ drivers/cam_sensor_module/cam_ois/cam_ois_dev.c	2026-11-11 20:48:33.017651581 +0200
+@@ -185,9 +185,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_ois_i2c_driver_probe(struct i2c_client *client,
+-	 const struct i2c_device_id *id)
++static int cam_ois_i2c_driver_probe(struct i2c_client *client)
+ {
++	const struct i2c_device_id *id __maybe_unused = i2c_client_get_device_id(client);
++
+ 	int                          rc = 0;
+ 	struct cam_ois_ctrl_t       *o_ctrl = NULL;
+ 	struct cam_ois_soc_private  *soc_private = NULL;
+@@ -298,7 +299,7 @@
+ 	return rc;
+ }
+ 
+-static int cam_ois_i2c_driver_remove(struct i2c_client *client)
++static void cam_ois_i2c_driver_remove(struct i2c_client *client)
+ {
+ 	int                             i;
+ 	struct cam_ois_ctrl_t          *o_ctrl = i2c_get_clientdata(client);
+@@ -308,7 +309,7 @@
+ 
+ 	if (!o_ctrl) {
+ 		CAM_ERR(CAM_OIS, "ois device is NULL");
+-		return -EINVAL;
++		return;
+ 	}
+ 
+ 	CAM_INFO(CAM_OIS, "i2c driver remove invoked");
+@@ -330,7 +331,7 @@
+ 	v4l2_set_subdevdata(&o_ctrl->v4l2_dev_str.sd, NULL);
+ 	kfree(o_ctrl);
+ 
+-	return 0;
++	return;
+ }
+ 
+ static int cam_ois_component_bind(struct device *dev,
+@@ -500,10 +501,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_ois_platform_driver_remove(struct platform_device *pdev)
++static void cam_ois_platform_driver_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_ois_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_ois_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_ois/cam_ois_mcu_stm32g.c drivers/cam_sensor_module/cam_ois/cam_ois_mcu_stm32g.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_ois/cam_ois_mcu_stm32g.c	2026-07-17 18:14:47.266190418 +0300
++++ drivers/cam_sensor_module/cam_ois/cam_ois_mcu_stm32g.c	2026-11-11 20:48:37.466823732 +0200
+@@ -2973,7 +2973,8 @@
+ 				j++;
+ 			}
+ 		}
+-		kstrtol(efs_data, 10, raw_data_x);
++		if (kstrtol(efs_data, 10, raw_data_x))
++			CAM_ERR(CAM_OIS, "gyro cal: bad number in efs data");
+ 
+ 		memset(efs_data, 0x00, sizeof(efs_data));
+ 		j = 0;
+@@ -2983,7 +2984,8 @@
+ 				j++;
+ 			}
+ 		}
+-		kstrtol(efs_data, 10, raw_data_y);
++		if (kstrtol(efs_data, 10, raw_data_y))
++			CAM_ERR(CAM_OIS, "gyro cal: bad number in efs data");
+ 
+ #if defined(CONFIG_SAMSUNG_OIS_Z_AXIS_CAL)
+ 		if (detect_comma_z) {
+@@ -2995,7 +2997,8 @@
+ 					j++;
+ 				}
+ 			}
+-			kstrtol(efs_data, 10, raw_data_z);
++			if (kstrtol(efs_data, 10, raw_data_z))
++				CAM_ERR(CAM_OIS, "gyro cal: bad number in efs data");
+ 		}
+ #endif
+ 	} else {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_res_mgr/cam_res_mgr.c drivers/cam_sensor_module/cam_res_mgr/cam_res_mgr.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_res_mgr/cam_res_mgr.c	2026-07-17 18:14:47.266190418 +0300
++++ drivers/cam_sensor_module/cam_res_mgr/cam_res_mgr.c	2026-11-11 20:48:33.366838256 +0200
+@@ -959,10 +959,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_res_mgr_remove(struct platform_device *pdev)
++static void cam_res_mgr_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_res_mgr_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_res_mgr_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_sensor/cam_sensor_dev.c drivers/cam_sensor_module/cam_sensor/cam_sensor_dev.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_sensor/cam_sensor_dev.c	2026-07-17 18:14:47.267059915 +0300
++++ drivers/cam_sensor_module/cam_sensor/cam_sensor_dev.c	2026-11-11 20:48:33.623362207 +0200
+@@ -153,8 +153,7 @@
+ 	return rc;
+ }
+ 
+-static int32_t cam_sensor_driver_i2c_probe(struct i2c_client *client,
+-	const struct i2c_device_id *id)
++static int32_t cam_sensor_driver_i2c_probe(struct i2c_client *client)
+ {
+ 	int32_t rc = 0;
+ 	int i = 0;
+@@ -382,13 +381,13 @@
+ 	.unbind = cam_sensor_component_unbind,
+ };
+ 
+-static int cam_sensor_platform_remove(struct platform_device *pdev)
++static void cam_sensor_platform_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_sensor_component_ops);
+-	return 0;
++	return;
+ }
+ 
+-static int cam_sensor_driver_i2c_remove(struct i2c_client *client)
++static void cam_sensor_driver_i2c_remove(struct i2c_client *client)
+ {
+ 	int                        i;
+ 	struct cam_sensor_ctrl_t  *s_ctrl = i2c_get_clientdata(client);
+@@ -396,7 +395,7 @@
+ 
+ 	if (!s_ctrl) {
+ 		CAM_ERR(CAM_SENSOR, "sensor device is NULL");
+-		return 0;
++		return;
+ 	}
+ 
+ 	CAM_DBG(CAM_SENSOR, "i2c remove invoked");
+@@ -413,7 +412,7 @@
+ 	v4l2_set_subdevdata(&(s_ctrl->v4l2_dev_str.sd), NULL);
+ 	kfree(s_ctrl);
+ 
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_sensor_driver_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_sensor_io/cam_sensor_spi.c drivers/cam_sensor_module/cam_sensor_io/cam_sensor_spi.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_sensor_io/cam_sensor_spi.c	2026-07-17 18:14:47.268791804 +0300
++++ drivers/cam_sensor_module/cam_sensor_io/cam_sensor_spi.c	2026-11-11 20:48:36.210302137 +0200
+@@ -3,7 +3,7 @@
+  * Copyright (c) 2017-2020, The Linux Foundation. All rights reserved.
+  */
+ 
+-#include <linux/dma-contiguous.h>
++#include <linux/dma-map-ops.h>
+ #include "cam_sensor_spi.h"
+ #include "cam_debug_util.h"
+ 
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_sensor_utils/cam_sysfs_init.c drivers/cam_sensor_module/cam_sensor_utils/cam_sysfs_init.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sensor_module/cam_sensor_utils/cam_sysfs_init.c	2026-07-17 18:14:47.269061445 +0300
++++ drivers/cam_sensor_module/cam_sensor_utils/cam_sysfs_init.c	2026-11-11 20:48:36.711519960 +0200
+@@ -4916,7 +4916,7 @@
+ 	svc_cheating_prevent_device_file_create();
+ 
+ 	if (camera_class == NULL) {
+-		camera_class = class_create(THIS_MODULE, "camera");
++		camera_class = class_create("camera");
+ 		if (IS_ERR(camera_class))
+ 			pr_err("failed to create device cam_dev_rear!\n");
+ 	}
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_smmu/cam_smmu_api.c drivers/cam_smmu/cam_smmu_api.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_smmu/cam_smmu_api.c	2026-07-17 18:14:47.269061445 +0300
++++ drivers/cam_smmu/cam_smmu_api.c	2026-11-11 20:48:37.465447972 +0200
+@@ -15,7 +15,7 @@
+ #include <linux/workqueue.h>
+ #include <linux/genalloc.h>
+ #include <linux/debugfs.h>
+-#include <linux/dma-iommu.h>
++
+ 
+ #include <soc/qcom/secure_buffer.h>
+ 
+@@ -1480,7 +1480,7 @@
+ 		firmware_start,
+ 		(phys_addr_t) icp_fw.fw_hdl,
+ 		firmware_len,
+-		IOMMU_READ|IOMMU_WRITE|IOMMU_PRIV);
++		IOMMU_READ|IOMMU_WRITE|IOMMU_PRIV, GFP_KERNEL);
+ 
+ 	if (rc) {
+ 		CAM_ERR(CAM_SMMU, "Failed to map FW into IOMMU");
+@@ -1628,7 +1628,7 @@
+ 		qdss_start,
+ 		qdss_phy_addr,
+ 		qdss_len,
+-		IOMMU_READ|IOMMU_WRITE);
++		IOMMU_READ|IOMMU_WRITE, GFP_KERNEL);
+ 
+ 	if (rc) {
+ 		CAM_ERR(CAM_SMMU, "Failed to map QDSS into IOMMU");
+@@ -1894,7 +1894,7 @@
+ 		goto err_put;
+ 	}
+ 
+-	secheap_buf->table = dma_buf_map_attachment(secheap_buf->attach,
++	secheap_buf->table = dma_buf_map_attachment_unlocked(secheap_buf->attach,
+ 		DMA_BIDIRECTIONAL);
+ 	if (IS_ERR_OR_NULL(secheap_buf->table)) {
+ 		rc = PTR_ERR(secheap_buf->table);
+@@ -1912,8 +1912,8 @@
+ 	size = iommu_map_sg(iommu_cb_set.cb_info[idx].domain,
+ 		sec_heap_iova,
+ 		secheap_buf->table->sgl,
+-		secheap_buf->table->nents,
+-		prot);
++		secheap_buf->table->orig_nents,
++		prot, GFP_KERNEL);
+ 	if (size != sec_heap_iova_len) {
+ 		CAM_ERR(CAM_SMMU, "IOMMU mapping failed");
+ 		goto err_unmap_sg;
+@@ -1927,7 +1927,7 @@
+ 	return rc;
+ 
+ err_unmap_sg:
+-	dma_buf_unmap_attachment(secheap_buf->attach,
++	dma_buf_unmap_attachment_unlocked(secheap_buf->attach,
+ 		secheap_buf->table,
+ 		DMA_BIDIRECTIONAL);
+ err_detach:
+@@ -1982,7 +1982,7 @@
+ 			sec_heap_iova_len);
+ 	}
+ 
+-	dma_buf_unmap_attachment(secheap_buf->attach,
++	dma_buf_unmap_attachment_unlocked(secheap_buf->attach,
+ 		secheap_buf->table, DMA_BIDIRECTIONAL);
+ 	dma_buf_detach(secheap_buf->buf, secheap_buf->attach);
+ 	dma_buf_put(secheap_buf->buf);
+@@ -2032,7 +2032,7 @@
+ 	}
+ 
+ 	if (region_id == CAM_SMMU_REGION_SHARED) {
+-		table = dma_buf_map_attachment(attach, dma_dir);
++		table = dma_buf_map_attachment_unlocked(attach, dma_dir);
+ 		if (IS_ERR_OR_NULL(table)) {
+ 			rc = PTR_ERR(table);
+ 			CAM_ERR(CAM_SMMU, "Error: dma map attachment failed");
+@@ -2061,8 +2061,8 @@
+ 		if (iommu_cb_set.force_cache_allocs)
+ 			prot |= IOMMU_CACHE;
+ 
+-		size = iommu_map_sg(domain, iova, table->sgl, table->nents,
+-				prot);
++		size = iommu_map_sg(domain, iova, table->sgl, table->orig_nents,
++				prot, GFP_KERNEL);
+ 
+ 		if (size < 0) {
+ 			CAM_ERR(CAM_SMMU, "IOMMU mapping failed");
+@@ -2084,7 +2084,7 @@
+ 		if (!dis_delayed_unmap)
+ 			attach->dma_map_attrs |= DMA_ATTR_DELAYED_UNMAP;
+ 
+-		table = dma_buf_map_attachment(attach, dma_dir);
++		table = dma_buf_map_attachment_unlocked(attach, dma_dir);
+ 		if (IS_ERR_OR_NULL(table)) {
+ 			rc = PTR_ERR(table);
+ 			CAM_ERR(CAM_SMMU,
+@@ -2157,7 +2157,7 @@
+ 
+ 	/* Unmap the mapping in dma region as this is not used anyway */
+ 	if (region_id == CAM_SMMU_REGION_SHARED)
+-		dma_buf_unmap_attachment(attach, table, dma_dir);
++		dma_buf_unmap_attachment_unlocked(attach, table, dma_dir);
+ 
+ 	return 0;
+ 
+@@ -2172,7 +2172,7 @@
+ 			*len_ptr);
+ 	}
+ err_unmap_sg:
+-	dma_buf_unmap_attachment(attach, table, dma_dir);
++	dma_buf_unmap_attachment_unlocked(attach, table, dma_dir);
+ err_detach:
+ 	dma_buf_detach(buf, attach);
+ err_put:
+@@ -2309,7 +2309,7 @@
+ 			mapping_info->attach->dma_map_attrs |=
+ 				DMA_ATTR_SKIP_CPU_SYNC;
+ 
+-		dma_buf_unmap_attachment(mapping_info->attach,
++		dma_buf_unmap_attachment_unlocked(mapping_info->attach,
+ 			mapping_info->table, mapping_info->dir);
+ 		iommu_cb_set.cb_info[idx].io_mapping_size -= mapping_info->len;
+ 	}
+@@ -2564,8 +2564,8 @@
+ 	if (iommu_map_sg(domain,
+ 		iova,
+ 		table->sgl,
+-		table->nents,
+-		iommu_dir) != virt_len) {
++		table->orig_nents,
++		iommu_dir, GFP_KERNEL) != virt_len) {
+ 		CAM_ERR(CAM_SMMU, "iommu_map_sg() failed");
+ 		goto err_iommu_map;
+ 	}
+@@ -2840,7 +2840,7 @@
+ 
+ 	/*
+ 	 * ion_phys() is deprecated. call dma_buf_attach() and
+-	 * dma_buf_map_attachment() to get the buffer's physical
++	 * dma_buf_map_attachment_unlocked() to get the buffer's physical
+ 	 * address.
+ 	 */
+ 	attach = dma_buf_attach(dmabuf, iommu_cb_set.cb_info[idx].dev);
+@@ -2854,7 +2854,7 @@
+ 
+ 	attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
+ 
+-	table = dma_buf_map_attachment(attach, dma_dir);
++	table = dma_buf_map_attachment_unlocked(attach, dma_dir);
+ 	if (IS_ERR_OR_NULL(table)) {
+ 		CAM_ERR(CAM_SMMU, "Error: dma buf map attachment failed");
+ 		rc = PTR_ERR(table);
+@@ -2892,7 +2892,7 @@
+ 	return 0;
+ 
+ err_unmap_sg:
+-	dma_buf_unmap_attachment(attach, table, dma_dir);
++	dma_buf_unmap_attachment_unlocked(attach, table, dma_dir);
+ err_detach:
+ 	dma_buf_detach(dmabuf, attach);
+ err_put:
+@@ -2995,7 +2995,7 @@
+ 	mapping_info->attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
+ 
+ 	/* iommu buffer clean up */
+-	dma_buf_unmap_attachment(mapping_info->attach,
++	dma_buf_unmap_attachment_unlocked(mapping_info->attach,
+ 		mapping_info->table, mapping_info->dir);
+ 	dma_buf_detach(mapping_info->buf, mapping_info->attach);
+ 	dma_buf_put(mapping_info->buf);
+@@ -3662,8 +3662,8 @@
+ 	struct device *dev)
+ {
+ 	int rc = 0;
+-	int32_t stall_disable = 1;
+-	int32_t hupcf = 1;
++	int32_t stall_disable __maybe_unused = 1;
++	int32_t hupcf __maybe_unused = 1;
+ 
+ 	if (!cb || !dev) {
+ 		CAM_ERR(CAM_SMMU, "Error: invalid input params");
+@@ -3724,26 +3724,18 @@
+ 			goto end;
+ 		}
+ 
+-		iommu_dma_enable_best_fit_algo(dev);
+ 
+-		if (cb->discard_iova_start)
+-			iommu_dma_reserve_iova(dev, cb->discard_iova_start,
+-				cb->discard_iova_len);
+ 
+ 		cb->state = CAM_SMMU_ATTACH;
+ 
+ 		if (cb->stall_disable) {
+-			if (iommu_domain_set_attr(cb->domain,
+-				DOMAIN_ATTR_FAULT_MODEL_NO_STALL,
+-				&stall_disable) < 0) {
++			if (0 < 0) {
+ 				CAM_ERR(CAM_SMMU,
+ 					"Error: failed to set cb stall disable for node: %s",
+ 					cb->name[0]);
+ 			}
+ 
+-			if (iommu_domain_set_attr(cb->domain,
+-				DOMAIN_ATTR_FAULT_MODEL_HUPCF,
+-				&hupcf) < 0) {
++			if (0 < 0) {
+ 				CAM_ERR(CAM_SMMU,
+ 					"Error: failed to set attribute HUPCF for node: %s",
+ 					cb->name[0]);
+@@ -4201,9 +4193,9 @@
+ 	/* Store parent inode for cleanup in caller */
+ 	iommu_cb_set.dentry = dbgfileptr;
+ 
+-	dbgfileptr = debugfs_create_bool("cb_dump_enable", 0644,
++	debugfs_create_bool("cb_dump_enable", 0644,
+ 		iommu_cb_set.dentry, &iommu_cb_set.cb_dump_enable);
+-	dbgfileptr = debugfs_create_bool("map_profile_enable", 0644,
++	debugfs_create_bool("map_profile_enable", 0644,
+ 		iommu_cb_set.dentry, &iommu_cb_set.map_profile_enable);
+ 	if (IS_ERR(dbgfileptr)) {
+ 		if (PTR_ERR(dbgfileptr) == -ENODEV)
+@@ -4371,7 +4363,7 @@
+ 	return rc;
+ }
+ 
+-static int cam_smmu_remove(struct platform_device *pdev)
++static void cam_smmu_remove(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+ 
+@@ -4388,10 +4380,10 @@
+ 		component_del(&pdev->dev, &cam_smmu_fw_dev_component_ops);
+ 	} else {
+ 		CAM_ERR(CAM_SMMU, "Unrecognized child device: %s", pdev->name);
+-		return -ENODEV;
++		return;
+ 	}
+ 
+-	return 0;
++	return;
+ }
+ 
+ struct platform_driver cam_smmu_driver = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sync/cam_sync.c drivers/cam_sync/cam_sync.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_sync/cam_sync.c	2026-07-17 18:14:47.269481931 +0300
++++ drivers/cam_sync/cam_sync.c	2026-11-11 20:48:37.040391840 +0200
+@@ -1064,7 +1064,7 @@
+ 	/* Store parent inode for cleanup in caller */
+ 	sync_dev->dentry = dbgfileptr;
+ 
+-	dbgfileptr = debugfs_create_bool("trigger_cb_without_switch", 0644,
++	debugfs_create_bool("trigger_cb_without_switch", 0644,
+ 		sync_dev->dentry, &trigger_cb_without_switch);
+ 	if (IS_ERR(dbgfileptr)) {
+ 		if (PTR_ERR(dbgfileptr) == -ENODEV)
+@@ -1283,10 +1283,10 @@
+ 	return rc;
+ }
+ 
+-static int cam_sync_remove(struct platform_device *pdev)
++static void cam_sync_remove(struct platform_device *pdev)
+ {
+ 	component_del(&pdev->dev, &cam_sync_component_ops);
+-	return 0;
++	return;
+ }
+ 
+ static const struct of_device_id cam_sync_dt_match[] = {
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_compat.h drivers/cam_utils/cam_compat.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_compat.h	2026-07-17 18:14:47.269802698 +0300
++++ drivers/cam_utils/cam_compat.h	2026-11-11 20:48:37.123897018 +0200
+@@ -22,8 +22,8 @@
+ #else
+ 
+ #include <linux/msm_ion.h>
+-#include <linux/ion_kernel.h>
+-#include <soc/qcom/scm.h>
++#include <linux/ion.h>
++
+ 
+ #endif
+ 
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_soc_bus.h drivers/cam_utils/cam_soc_bus.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_soc_bus.h	2026-07-17 18:14:47.269802698 +0300
++++ drivers/cam_utils/cam_soc_bus.h	2026-11-11 20:48:37.462534326 +0200
+@@ -37,6 +37,7 @@
+ 	const char *name;
+ 	uint32_t src_id;
+ 	uint32_t dst_id;
++	struct device_node *icc_np;
+ 	int num_usecases;
+ 	struct cam_soc_bus_client_ab_ib bw_pair[CAM_SOC_BUS_MAX_NUM_USECASES];
+ };
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_soc_icc.c drivers/cam_utils/cam_soc_icc.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_soc_icc.c	2026-07-17 18:14:47.269802698 +0300
++++ drivers/cam_utils/cam_soc_icc.c	2026-11-11 20:48:37.462746805 +0200
+@@ -100,9 +100,8 @@
+ 
+ 	bus_client->client_data = bus_client_data;
+ 	bus_client->common_data = common_data;
+-	bus_client_data->icc_data = icc_get(&pdev->dev,
+-		bus_client->common_data->src_id,
+-		bus_client->common_data->dst_id);
++	bus_client_data->icc_data = cam_icc_get_np(
++		bus_client->common_data->icc_np);
+ 	if (IS_ERR_OR_NULL(bus_client_data->icc_data)) {
+ 		CAM_ERR(CAM_UTIL, "failed in register bus client");
+ 		rc = -EINVAL;
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_soc_util.c drivers/cam_utils/cam_soc_util.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_soc_util.c	2026-07-17 18:14:47.269802698 +0300
++++ drivers/cam_utils/cam_soc_util.c	2026-11-11 20:48:37.465138261 +0200
+@@ -1335,9 +1335,18 @@
+ 			soc_info->dev_name);
+ 		rc = 0;
+ 	} else {
+-		soc_info->irq_line =
+-			platform_get_resource_byname(soc_info->pdev,
+-			IORESOURCE_IRQ, soc_info->irq_name);
++		int irq = platform_get_irq_byname(soc_info->pdev,
++			soc_info->irq_name);
++
++		soc_info->irq_line = irq < 0 ? NULL :
++			devm_kzalloc(&soc_info->pdev->dev,
++				sizeof(*soc_info->irq_line), GFP_KERNEL);
++		if (soc_info->irq_line) {
++			soc_info->irq_line->start = irq;
++			soc_info->irq_line->end = irq;
++			soc_info->irq_line->flags = IORESOURCE_IRQ;
++			soc_info->irq_line->name = soc_info->irq_name;
++		}
+ 		if (!soc_info->irq_line) {
+ 			CAM_ERR(CAM_UTIL, "no irq resource");
+ 			rc = -ENODEV;
+diff --color -ruN -x '*.o' -x '*.cmd' -x '*.ko' -x '*.mod*' -x modules.order -x Module.symvers -x Kbuild -x Makefile -x '.*' $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_trace.h drivers/cam_utils/cam_trace.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/camera/drivers/cam_utils/cam_trace.h	2026-07-17 18:14:47.269802698 +0300
++++ drivers/cam_utils/cam_trace.h	2026-11-11 20:48:37.462440039 +0200
+@@ -11,7 +11,7 @@
+ #undef TRACE_INCLUDE_PATH
+ #define TRACE_INCLUDE_PATH .
+ #undef TRACE_INCLUDE_FILE
+-#define TRACE_INCLUDE_FILE ../../techpack/camera/drivers/cam_utils/cam_trace
++#define TRACE_INCLUDE_FILE cam_trace
+ 
+ #include <linux/tracepoint.h>
+ #include <media/cam_req_mgr.h>
+@@ -32,7 +32,7 @@
+ 	TP_fast_assign(
+ 		__entry->ctx = ctx;
+ 		__entry->state = ctx->state;
+-		__assign_str(name, name);
++		__assign_str(name);
+ 	),
+ 	TP_printk(
+ 		"%s: State ctx=%p ctx_state=%u",
+@@ -76,8 +76,8 @@
+ 		__field(uint64_t, val2)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(string1, string1);
+-		__assign_str(string2, string2);
++		__assign_str(string1);
++		__assign_str(string2);
+ 		__entry->val1 = val1;
+ 		__entry->val2 = val2;
+ 	),
+@@ -95,7 +95,7 @@
+ 		__string(string1, string1)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(string1, string1);
++		__assign_str(string1);
+ 	),
+ 	TP_printk(
+ 		"%s",
+@@ -111,7 +111,7 @@
+ 		__field(uint64_t, timestamp)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(dbg_message, dbg_message);
++		__assign_str(dbg_message);
+ 		__entry->timestamp = timestamp;
+ 	),
+ 	TP_printk(
+@@ -130,7 +130,7 @@
+ 		__field(uint64_t, request)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(ctx_type, ctx_type);
++		__assign_str(ctx_type);
+ 		__entry->ctx = ctx;
+ 		__entry->request = req->request_id;
+ 	),
+@@ -148,7 +148,7 @@
+ 		__field(uint64_t, req_id)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(entity, entity);
++		__assign_str(entity);
+ 		__entry->req_id = req_id;
+ 	),
+ 	TP_printk(
+@@ -165,7 +165,7 @@
+ 		__field(uint64_t, req_id)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(entity, entity);
++		__assign_str(entity);
+ 		__entry->req_id = req_id;
+ 	),
+ 	TP_printk(
+@@ -209,7 +209,7 @@
+ 		__field(void*, session)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(name, info->name);
++		__assign_str(name);
+ 		__entry->id      = info->dev_id;
+ 		__entry->delay   = info->p_delay;
+ 		__entry->link    = link;
+@@ -235,7 +235,7 @@
+ 		__field(void*, session)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(name, dev->dev_info.name);
++		__assign_str(name);
+ 		__entry->dev_id  = dev->dev_info.dev_id;
+ 		__entry->req_id  = req->request_id;
+ 		__entry->link    = link;
+@@ -266,7 +266,7 @@
+ 		__field(void*, session)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(name, dev->dev_info.name);
++		__assign_str(name);
+ 		__entry->dev_id    = dev->dev_info.dev_id;
+ 		__entry->req_id    = add_req->req_id;
+ 		__entry->slot_id   = idx;
+@@ -301,8 +301,8 @@
+ 		__field(int32_t, rc)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(entity, entity);
+-		__assign_str(text, text);
++		__assign_str(entity);
++		__assign_str(text);
+ 		__entry->req_id      = req_id;
+ 		__entry->ctx_id      = ctx_id;
+ 		__entry->link_hdl    = link_hdl;
+@@ -325,7 +325,7 @@
+ 		__field(uint64_t, req_id)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(entity, entity);
++		__assign_str(entity);
+ 		__entry->req_id = req_id;
+ 	),
+ 	TP_printk(
+@@ -342,7 +342,7 @@
+ 		__field(uint32_t, irq_type)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(entity, entity);
++		__assign_str(entity);
+ 		__entry->irq_type = irq_type;
+ 	),
+ 	TP_printk(
+@@ -359,7 +359,7 @@
+ 		__field(uint32_t, irq_type)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(entity, entity);
++		__assign_str(entity);
+ 		__entry->irq_type = irq_type;
+ 	),
+ 	TP_printk(
+@@ -376,7 +376,7 @@
+ 		__field(uint32_t, status)
+ 	),
+ 	TP_fast_assign(
+-		__assign_str(entity, entity);
++		__assign_str(entity);
+ 		__entry->status = status;
+ 	),
+ 	TP_printk(

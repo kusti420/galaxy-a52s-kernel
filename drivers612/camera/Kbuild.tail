@@ -1,0 +1,25 @@
+
+# ---- a52sxq 6.12 port additions (drivers612/camera/Kbuild.tail) ----
+ccflags-y += -I$(srctree)/../soc-repo/include -I$(srctree)/../soc-repo/include/uapi
+CFLAGS_cam_trace.o := -I$(src)/cam_utils
+# 5.4 structs end in one-element arrays used as flexible arrays; GKI's
+# UBSAN bounds traps turn every such access into a panic (redwood hit it in
+# the sensor probe).
+UBSAN_SANITIZE := n
+# HFI packets and packet payloads are memcpy'd into those arrays; FORTIFY's
+# run-time field-overflow warnings fire on each copy.
+ccflags-y += -D__NO_FORTIFY
+# The 5.4 kernel built this techpack with format checking off (msm-5.4 top
+# Makefile: -Wno-format for clang); the donor has several hundred %d-vs-size_t
+# style mismatches in log lines, all 64-bit-harmless. Same switches here
+# rather than touching hundreds of donor lines. The few real bugs these hide
+# are listed in README.md ("donor bugs seen by the 6.12 compiler").
+ccflags-y += -Wno-format -Wno-format-truncation -Wno-format-insufficient-args -Wno-implicit-fallthrough -ferror-limit=0
+# HFI/packet structs end in one-element arrays indexed past [0] on purpose
+# (firmware/userspace ABI, cannot be changed to flexible arrays without
+# changing sizeof users).
+ccflags-y += -Wno-array-bounds
+# donor bug kept bit-for-bit: cam_ife_csid_core.c "(v != A) || (v != B)" is
+# always true (num_valid_vc_dt = 1 on every target, also on 5.4).
+ccflags-y += -Wno-tautological-overlap-compare
+ccflags-y += $(CAM_EXTRA_CFLAGS)

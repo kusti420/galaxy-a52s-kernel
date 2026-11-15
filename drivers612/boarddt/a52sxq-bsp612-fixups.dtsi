@@ -1,0 +1,208 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * a52sxq on the Qualcomm 6.12 yupik base: HAND-WRITTEN part.
+ *
+ * Everything the phone's 5.4 board tree (generated files) cannot express because the 6.12 base
+ * or a 6.12 driver differs from 5.4. Included LAST, so it wins over the verbatim 5.4 values.
+ * Origin: bsp612/dts/a52sxq-bringup-overlay.dts (reasons in bsp612/BRINGUP.md), minus what the
+ * phone's tree already says itself (ADSP/removed_region sizes, Samsung regions, UFS, keys,
+ * reboot_reason, PMIC children) and minus the bring-up-only switches (Bluetooth and SE1 are
+ * NOT disabled here: the phone has WCN6750 on the same pins as the base and the TAS256x amp on
+ * SE1).
+ */
+
+/* ---- memory map: 6.12-base regions that lie inside Samsung's ADSP range (0x84700000+0x4800000) */
+&video_mem {
+	status = "disabled";
+};
+
+&pil_cvp_mem {
+	status = "disabled";
+};
+
+&reserved_memory {
+	/* 5.4 base of the phone: cvp@8b200000 (label pil_video_mem there); absent in the 6.12 base */
+	a52_cvp_mem: cvp@8b200000 {
+		reg = <0x0 0x8b200000 0x0 0x500000>;
+		no-map;
+	};
+};
+
+/*
+ * DEVIATION from the phone's tree (size 0 there): keep the gap up to the trusted-VM block out
+ * of the kernel's hands, as the proven 6.18 dts and the bring-up overlay do.
+ */
+&modem_shared_mem {
+	reg = <0x0 0xd0000000 0x0 0x800000>;
+};
+
+/* ---- TLMM: 56..59 are the TrustZone-owned fingerprint SPI pins (5.4 reserves them in C,
+ * CONFIG_FINGERPRINT_SECURE); the 6.12 driver only knows this property. 32 33 48..51: base. */
+&tlmm {
+	qcom,gpios-reserved = <32 33 48 49 50 51 56 57 58 59>;
+};
+
+/* ---- GCC: base list (41) + 15 firmware-owned clocks the 6.12 gcc-sc7280 registers and the
+ * phone's 5.4 gcc-yupik does not have (BRINGUP.md). */
+&gcc {
+	protected-clocks = <0x07 0x08 0x15 0x27 0x28 0x29 0x2a 0x2b 0x2c 0x2d 0x2e 0x2f 0x30
+			    0x31 0x32 0x33 0x34 0x35 0x36 0x37 0x38 0x39 0x3a 0x3b 0x78 0xb0
+			    0x10 0x91 0x92 0x93 0x94 0x95 0x96 0x9c 0x9d 0x9e 0x9f 0xa0 0xb2
+			    0xb1 0xb3
+			    166 167 168 169 170 171 172 173 174 175 180 181 182 183 184>;
+};
+
+/* ---- PMK8350 PON: binding CHANGED. 5.4 "qcom,qpnp-power-on" (pon_hlos@1300, pon_pbs@800:
+ * kept verbatim, no 6.12 driver) -> 6.12 "qcom,pmk8350-pon" with pwrkey/resin children.
+ * Key codes and interrupts as on the phone (KPDPWR = irq 0x13/7, RESIN = 0x13/6, vol-down). */
+&pmk8350 {
+	a52_pon: pon@1300 {
+		compatible = "qcom,pmk8350-pon";
+		reg = <0x1300>, <0x800>;
+		reg-names = "hlos", "pbs";
+
+		pwrkey {
+			compatible = "qcom,pmk8350-pwrkey";
+			interrupts = <0 0x13 0x7 3>;	/* IRQ_TYPE_EDGE_BOTH */
+			linux,code = <116>;		/* KEY_POWER */
+		};
+
+		resin {
+			compatible = "qcom,pmk8350-resin";
+			interrupts = <0 0x13 0x6 3>;
+			linux,code = <114>;		/* KEY_VOLUMEDOWN */
+		};
+	};
+};
+
+/* ---- USB: the phone is USB 2.0 only; 5.4 dwc3 has usb-phy = <hsphy>, <usb_nop_phy>. */
+&dwc3_0 {
+	usb-phy = <&usb2_phy0>, <&usb_nop_phy>;
+};
+
+&usb_qmp_dp_phy {
+	status = "disabled";
+};
+
+&soc {
+	a52sxq_overlay_marker: samsung-overlay-marker {
+		samsung,overlay-applied;
+		samsung,stage = "bsp612-boarddt";
+	};
+};
+
+/* ---- binding CHANGED (path): on 6.12 the RPMh regulators sit one level deeper, under
+ * rsc@18200000/drv@2. The phone's "&apps_rsc { rpmh-regulator-ldoc6 { ... } }" therefore lands
+ * on a new, inert node; repeat the phone's value at the 6.12 place. */
+&apps_rsc {
+	drv@2 {
+		rpmh-regulator-ldoc6 {
+			qcom,mode-threshold-currents = <0x0 0x2710>;
+		};
+	};
+};
+
+/* ---- the 5.4 base has /firmware/android (compatible "android,firmware"); the 6.12 base does
+ * not, so the phone's vbmeta child would hang under a node without compatible. */
+&firmware {
+	android {
+		compatible = "android,firmware";
+	};
+};
+
+/* ---- PMK8350 ADC thermal monitor: binding CHANGED.
+ * 5.4 "qcom,adc-tm7": children keyed by ADC channel (reg = <0x144>), "qcom,hw-settle-time",
+ * one io-channels list on the parent, thermal zones say <&pmk8350_adc_tm ADC_CHANNEL>.
+ * 6.12 "qcom,spmi-adc-tm5-gen2" (soc-repo drivers/thermal/qcom/qcom-spmi-adc-tm5.c, Qualcomm's
+ * pmk8350.dtsi + yupik-pmic-overlay.dtsi): children keyed by monitor index (reg = <0..7>) with
+ * their own io-channels and "qcom,hw-settle-time-us"; zones say <&pmk8350_adc_tm INDEX>.
+ * Channels and settle time (200 us) are the phone's. The 5.4 children are deleted: the gen2
+ * driver rejects a child whose reg is not a monitor index. */
+&pmk8350_adc_tm {
+	compatible = "qcom,spmi-adc-tm5-gen2";
+	/delete-property/ interrupt-names;
+	/delete-property/ io-channels;
+	/delete-node/ pm7325_quiet_therm;
+	/delete-node/ pm7325_cam_flash_therm;
+	/delete-node/ pm7325_wide_rfc_therm;
+	/delete-node/ pmk8350_xo_therm;
+	/delete-node/ pm7325_sdm_skin_therm;	/* only hardware revision 0 has it, see a52sxq-r00-fixups.dtsi */
+
+	a52_tm_quiet_therm: pm7325-quiet-therm@0 {
+		reg = <0>;
+		io-channels = <&pmk8350_vadc 0x144>;	/* PM7325 AMUX_THM1 100k pull-up */
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+
+	a52_tm_cam_flash_therm: pm7325-cam-flash-therm@1 {
+		reg = <1>;
+		io-channels = <&pmk8350_vadc 0x145>;	/* AMUX_THM2 */
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+
+	a52_tm_wide_rfc_therm: pm7325-wide-rfc-therm@2 {
+		reg = <2>;
+		io-channels = <&pmk8350_vadc 0x147>;	/* AMUX_THM4 */
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+
+	a52_tm_xo_therm: pmk8350-xo-therm@3 {
+		reg = <3>;
+		io-channels = <&pmk8350_vadc 0x44>;	/* PMK8350 AMUX_THM1 (XO) */
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+};
+
+&thermal_zones {
+	quiet-therm-usr {
+		thermal-sensors = <&pmk8350_adc_tm 0>;
+	};
+
+	camera-therm-usr {
+		thermal-sensors = <&pmk8350_adc_tm 1>;
+	};
+
+	rear-cam-therm-usr {
+		thermal-sensors = <&pmk8350_adc_tm 2>;
+	};
+
+	xo-therm-usr {
+		thermal-sensors = <&pmk8350_adc_tm 3>;
+	};
+
+	/*
+	 * Phone: <&pmk8350_adc_tm 0x146>. From hardware revision 1 on ADC 0x146 is Samsung's
+	 * ap_therm (sec_thermistor) and adc_tm has no such channel any more, so this zone cannot
+	 * register on 5.4 either. Disabled here; a52sxq-r00-fixups.dtsi turns it on for rev 0.
+	 */
+	sdm-skin-therm-usr {
+		thermal-sensors = <&pmk8350_adc_tm 4>;
+		status = "disabled";
+	};
+};
+
+/*
+ * ---- test harness: ramoops with the zone layout of the 6.18 kexec harness (one 128 KiB dump
+ * record, then console/ftrace/pmsg; the last 128 KiB of Samsung's 1 MiB are the harness's
+ * a52ram area). With Samsung's layout the harness cannot read this kernel's console after a
+ * reset. For a shipping ROM, drop this block again (Samsung's layout is in a52sxq-memory.dtsi).
+ */
+&reserved_memory {
+	ramoops@F0B00000 {
+		reg = <0x0 0xf0b00000 0x0 0xe0000>;
+		record-size = <0x20000>;
+	};
+};
+
+/*
+ * ---- sm5714-fled shares address 0x49 with sm5714@49. On 6.12 the fled client is created
+ * first and the MFD (fuel gauge + charger) is never registered (found on hardware
+ * 2026-11-13). The MFD creates the flash LED itself. Keep this node off.
+ */
+&{/soc/qcom,qupv3_0_geni_se@9c0000/i2c@98c000/sm5714-fled} {
+	status = "disabled";
+};

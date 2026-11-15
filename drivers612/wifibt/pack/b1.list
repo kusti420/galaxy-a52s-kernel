@@ -1,0 +1,4 @@
+rfkill.ko
+msm_gpi.ko
+msm_geni_serial.ko
+btpower.ko

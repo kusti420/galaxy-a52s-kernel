@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * a52sxq: FastRPC nodes for the legacy adsprpc driver (frpc-adsprpc.ko,
+ * drivers612/secure/adsprpc), on the Qualcomm 6.12 yupik base.
+ *
+ * Source of every value: the phone's own 5.4 tree, downstream-dt/a52sxq-r02.dts
+ * /soc/qcom,msm_fastrpc (16 context banks; SIDs, masks, VMIDs, gids, latency,
+ * qos cores copied 1:1; identical on hardware revisions 3 and 4: the node comes
+ * from Qualcomm's yupik.dtsi, Samsung's a52sxq overlays do not touch it).
+ *
+ * What the 6.12 base already has (bsp612/devicetree/qcom/yupik.dtsi), so NOT
+ * repeated here: /reserved-memory adsp_mem (12 MiB CMA, same size/alignment as
+ * the phone) and /soc/qcom,msm-adsprpc-mem (qcom,msm-adsprpc-mem-region,
+ * restrict-access), qcom,msm-cdsp-loader, and the glink edges with
+ * qcom,glink-label "lpass"/"cdsp" that the driver matches its channel on.
+ * The 6.12 yupik.dtsi has NO qcom,msm_fastrpc node (neither for this driver
+ * nor qcom,fastrpc for the dsp-kernel one), so nothing conflicts. Do not load
+ * dsp-kernel's frpc-adsprpc.ko next to this module: same rpmsg channel
+ * ("fastrpcglink-apps-dsp") and the same device names.
+ *
+ * cb13-cb16 SIDs: 0x11ab..0x11ae / 0x118b..0x118e as on the phone. An earlier version had
+ * Qualcomm's 0x11ad..0x11b0: 0x11b0 & 0xf = 0 made the CDSP pick context bank 0 (an
+ * unmatched stream, bypassing the SMMU) and the first CDSP invoke reset the SoC (2026-11-13).
+ *
+ * One difference to the 5.4 node, forced by the 6.12 SMMU code:
+ *  - qcom,iommu-dma-addr-pool is deprecated on 6.12 (WARN in qcom-iommu-util),
+ *    and a bank without an IOVA window gets no DMA domain. The 5.4 window
+ *    (base 0x80000000 size 0x78000000; secure bank 9: base 0x60000000) is
+ *    expressed as iommu-addresses reservations of everything outside it. The
+ *    driver's size limit falls back to the same 0x78000000 when the property
+ *    is absent.
+ * qcom,iommu-faults = "stall-disable", "HUPCF" is kept as on the phone: the
+ * 6.12 arm-smmu still parses it (redwood's file dropped it).
+ *
+ * qcom,secure-domains = <0xf> is in the phone's tree, but Samsung's driver
+ * only applies it when the kernel command line has signoff=0x2377; the module
+ * keeps that (parameter frpc-adsprpc.signoff). Without it every domain is
+ * reachable through /dev/adsprpc-smd, as on the phone today.
+ */
+
+&soc {
+	fastrpc_iova: fastrpc_iommu_region_partition {
+		iommu-addresses = <&fastrpc_cb1 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb1 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb2 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb2 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb3 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb3 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb4 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb4 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb5 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb5 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb6 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb6 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb7 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb7 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb8 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb8 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb10 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb10 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb11 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb11 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb12 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb12 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb13 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb13 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb14 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb14 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb15 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb15 0x0 0xf8000000 0x0 0x8000000>,
+				  <&fastrpc_cb16 0x0 0x0 0x0 0x80000000>,
+				  <&fastrpc_cb16 0x0 0xf8000000 0x0 0x8000000>;
+	};
+
+	fastrpc_secure_iova: fastrpc_secure_iommu_region_partition {
+		iommu-addresses = <&fastrpc_cb9 0x0 0x0 0x0 0x60000000>,
+				  <&fastrpc_cb9 0x0 0xd8000000 0x0 0x28000000>;
+	};
+
+	msm_fastrpc: qcom,msm_fastrpc {
+		compatible = "qcom,msm-fastrpc-compute";
+		/* for the 64-bit iommu-addresses of the banks below */
+		#address-cells = <2>;
+		#size-cells = <2>;
+		qcom,adsp-remoteheap-vmid = <22 37>;	/* VMID_LPASS, VMID_ADSP_HEAP */
+		qcom,fastrpc-adsp-audio-pdr;
+		qcom,fastrpc-adsp-sensors-pdr;
+		qcom,rpc-latency-us = <235>;
+		qcom,secure-domains = <0x0f>;		/* only with signoff=0x2377 */
+		qcom,fastrpc-gids = <2908>;
+		qcom,qos-cores = <0 1 2 3>;
+
+		fastrpc_cb1: qcom,msm_fastrpc_compute_cb1 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a1 0x0420>,
+				 <&apps_smmu 0x1181 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb2: qcom,msm_fastrpc_compute_cb2 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a2 0x0420>,
+				 <&apps_smmu 0x1182 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb3: qcom,msm_fastrpc_compute_cb3 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a3 0x0420>,
+				 <&apps_smmu 0x1183 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb4: qcom,msm_fastrpc_compute_cb4 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a4 0x0420>,
+				 <&apps_smmu 0x1184 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb5: qcom,msm_fastrpc_compute_cb5 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a5 0x0420>,
+				 <&apps_smmu 0x1185 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb6: qcom,msm_fastrpc_compute_cb6 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a6 0x0420>,
+				 <&apps_smmu 0x1186 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb7: qcom,msm_fastrpc_compute_cb7 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a7 0x0420>,
+				 <&apps_smmu 0x1187 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb8: qcom,msm_fastrpc_compute_cb8 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11a8 0x0420>,
+				 <&apps_smmu 0x1188 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb9: qcom,msm_fastrpc_compute_cb9 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			qcom,secure-context-bank;
+			iommus = <&apps_smmu 0x11a9 0x0420>,
+				 <&apps_smmu 0x1189 0x0420>;
+			memory-region = <&fastrpc_secure_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			qcom,iommu-vmid = <0xa>;	/* VMID_CP_PIXEL */
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb10: qcom,msm_fastrpc_compute_cb10 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "adsprpc-smd";
+			iommus = <&apps_smmu 0x1803 0x0>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb11: qcom,msm_fastrpc_compute_cb11 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "adsprpc-smd";
+			iommus = <&apps_smmu 0x1804 0x0>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb12: qcom,msm_fastrpc_compute_cb12 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "adsprpc-smd";
+			iommus = <&apps_smmu 0x1805 0x0>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+			shared-cb = <5>;
+		};
+
+		fastrpc_cb13: qcom,msm_fastrpc_compute_cb13 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11ab 0x0420>,
+				 <&apps_smmu 0x118b 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb14: qcom,msm_fastrpc_compute_cb14 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11ac 0x0420>,
+				 <&apps_smmu 0x118c 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb15: qcom,msm_fastrpc_compute_cb15 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11ad 0x0420>,
+				 <&apps_smmu 0x118d 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+		fastrpc_cb16: qcom,msm_fastrpc_compute_cb16 {
+			compatible = "qcom,msm-fastrpc-compute-cb";
+			label = "cdsprpc-smd";
+			iommus = <&apps_smmu 0x11ae 0x0420>,
+				 <&apps_smmu 0x118e 0x0420>;
+			memory-region = <&fastrpc_iova>;
+			qcom,iommu-faults = "stall-disable", "HUPCF";
+			dma-coherent-hint-cached;
+		};
+
+	};
+};

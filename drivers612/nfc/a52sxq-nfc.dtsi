@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Samsung Galaxy A52s 5G (a52sxq): NFC controller for the Qualcomm 6.12 BSP base (downstream
+ * bindings). Overlay-checked onto out-ack/kx/android-r02.dtb by drivers612/nfc/dt-check.sh
+ * (fdtoverlay + node-by-node comparison with the phone).
+ *
+ * Source of every value: the tree the phone boots, downstream-dt/a52sxq-r02.dts
+ * (/soc/i2c@a84000/sec-nfc@27, /samsung_mobile_device/fixed_regulator@1, the TLMM pin states
+ * nfc_*_gpio, nfc_i2c_*_sleep, ldo_gpio1). Samsung's overlays r00, r01 and r02
+ * (arch/arm64/boot/dts/samsung/a52/a52sxq/a52sxq_kor_single_w00_r0[012].dts) carry the same
+ * node, GPIOs, regulator and pin states, so there is no hardware-revision difference
+ * (bench phones: rev 3 and rev 4, both on r02).
+ *
+ * Controller: Samsung S.LSI S3NRN4V ("RN4V", bootloader_ver 6; firmware
+ * /vendor/firmware/nfc/sec_s3nrn4v_firmware.bin, downloaded by the HAL through /dev/sec-nfc,
+ * not by request_firmware). Driver: drivers612/nfc (nfc_sec.ko, i2c driver "sec-nfc").
+ * Bus: QUP SE9 as I2C, i2c@a84000 (qupv3_se9_i2c), TLMM 36 SDA / 37 SCL, function qup11,
+ * 1 MHz (qcom,clk-freq-out 0xf4240), address 0x27. Nothing else on that bus: the Qualcomm
+ * reference "qcom,sn-nci" nq@28 stays disabled (as on the phone), and the same serial engine's
+ * SPI personality spi@a84000 (qupv3_se9_spi) stays disabled (it would claim TLMM 36..39).
+ *
+ *   VEN (enable)      TLMM 38, driver logic: 0 = on, 1 = off (SEC_NFC_PW_ON = 0); pin state
+ *                     nfc_ven_gpio output-high (= off) 6 mA, no bias
+ *   FIRM (fw/wake)    TLMM 40, 1 = bootloader / wake; nfc_firm_gpio output-low 6 mA
+ *   IRQ               TLMM 41, rising edge (driver flags), nfc_irq_gpio input pull-down 6 mA
+ *   CLK_REQ           TLMM 39, input pull-down 6 mA; used ONLY as a wakeup IRQ
+ *                     (sec-nfc,clk_req_wake, rising edge -> 2 s wakelock). The node has no
+ *                     "clocks" property, so the 5.4 driver never touched a clock: no RPMh /
+ *                     LN_BB clock request from HLOS. Where the chip's reference clock comes
+ *                     from is not visible in the tree (see README: open questions).
+ *   PVDD (1.8 V I/O)  fixed_regulator1 = GPIO-switched load switch on TLMM 42, active high,
+ *                     no voltage in the tree (regulator-fixed without microvolts, as on 5.4);
+ *                     enabled by the driver at probe (sec-nfc,ldo_control) and left on.
+ *                     Pin state ldo_gpio1 output-high, no bias.
+ *   eSE               none on this board: no eSE/SPI node in the phone's tree and the defconfig
+ *                     has ESE_P3_LSI, ESE_SECURE, ESE_USE_TZ_API, NFC_P61 off. The HAL's
+ *                     OFFHOST_ROUTE_ESE is a routing setting only. Nothing TZ-owned to protect.
+ *
+ * NEW on 6.12 (not in the phone's tree): nothing but the label a52sxq_nfc_pvdd. The 6.12 board
+ * tree (boarddt) has "fixed_regulator1" only as a todo placeholder node without a compatible
+ * under /a52sxq-todo-power-extra, which never probes: the phone's sec-nfc node pointing at it
+ * would make regulator_get() defer forever. So the real node is created here, at the phone's
+ * path /samsung_mobile_device/fixed_regulator@1 (a simple-bus, so it is populated), and the
+ * supply is re-pointed to it.
+ */
+
+/* ------------------------------------------------------------------ pin states */
+/* identical to the phone's and to the 6.12 base (boarddt a52sxq-pinctrl.dtsi); restated so the
+ * fragment is correct on its own */
+&nfc_firm_gpio {
+	mux {
+		pins = "gpio40";
+		function = "gpio";
+	};
+	config {
+		pins = "gpio40";
+		drive-strength = <6>;
+		bias-disable;
+		output-low;
+	};
+};
+
+&nfc_ven_gpio {
+	mux {
+		pins = "gpio38";
+		function = "gpio";
+	};
+	config {
+		pins = "gpio38";
+		drive-strength = <6>;
+		bias-disable;
+		output-high;
+	};
+};
+
+&nfc_irq_gpio {
+	mux {
+		pins = "gpio41";
+		function = "gpio";
+	};
+	config {
+		pins = "gpio41";
+		drive-strength = <6>;
+		bias-pull-down;
+		input-enable;
+	};
+};
+
+&nfc_clk_req_gpio {
+	mux {
+		pins = "gpio39";
+		function = "gpio";
+	};
+	config {
+		pins = "gpio39";
+		drive-strength = <6>;
+		bias-pull-down;
+		input-enable;
+	};
+};
+
+&ldo_gpio1 {
+	mux {
+		pins = "gpio42";
+		function = "gpio";
+	};
+	config {
+		pins = "gpio42";
+		bias-disable;
+		output-high;
+	};
+};
+
+/* ------------------------------------------------------------------ PVDD */
+/*
+ * By path from the root, not &smd: the busybox-test board trees (out-ack/kx/full-r02-usb.dtb,
+ * drivers612/hwbringup/*.dtb) have no /samsung_mobile_device and no "smd" label; the Android
+ * tree (android-r02.dtb) has both. compatible is restated so the node is a simple-bus in either.
+ */
+&{/} {
+	samsung_mobile_device {
+		compatible = "simple-bus";
+
+		a52sxq_nfc_pvdd: fixed_regulator@1 {
+			compatible = "regulator-fixed";
+			regulator-name = "fixed_regulator1";
+			gpio = <&tlmm 42 0>;
+			enable-active-high;
+			pinctrl-names = "default";
+			pinctrl-0 = <&ldo_gpio1>;
+		};
+	};
+};
+
+/* ------------------------------------------------------------------ controller */
+&qupv3_se9_spi {
+	status = "disabled";
+};
+
+&qupv3_se9_i2c {
+	status = "okay";
+
+	sec-nfc@27 {
+		compatible = "sec-nfc";
+		reg = <0x27>;
+		interrupt-parent = <&tlmm>;
+		interrupts = <41 0>;
+		sec-nfc,irq-gpio = <&tlmm 41 0>;
+		sec-nfc,ven-gpio = <&tlmm 38 0>;
+		sec-nfc,firm-gpio = <&tlmm 40 0>;
+		sec-nfc,clk_req-gpio = <&tlmm 39 0>;
+		sec-nfc,clk_req_wake;
+		sec-nfc,ldo_control;
+		nfc_pvdd-supply = <&a52sxq_nfc_pvdd>;
+		sec-nfc,bootloader_ver = <6>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&nfc_clk_req_gpio &nfc_irq_gpio &nfc_ven_gpio &nfc_firm_gpio>;
+	};
+
+	nq@28 {
+		status = "disabled";
+	};
+};

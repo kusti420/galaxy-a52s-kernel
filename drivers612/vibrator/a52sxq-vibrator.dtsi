@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0
+/* a52sxq DC vibration motor (samsung,dc_vibrator): verbatim from the phone's 5.4 tree
+ * (downstream-dt/a52sxq-r02.dts, root node dc_vibrator; enable = TLMM GPIO 62, unused in the
+ * 6.12 base tree). Driver: drivers612/vibrator (sec_vibrator + dc_vibrator). */
+&{/} {
+	dc_vibrator {
+		compatible = "samsung,dc_vibrator";
+		dc_vib,gpio_en = <&tlmm 62 0>;
+		dc_vib,motor_type = "COINDC";
+		status = "okay";
+	};
+};

@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * a52ram: an early console that writes into a reserved RAM area, for kernels that die before
+ * pstore/ramoops comes up (a52sxq-mainline project: kexec bring-up on a phone without UART).
+ *
+ *   earlycon=a52ram,0xf0be0000      (the area is /reserved-memory/a52ram@f0be0000, 128 KiB,
+ *                                    no-map; nothing else touches it)
+ *
+ * The writer starts in setup_arch() (parse_early_param), long before the page tables for RAM
+ * exist: it uses the earlycon fixmap slot and re-points it page by page. It writes each
+ * character once, front to back, and stops when the area is full: the first messages of a
+ * boot are the ones that matter here. The area is zeroed when the console starts.
+ *
+ * The reader is /proc/a52ram in any later boot of a kernel with this file: it shows what the
+ * area holds, i.e. the early log of the last kernel that was started with the parameter. A
+ * kernel started without the parameter (the harness, booted by the bootloader) never writes
+ * to the area, so the log of a kexec'd kernel that died is still there after the reset.
+ * The Samsung bootloader removes earlycon= from the command line it passes, so only a
+ * kexec'd kernel can be started with it.
+ */
+#include <linux/console.h>
+#include <linux/init.h>
+#include <linux/io.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/proc_fs.h>
+#include <linux/serial_core.h>
+#include <linux/seq_file.h>
+#include <asm/fixmap.h>
+
+#define A52RAM_SIZE	0x20000
+
+static phys_addr_t a52ram_base __initdata;
+static unsigned int a52ram_pos __initdata;
+static unsigned int a52ram_page __initdata = ~0U;
+static char *a52ram_va __initdata;
+
+static void __init a52ram_map(unsigned int page)
+{
+	if (page == a52ram_page)
+		return;
+	set_fixmap_io(FIX_EARLYCON_MEM_BASE, a52ram_base + page * PAGE_SIZE);
+	a52ram_va = (char *)fix_to_virt(FIX_EARLYCON_MEM_BASE);
+	a52ram_page = page;
+}
+
+static void __init a52ram_write(struct console *con, const char *s, unsigned int n)
+{
+	while (n-- && a52ram_pos < A52RAM_SIZE - 1) {
+		a52ram_map(a52ram_pos / PAGE_SIZE);
+		writeb(*s++, a52ram_va + a52ram_pos % PAGE_SIZE);
+		a52ram_pos++;
+	}
+}
+
+static int __init a52ram_setup(struct earlycon_device *device, const char *opt)
+{
+	unsigned int i;
+
+	if (!device->port.mapbase || (device->port.mapbase & ~PAGE_MASK))
+		return -ENODEV;
+	a52ram_base = device->port.mapbase;
+	for (i = 0; i < A52RAM_SIZE / PAGE_SIZE; i++) {
+		a52ram_map(i);
+		memset_io(a52ram_va, 0, PAGE_SIZE);
+	}
+	device->con->write = a52ram_write;
+	return 0;
+}
+EARLYCON_DECLARE(a52ram, a52ram_setup);
+
+static void *a52ram_reader_va;
+
+static int a52ram_show(struct seq_file *m, void *v)
+{
+	const char *p = a52ram_reader_va;
+	size_t i, start = 0;
+
+	/* everything that is not NUL, so that holes do not hide what follows them */
+	for (i = 0; i <= A52RAM_SIZE; i++) {
+		if (i == A52RAM_SIZE || !p[i]) {
+			if (i > start)
+				seq_write(m, p + start, i - start);
+			start = i + 1;
+		}
+	}
+	return 0;
+}
+
+static int __init a52ram_reader_init(void)
+{
+	struct device_node *np = of_find_compatible_node(NULL, NULL, "a52,ramcon");
+	struct resource res;
+
+	if (!np || of_address_to_resource(np, 0, &res))
+		return 0;
+	a52ram_reader_va = memremap(res.start, A52RAM_SIZE, MEMREMAP_WC);
+	if (a52ram_reader_va)
+		proc_create_single("a52ram", 0400, NULL, a52ram_show);
+	return 0;
+}
+late_initcall(a52ram_reader_init);

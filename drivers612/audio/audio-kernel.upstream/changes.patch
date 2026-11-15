@@ -1,0 +1,1979 @@
+--- a/asoc/Kbuild
++++ b/asoc/Kbuild
+@@ -19,7 +19,7 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+@@ -67,7 +67,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_TRINKET), y)
+ 			include $(AUDIO_ROOT)/config/sm6150auto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_KONA), y)
+@@ -76,22 +76,22 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LITO), y)
+ 			include $(AUDIO_ROOT)/config/litoauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 			include $(AUDIO_ROOT)/config/bengalauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LAHAINA), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
+@@ -105,7 +105,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_QCS405), y)
+ 			include $(AUDIO_ROOT)/config/qcs405auto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+@@ -236,8 +236,12 @@
+ 	PLATFORM_OBJS += msm-pcm-afe-v2.o
+ 	PLATFORM_OBJS += msm-pcm-dtmf-v2.o
+ 	PLATFORM_OBJS += msm-pcm-hostless.o
+-#	PLATFORM_OBJS += msm-pcm-host-voice-v2.o
++	PLATFORM_OBJS += msm-pcm-host-voice-v2.o
+ 	PLATFORM_OBJS += msm-pcm-loopback-v2.o
++ifdef CONFIG_SEC_SND_ADAPTATION
++	PLATFORM_OBJS += sec_audio_adaptation.o
++	PLATFORM_OBJS += sec_voice_adaptation.o
++endif
+ ifndef CONFIG_SND_SOC_SA410M
+ 	PLATFORM_OBJS += msm-pcm-q6-noirq.o
+ endif
+--- a/asoc/lahaina.c
++++ b/asoc/lahaina.c
+@@ -1036,7 +1036,6 @@
+  	}
+ }
+ 
+-#if 0
+ static void msm_audio_update_qos_request(u32 latency)
+ {
+ 	int cpu = 0;
+@@ -1066,7 +1065,6 @@
+  		}
+  	}
+ }
+-#endif
+ 
+ static inline int param_is_mask(int p)
+ {
+@@ -5385,12 +5383,16 @@
+ 
+ static int msm_fe_qos_prepare(struct snd_pcm_substream *substream)
+ {
++	/* a52sxq: as on 5.4, vote through the per-CPU resume-latency requests that
++	 * msm_audio_add_qos_request() registered at probe. The r70 code removed the
++	 * substream's request and then updated the removed one ("called for unknown
++	 * object" WARN), so low-latency playback never got a latency vote. */
+ 	if (cpu_latency_qos_request_active(&substream->latency_pm_qos_req))
+ 		cpu_latency_qos_remove_request(&substream->latency_pm_qos_req);
+ 
+ 	qos_client_active_cnt++;
+ 	if (qos_client_active_cnt == 1)
+-		cpu_latency_qos_update_request(&substream->latency_pm_qos_req, MSM_LL_QOS_VALUE);
++		msm_audio_update_qos_request(MSM_LL_QOS_VALUE);
+ 
+ 	return 0;
+ }
+@@ -5402,7 +5404,7 @@
+ 	if (qos_client_active_cnt > 0)
+ 		qos_client_active_cnt--;
+ 	if (qos_client_active_cnt == 0)
+-		cpu_latency_qos_update_request(&substream->latency_pm_qos_req, PM_QOS_DEFAULT_VALUE);
++		msm_audio_update_qos_request(PM_QOS_RESUME_LATENCY_DEFAULT_VALUE);
+ }
+ 
+ void mi2s_disable_audio_vote(struct snd_pcm_substream *substream)
+@@ -6183,8 +6185,9 @@
+ 		SND_SOC_DAILINK_REG(multimedia9),
+ 	},
+ 	{/* hw:x,24 */
+-		.name = "Compress4",
+-		.stream_name = "Compress4",
++		/* a52sxq: Samsung CONFIG_SEC_SND_PRIMARY makes hw:24 a PCM front end */
++		.name = "MultiMedia11",
++		.stream_name = "MultiMedia11",
+ 		.dynamic = 1,
+ 		.dpcm_playback = 1,
+ 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+@@ -6462,6 +6465,16 @@
+ 		.ignore_pmdown_time = 1,
+ 		SND_SOC_DAILINK_REG(display_port_hostless),
+ 	},
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	{/* hw:x,46 */
++		.name = "Audio ADAPTATION Hostless",
++		.stream_name = "Audio ADAPTATION Hostless",
++		.no_pcm = 1,
++		.ignore_suspend = 1,
++		.ignore_pmdown_time = 1,
++		SND_SOC_DAILINK_REG(q6audio_adaptation),
++	},
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ };
+ 
+ static struct snd_soc_dai_link msm_common_be_dai_links[] = {
+@@ -6827,6 +6840,20 @@
+ 	},
+ };
+ 
++#if IS_ENABLED(CONFIG_SND_SOC_TAS256x)
++/* exported by tas256x_dlkm (bigdata_tas_sysfs_cb.c): feeds /sys/class/audio/amp */
++void register_tas25xx_bigdata_cb(struct snd_soc_component *component);
++
++static int lahaina_tas256x_init(struct snd_soc_pcm_runtime *rtd)
++{
++	struct snd_soc_dai *codec_dai = snd_soc_rtd_to_codec(rtd, 0);
++
++	register_tas25xx_bigdata_cb(codec_dai->component);
++
++	return 0;
++}
++#endif
++
+ static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
+ 	{
+ 		.name = LPASS_BE_PRI_MI2S_RX,
+@@ -6931,6 +6958,9 @@
+ 		.dpcm_playback = 1,
+ 		.id = MSM_BACKEND_DAI_QUINARY_MI2S_RX,
+ 		.be_hw_params_fixup = msm_be_hw_params_fixup,
++#if IS_ENABLED(CONFIG_SND_SOC_TAS256x)
++		.init = &lahaina_tas256x_init,
++#endif
+ 		.ops = &msm_mi2s_be_ops,
+ 		.ignore_suspend = 1,
+ 		.ignore_pmdown_time = 1,
+@@ -7189,6 +7219,9 @@
+ 	{
+ 		.name = LPASS_BE_RX_CDC_DMA_RX_1,
+ 		.stream_name = LPASS_BE_RX_CDC_DMA_RX_1,
++		/* a52sxq: back end as on 5.4, or it becomes an extra PCM device */
++		.no_pcm = 1,
++		.dpcm_playback = 1,
+ 		.playback_only = 1,
+ 		.id = MSM_BACKEND_DAI_RX_CDC_DMA_RX_1,
+ 		.be_hw_params_fixup = msm_be_hw_params_fixup,
+@@ -7200,6 +7233,9 @@
+ 	{
+ 		.name = LPASS_BE_RX_CDC_DMA_RX_2,
+ 		.stream_name = LPASS_BE_RX_CDC_DMA_RX_2,
++		/* a52sxq: back end as on 5.4, or it becomes an extra PCM device */
++		.no_pcm = 1,
++		.dpcm_playback = 1,
+ 		.playback_only = 1,
+ 		.id = MSM_BACKEND_DAI_RX_CDC_DMA_RX_2,
+ 		.be_hw_params_fixup = msm_be_hw_params_fixup,
+@@ -7211,6 +7247,9 @@
+ 	{
+ 		.name = LPASS_BE_RX_CDC_DMA_RX_3,
+ 		.stream_name = LPASS_BE_RX_CDC_DMA_RX_3,
++		/* a52sxq: back end as on 5.4, or it becomes an extra PCM device */
++		.no_pcm = 1,
++		.dpcm_playback = 1,
+ 		.playback_only = 1,
+ 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+ 			SND_SOC_DPCM_TRIGGER_POST},
+@@ -7225,6 +7264,9 @@
+ 	{
+ 		.name = LPASS_BE_RX_CDC_DMA_RX_5,
+ 		.stream_name = LPASS_BE_RX_CDC_DMA_RX_5,
++		/* a52sxq: back end as on 5.4, or it becomes an extra PCM device */
++		.no_pcm = 1,
++		.dpcm_playback = 1,
+ 		.playback_only = 1,
+ 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+ 			SND_SOC_DPCM_TRIGGER_POST},
+@@ -7238,6 +7280,9 @@
+ 	{
+ 		.name = LPASS_BE_RX_CDC_DMA_RX_6,
+ 		.stream_name = LPASS_BE_RX_CDC_DMA_RX_6,
++		/* a52sxq: back end as on 5.4, or it becomes an extra PCM device */
++		.no_pcm = 1,
++		.dpcm_playback = 1,
+ 		.playback_only = 1,
+                 .trigger = {SND_SOC_DPCM_TRIGGER_POST,
+ 			SND_SOC_DPCM_TRIGGER_POST},
+--- a/asoc/msm-pcm-routing-v2.c
++++ b/asoc/msm-pcm-routing-v2.c
+@@ -30396,6 +30396,11 @@
+ 	MSM_BACKEND_DAI_PROXY_RX,
+ 	MSM_FRONTEND_DAI_VOICEMMODE2, 1, 0, msm_routing_get_voice_mixer,
+ 	msm_routing_put_voice_mixer),
++	/* a52sxq: Samsung 5.4 control, used by the HAL's mixer_paths.xml */
++	SOC_DOUBLE_EXT("Voip", SND_SOC_NOPM,
++	MSM_BACKEND_DAI_PROXY_RX,
++	MSM_FRONTEND_DAI_VOIP, 1, 0, msm_routing_get_voice_mixer,
++	msm_routing_put_voice_mixer),
+ };
+ 
+ static const struct snd_kcontrol_new tx_voicemmode1_mixer_controls[] = {
+@@ -31601,6 +31606,11 @@
+ 	MSM_BACKEND_DAI_USB_RX,
+ 	MSM_BACKEND_DAI_USB_TX, 1, 0, msm_routing_get_port_mixer,
+ 	msm_routing_put_port_mixer),
++	/* a52sxq: Samsung 5.4 control, used by the HAL's mixer_paths.xml */
++	SOC_DOUBLE_EXT("TX_CDC_DMA_TX_3", SND_SOC_NOPM,
++	MSM_BACKEND_DAI_USB_RX,
++	MSM_BACKEND_DAI_TX_CDC_DMA_TX_3, 1, 0, msm_routing_get_port_mixer,
++	msm_routing_put_port_mixer),
+ };
+ #ifndef CONFIG_SA410M_DISABLE
+ static const struct snd_kcontrol_new lsm1_mixer_controls[] = {
+@@ -37008,6 +37018,9 @@
+ 	{"PROXY_RX_Voice Mixer", "VoiceMMode2", "VOICEMMODE2_DL"},
+ 	{"PROXY_RX", NULL, "PROXY_RX_Voice Mixer"},
+ 
++	/* a52sxq: Samsung 5.4 route */
++	{"PROXY_RX_Voice Mixer", "Voip", "VOIP_DL"},
++
+ 	{"RX_CDC_DMA_RX_0_Voice Mixer", "Voip", "VOIP_DL"},
+ 	{"RX_CDC_DMA_RX_0_Voice Mixer", "VoiceMMode1", "VOICEMMODE1_DL"},
+ 	{"RX_CDC_DMA_RX_0_Voice Mixer", "VoiceMMode2", "VOICEMMODE2_DL"},
+@@ -37298,6 +37311,8 @@
+ 	{"AFE_PCM_RX Port Mixer", "SLIM_1_TX", "SLIMBUS_1_TX"},
+ 	{"PCM_RX", NULL, "AFE_PCM_RX Port Mixer"},
+ 	{"USB_AUDIO_RX Port Mixer", "USB_AUDIO_TX", "USB_AUDIO_TX"},
++	/* a52sxq: Samsung 5.4 route */
++	{"USB_AUDIO_RX Port Mixer", "TX_CDC_DMA_TX_3", "TX_CDC_DMA_TX_3"},
+ 	{"USB_AUDIO_RX", NULL, "USB_AUDIO_RX Port Mixer"},
+ 	{"USB_DL_HL", "Switch", "USBAUDIO_DL_HL"},
+ 	{"USB_AUDIO_RX", NULL, "USB_DL_HL"},
+@@ -44462,6 +44477,129 @@
+ 	return ret;
+ }
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++static bool q6audio_determine_curr_copp_idx(int stream, enum sb_type func_type)
++{
++	int ret = false;
++
++	pr_info("%s: stream(%d) sb_type(%d)\n",
++		__func__,
++		stream, func_type);
++
++	switch (func_type) {
++	case SB_DISABLE:
++		if ((stream == MSM_FRONTEND_DAI_MULTIMEDIA4) ||
++		    (stream == MSM_FRONTEND_DAI_MULTIMEDIA6) ||
++		    (stream == MSM_FRONTEND_DAI_MULTIMEDIA11))
++			ret = true;
++		break;
++	case SB_ENABLE:
++		if ((stream == MSM_FRONTEND_DAI_MULTIMEDIA4) ||
++		    (stream == MSM_FRONTEND_DAI_MULTIMEDIA6))
++			ret = true;
++		break;
++	case SB_RINGTONE:
++		if (stream == MSM_FRONTEND_DAI_MULTIMEDIA11)
++			ret = true;
++		break;
++	case SB_REARLEFT:
++	case SB_REARRIGHT:
++	case SB_FRONTLEFT:
++	case SB_FRONTRIGHT:
++		if (stream == MSM_FRONTEND_DAI_MULTIMEDIA1)
++			ret = true;
++		break;
++	case SB_ROTATION:
++		if ((stream == MSM_FRONTEND_DAI_MULTIMEDIA1) ||
++		    (stream == MSM_FRONTEND_DAI_MULTIMEDIA4) ||
++		    (stream == MSM_FRONTEND_DAI_MULTIMEDIA6))
++			ret = true;
++		break;
++	case SB_ROTATION_LL:
++		if (stream == MSM_FRONTEND_DAI_MULTIMEDIA5)
++			ret = true;
++		break;
++	case SB_ROTATION_RINGTONE:
++		if (stream == MSM_FRONTEND_DAI_MULTIMEDIA11)
++			ret = true;
++		break;
++	case SB_FLATMOTION:
++		if ((stream == MSM_FRONTEND_DAI_MULTIMEDIA1) ||
++		    (stream == MSM_FRONTEND_DAI_MULTIMEDIA11))
++			ret = true;
++		break;
++	case SB_VOLUME:
++		if (stream == MSM_FRONTEND_DAI_MULTIMEDIA1)
++			ret = true;
++		break;
++	default:
++		pr_info("%s: unknown function type\n", __func__);
++		break;
++	}
++
++	return ret;
++}
++
++int q6audio_get_copp_idx_from_port_id(int port_id, enum sb_type func_type,
++					int *copp_idx)
++{
++	int idx, be_idx;
++	int ret = 0, i = 0;
++	unsigned long copp;
++
++	pr_info("%s: port_id=0x%x, func_type=%d\n",
++		__func__, port_id, func_type);
++
++	ret = q6audio_validate_port(port_id);
++	if (ret < 0) {
++		pr_err("%s: port validation failed id 0x%x ret %d\n",
++			__func__, port_id, ret);
++
++		ret = -EINVAL;
++		goto done;
++	}
++
++	for (be_idx = 0; be_idx < MSM_BACKEND_DAI_MAX; be_idx++) {
++		if (msm_bedais[be_idx].port_id == port_id)
++			break;
++	}
++	if (be_idx >= MSM_BACKEND_DAI_MAX) {
++		pr_err("%s: Invalid be id %d\n", __func__, be_idx);
++
++		ret = -EINVAL;
++		goto done;
++	}
++
++	for_each_set_bit(i, &msm_bedais[be_idx].fe_sessions[0],
++			 MSM_FRONTEND_DAI_MM_SIZE) {
++		for (idx = 0; idx < MAX_COPPS_PER_PORT; idx++) {
++			copp = session_copp_map[i]
++				[SESSION_TYPE_RX][be_idx];
++			if (test_bit(idx, &copp)) {
++				if (q6audio_determine_curr_copp_idx(i, func_type))
++					break;
++			}
++		}
++		if (idx >= MAX_COPPS_PER_PORT)
++			continue;
++		else
++			break;
++	}
++	if (i >= MSM_FRONTEND_DAI_MM_SIZE) {
++		pr_debug("%s: Invalid FE, exiting\n", __func__);
++
++		ret = -EINVAL;
++		goto done;
++	}
++	*copp_idx = idx;
++	pr_info("%s: copp_idx=%d\n", __func__, *copp_idx);
++
++done:
++	return ret;
++}
++EXPORT_SYMBOL(q6audio_get_copp_idx_from_port_id);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
++
+ int __init msm_soc_routing_platform_init(void)
+ {
+ 	mutex_init(&routing_lock);
+--- a/asoc/msm-pcm-routing-v2.h
++++ b/asoc/msm-pcm-routing-v2.h
+@@ -6,6 +6,9 @@
+ #define _MSM_PCM_ROUTING_H
+ #include <dsp/apr_audio-v2.h>
+ #include <dsp/q6adm-v2.h>
++#ifdef CONFIG_SEC_SND_ADAPTATION
++#include <asoc/sec_audio_adaptation.h>
++#endif
+ 
+ /*
+  * These names are used by HAL to specify the BE. If any changes are
+@@ -915,4 +918,8 @@
+ 
+ bool msm_pcm_routing_get_portid_copp_idx(int fe_id,
+ 	int session_type, int *port_id, int *copp_idx);
++#ifdef CONFIG_SEC_SND_ADAPTATION
++int q6audio_get_copp_idx_from_port_id(int port_id, enum sb_type func_type,
++	int *copp_idx);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ #endif /*_MSM_PCM_H*/
+--- a/asoc/msm-pcm-voice-v2.c
++++ b/asoc/msm-pcm-voice-v2.c
+@@ -24,6 +24,9 @@
+ #include <dsp/q6afe-v2.h>
+ 
+ #include "msm-pcm-voice-v2.h"
++#ifdef CONFIG_SEC_SND_ADAPTATION
++#include "sec_voice_adaptation.h"
++#endif
+ #include "msm-qti-pp-config.h"
+ 
+ #define DRV_NAME "msm-pcm-voice-v2"
+@@ -1121,6 +1124,9 @@
+ 					ARRAY_SIZE(msm_voice_controls));
+ 	snd_soc_add_component_controls(component, msm_voice_rec_config_controls,
+ 				    ARRAY_SIZE(msm_voice_rec_config_controls));
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	sec_voice_adaptation_add_controls(component);
++#endif
+ 	return 0;
+ }
+ 
+--- a/asoc/msm-qti-pp-config.c
++++ b/asoc/msm-qti-pp-config.c
+@@ -594,6 +594,9 @@
+ static int msm_afe_lb_vol_ctrl;
+ static int msm_afe_sec_mi2s_lb_vol_ctrl;
+ static int msm_afe_tert_mi2s_lb_vol_ctrl;
++/* a52sxq: Samsung 5.4 loopback volumes used by the HAL */
++static int msm_afe_cdc_tx_3_lb_vol_ctrl;
++static int msm_afe_usb_lb_vol_ctrl;
+ static int msm_afe_quat_mi2s_lb_vol_ctrl;
+ static int msm_afe_slimbus_7_lb_vol_ctrl;
+ static int msm_afe_slimbus_8_lb_vol_ctrl;
+@@ -1712,6 +1715,51 @@
+ 	msm_qti_pp_set_sec_mi2s_lb_vol_mixer, afe_lb_vol_gain),
+ };
+ 
++/* a52sxq: Samsung 5.4 "TX_CDC_DMA_TX_3 LOOPBACK Volume" / "USB_AUDIO_TX LOOPBACK Volume" */
++static int msm_qti_pp_get_usb_tx_lb_vol_mixer(struct snd_kcontrol *kcontrol,
++				       struct snd_ctl_elem_value *ucontrol)
++{
++	ucontrol->value.integer.value[0] = msm_afe_usb_lb_vol_ctrl;
++	return 0;
++}
++
++static int msm_qti_pp_set_usb_tx_lb_vol_mixer(struct snd_kcontrol *kcontrol,
++			    struct snd_ctl_elem_value *ucontrol)
++{
++	afe_loopback_gain(AFE_PORT_ID_USB_TX,
++			  ucontrol->value.integer.value[0]);
++	msm_afe_usb_lb_vol_ctrl = ucontrol->value.integer.value[0];
++	return 0;
++}
++
++static int msm_qti_pp_get_cdc_tx_3_lb_vol_mixer(struct snd_kcontrol *kcontrol,
++				       struct snd_ctl_elem_value *ucontrol)
++{
++	ucontrol->value.integer.value[0] = msm_afe_cdc_tx_3_lb_vol_ctrl;
++	return 0;
++}
++
++static int msm_qti_pp_set_cdc_tx_3_lb_vol_mixer(struct snd_kcontrol *kcontrol,
++			    struct snd_ctl_elem_value *ucontrol)
++{
++	afe_loopback_gain(AFE_PORT_ID_TX_CODEC_DMA_TX_3,
++			  ucontrol->value.integer.value[0]);
++	msm_afe_cdc_tx_3_lb_vol_ctrl = ucontrol->value.integer.value[0];
++	return 0;
++}
++
++static const struct snd_kcontrol_new tx_cdc_dma_tx_3_lb_vol_mixer_controls[] = {
++	SOC_SINGLE_EXT_TLV("TX_CDC_DMA_TX_3 LOOPBACK Volume", SND_SOC_NOPM, 0,
++	INT_RX_VOL_GAIN, 0, msm_qti_pp_get_cdc_tx_3_lb_vol_mixer,
++	msm_qti_pp_set_cdc_tx_3_lb_vol_mixer, afe_lb_vol_gain),
++};
++
++static const struct snd_kcontrol_new usb_audio_tx_vol_mixer_controls[] = {
++	SOC_SINGLE_EXT_TLV("USB_AUDIO_TX LOOPBACK Volume", SND_SOC_NOPM, 0,
++	INT_RX_VOL_GAIN, 0, msm_qti_pp_get_usb_tx_lb_vol_mixer,
++	msm_qti_pp_set_usb_tx_lb_vol_mixer, afe_lb_vol_gain),
++};
++
+ static const struct snd_kcontrol_new tert_mi2s_lb_vol_mixer_controls[] = {
+ 	SOC_SINGLE_EXT_TLV("Tert MI2S LOOPBACK Volume", SND_SOC_NOPM, 0,
+ 	INT_RX_VOL_GAIN, 0, msm_qti_pp_get_tert_mi2s_lb_vol_mixer,
+@@ -1957,6 +2005,14 @@
+ 			ARRAY_SIZE(tert_mi2s_lb_vol_mixer_controls));
+ 
+ 	snd_soc_add_component_controls(component,
++			tx_cdc_dma_tx_3_lb_vol_mixer_controls,
++			ARRAY_SIZE(tx_cdc_dma_tx_3_lb_vol_mixer_controls));
++
++	snd_soc_add_component_controls(component,
++			usb_audio_tx_vol_mixer_controls,
++			ARRAY_SIZE(usb_audio_tx_vol_mixer_controls));
++
++	snd_soc_add_component_controls(component,
+ 			slimbus_7_lb_vol_mixer_controls,
+ 			ARRAY_SIZE(slimbus_7_lb_vol_mixer_controls));
+ 
+--- a/asoc/msm_dailink.h
++++ b/asoc/msm_dailink.h
+@@ -132,10 +132,11 @@
+ 	DAILINK_COMP_ARRAY(COMP_CODEC("snd-soc-dummy", "snd-soc-dummy-dai")),
+ 	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-dsp.0")));
+ 
++/* a52sxq: Samsung CONFIG_SEC_SND_PRIMARY, PCM instead of Compress4 */
+ SND_SOC_DAILINK_DEFS(multimedia11,
+ 	DAILINK_COMP_ARRAY(COMP_CPU("MultiMedia11")),
+ 	DAILINK_COMP_ARRAY(COMP_CODEC("snd-soc-dummy", "snd-soc-dummy-dai")),
+-	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-compress-dsp")));
++	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-dsp.0")));
+ 
+ SND_SOC_DAILINK_DEFS(multimedia12,
+ 	DAILINK_COMP_ARRAY(COMP_CPU("MultiMedia12")),
+@@ -972,6 +973,18 @@
+ 	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-tx")),
+ 	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-routing")));
+ 
++#if IS_ENABLED(CONFIG_SND_SOC_TAS256x)
++/* Samsung A52s: TI TAS256x smart amps on QUIN MI2S; i2c bus 18 (alias i2c18), 0x4c */
++SND_SOC_DAILINK_DEFS(quin_mi2s_rx,
++	DAILINK_COMP_ARRAY(COMP_CPU("msm-dai-q6-mi2s.8")),
++	DAILINK_COMP_ARRAY(COMP_CODEC("tas256x.18-004c", "tas256x ASI1")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-routing")));
++
++SND_SOC_DAILINK_DEFS(quin_mi2s_tx,
++	DAILINK_COMP_ARRAY(COMP_CPU("msm-dai-q6-mi2s.9")),
++	DAILINK_COMP_ARRAY(COMP_CODEC("tas256x.18-004c", "tas256x ASI1")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-routing")));
++#else
+ SND_SOC_DAILINK_DEFS(quin_mi2s_rx,
+ 	DAILINK_COMP_ARRAY(COMP_CPU("msm-dai-q6-mi2s.8")),
+ 	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-rx")),
+@@ -981,6 +994,7 @@
+ 	DAILINK_COMP_ARRAY(COMP_CPU("msm-dai-q6-mi2s.9")),
+ 	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-tx")),
+ 	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-routing")));
++#endif
+ 
+ SND_SOC_DAILINK_DEFS(sen_mi2s_rx,
+ 	DAILINK_COMP_ARRAY(COMP_CPU("msm-dai-q6-mi2s.10")),
+@@ -1152,6 +1166,13 @@
+ 	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-tx")),
+ 	DAILINK_COMP_ARRAY(COMP_PLATFORM("msm-pcm-routing")));
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++SND_SOC_DAILINK_DEFS(q6audio_adaptation,
++	DAILINK_COMP_ARRAY(COMP_CPU("snd-soc-dummy-dai")),
++	DAILINK_COMP_ARRAY(COMP_CODEC("snd-soc-dummy", "snd-soc-dummy-dai")),
++	DAILINK_COMP_ARRAY(COMP_PLATFORM("q6audio-adaptation")));
++#endif
++
+ SND_SOC_DAILINK_DEFS(proxy_tx,
+ 	DAILINK_COMP_ARRAY(COMP_CPU("msm-dai-q6-dev.8195")),
+ 	DAILINK_COMP_ARRAY(COMP_CODEC("msm-stub-codec.1", "msm-stub-tx")),
+--- a/asoc/platform_init.c
++++ b/asoc/platform_init.c
+@@ -29,12 +29,18 @@
+ 	msm_pcm_voip_init();
+ 	//msm_common_init();
+ 	msm_voice_host_init();
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	sec_soc_audio_platform_init();
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ 
+ 	return 0;
+ }
+ 
+ static void audio_platform_exit(void)
+ {
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	sec_soc_audio_platform_exit();
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ 	//msm_common_exit();
+ 	msm_pcm_voip_exit();
+ 	msm_pcm_voice_exit();
+--- a/asoc/platform_init.h
++++ b/asoc/platform_init.h
+@@ -49,6 +49,10 @@
+ void msm_dai_q6_hdmi_exit(void);
+ void msm_fe_dai_exit(void);
+ void msm_compress_dsp_exit(void);
++#ifdef CONFIG_SEC_SND_ADAPTATION
++int sec_soc_audio_platform_init(void);
++void sec_soc_audio_platform_exit(void);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ void msm_common_exit(void);
+ void msm_dai_stub_exit(void);
+ 
+--- a/asoc/codecs/Kbuild
++++ b/asoc/codecs/Kbuild
+@@ -19,7 +19,7 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+@@ -67,7 +67,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_TRINKET), y)
+ 			include $(AUDIO_ROOT)/config/sm6150auto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_KONA), y)
+@@ -76,22 +76,22 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LITO), y)
+ 			include $(AUDIO_ROOT)/config/litoauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 			include $(AUDIO_ROOT)/config/bengalauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LAHAINA), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
+@@ -100,7 +100,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_QCS405), y)
+ 			include $(AUDIO_ROOT)/config/qcs405auto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+--- a/asoc/codecs/aqt1000/Kbuild
++++ b/asoc/codecs/aqt1000/Kbuild
+@@ -19,19 +19,19 @@
+ 
+ 	ifeq ($(CONFIG_ARCH_SDM670), y)
+ 		include $(AUDIO_ROOT)/config/sdm670auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sdm670autoconf.h
+ 	endif
+ 
+ 	ifeq ($(CONFIG_ARCH_SM8150), y)
+ 		include $(AUDIO_ROOT)/config/sm8150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm8150autoconf.h
+ 	endif
+ 
+ 	ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
+ 		include $(AUDIO_ROOT)/config/sm8150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm8150autoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/bolero/Kbuild
++++ b/asoc/codecs/bolero/Kbuild
+@@ -19,19 +19,19 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+ ifeq ($(KERNEL_BUILD), 0)
+ 	ifeq ($(CONFIG_ARCH_SM6150), y)
+ 		include $(AUDIO_ROOT)/config/sm6150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_TRINKET), y)
+ 		include $(AUDIO_ROOT)/config/sm6150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_KONA), y)
+@@ -40,27 +40,27 @@
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_LITO), y)
+ 		include $(AUDIO_ROOT)/config/litoauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 		include $(AUDIO_ROOT)/config/bengalauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 		include $(AUDIO_ROOT)/config/lahainaauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_LAHAINA), y)
+ 		include $(AUDIO_ROOT)/config/lahainaauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_QCS405), y)
+ 		include $(AUDIO_ROOT)/config/qcs405auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/bolero/rx-macro.c
++++ b/asoc/codecs/bolero/rx-macro.c
+@@ -3195,6 +3195,17 @@
+ 	SOC_SINGLE_S8_TLV("RX_RX1 Digital Volume",
+ 			  BOLERO_CDC_RX_RX1_RX_VOL_CTL,
+ 			  -84, 40, digital_gain),
++	/*
++	 * a52sxq: Samsung 5.4 names (CONFIG_SND_SOC_IMPED_SENSING) used by the HAL's
++	 * mixer_paths.xml. Here they are plain aliases of the RX0/RX1 volume: Samsung's
++	 * headphone-impedance gain offset (wcd_impedance_vol_get/put) is NOT ported.
++	 */
++	SOC_SINGLE_S8_TLV("RX_RX0 HPH Digital Volume",
++			  BOLERO_CDC_RX_RX0_RX_VOL_CTL,
++			  -84, 40, digital_gain),
++	SOC_SINGLE_S8_TLV("RX_RX1 HPH Digital Volume",
++			  BOLERO_CDC_RX_RX1_RX_VOL_CTL,
++			  -84, 40, digital_gain),
+ 	SOC_SINGLE_S8_TLV("RX_RX2 Digital Volume",
+ 			  BOLERO_CDC_RX_RX2_RX_VOL_CTL,
+ 			  -84, 40, digital_gain),
+--- a/asoc/codecs/csra66x0/Kbuild
++++ b/asoc/codecs/csra66x0/Kbuild
+@@ -17,7 +17,7 @@
+ ifeq ($(KERNEL_BUILD), 0)
+ 	ifeq ($(CONFIG_ARCH_QCS405), y)
+ 		include $(AUDIO_ROOT)/config/qcs405auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/ep92/Kbuild
++++ b/asoc/codecs/ep92/Kbuild
+@@ -18,7 +18,7 @@
+ ifeq ($(KERNEL_BUILD), 0)
+ 	ifeq ($(CONFIG_ARCH_QCS405), y)
+ 		include $(AUDIO_ROOT)/config/qcs405auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/rouleur/Kbuild
++++ b/asoc/codecs/rouleur/Kbuild
+@@ -19,14 +19,14 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+ ifeq ($(KERNEL_BUILD), 0)
+ 	ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 		include $(AUDIO_ROOT)/config/bengalauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/wcd9330/Kbuild
++++ b/asoc/codecs/wcd9330/Kbuild
+@@ -18,7 +18,7 @@
+ ifeq ($(KERNEL_BUILD), 0)
+ 	ifeq ($(CONFIG_ARCH_MDM9607), y)
+ 		include $(AUDIO_ROOT)/config/mdm9607auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/mdm9607autoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/wcd934x/Kbuild
++++ b/asoc/codecs/wcd934x/Kbuild
+@@ -18,22 +18,22 @@
+ ifeq ($(KERNEL_BUILD), 0)
+ 	ifeq ($(CONFIG_ARCH_SM6150), y)
+ 		include $(AUDIO_ROOT)/config/sm6150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_TRINKET), y)
+ 		include $(AUDIO_ROOT)/config/sm6150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_SM8150), y)
+ 		include $(AUDIO_ROOT)/config/sm8150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm8150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
+ 		include $(AUDIO_ROOT)/config/sm8150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm8150autoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/wcd937x/Kbuild
++++ b/asoc/codecs/wcd937x/Kbuild
+@@ -18,27 +18,27 @@
+ ifeq ($(KERNEL_BUILD), 0)
+ 	ifeq ($(CONFIG_ARCH_SM6150), y)
+ 		include $(AUDIO_ROOT)/config/sm6150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_TRINKET), y)
+ 		include $(AUDIO_ROOT)/config/sm6150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 		include $(AUDIO_ROOT)/config/bengalauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 		include $(AUDIO_ROOT)/config/lahainaauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_LITO), y)
+ 		include $(AUDIO_ROOT)/config/litoauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 	endif
+ endif
+--- a/asoc/codecs/wcd938x/Kbuild
++++ b/asoc/codecs/wcd938x/Kbuild
+@@ -20,17 +20,17 @@
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_LITO), y)
+ 		include $(AUDIO_ROOT)/config/litoauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 		include $(AUDIO_ROOT)/config/lahainaauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_LAHAINA), y)
+ 		include $(AUDIO_ROOT)/config/lahainaauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 	endif
+ 
+--- a/asoc/codecs/wcd938x/wcd938x.c
++++ b/asoc/codecs/wcd938x/wcd938x.c
+@@ -3669,13 +3669,18 @@
+ 				SND_SOC_DAPM_POST_PMD),
+ };
+ 
++/*
++ * a52sxq: the analog mics feed the ADCs directly again, as in the 5.4 driver. The 6.12 driver
++ * put AMICn_MIXER switches (for VA capture) in that path; the phone's 5.4 mixer_paths.xml never
++ * sets them, so capture got no data (2026-11-14, rec-main-mic loop on TX_CODEC_DMA_TX_3).
++ */
+ static const struct snd_soc_dapm_route wcd938x_audio_map[] = {
+ 
+ 	{"WCD_TX_DUMMY", NULL, "WCD_TX_OUTPUT"},
+ 	{"WCD_TX_OUTPUT", NULL, "ADC1_MIXER"},
+ 	{"ADC1_MIXER", "Switch", "ADC1 REQ"},
+ 	{"ADC1 REQ", NULL, "ADC1"},
+-	{"ADC1", NULL, "AMIC1_MIXER"},
++	{"ADC1", NULL, "AMIC1"},
+ 	{"AMIC1_MIXER", "Switch", "AMIC1"},
+ 	{"AMIC1_MIXER", NULL, "VA_AMIC1_MIXER"},
+ 	{"VA_AMIC1_MIXER", "Switch", "VA AMIC1"},
+@@ -3685,12 +3690,12 @@
+ 	{"ADC2 REQ", NULL, "ADC2"},
+ 	{"ADC2", NULL, "HDR12 MUX"},
+ 	{"HDR12 MUX", "NO_HDR12", "ADC2 MUX"},
+-	{"HDR12 MUX", "HDR12", "AMIC1_MIXER"},
+-	{"ADC2 MUX", "INP3", "AMIC3_MIXER"},
++	{"HDR12 MUX", "HDR12", "AMIC1"},
++	{"ADC2 MUX", "INP3", "AMIC3"},
+ 	{"AMIC3_MIXER", "Switch", "AMIC3"},
+ 	{"AMIC3_MIXER", NULL, "VA_AMIC3_MIXER"},
+ 	{"VA_AMIC3_MIXER", "Switch", "VA AMIC3"},
+-	{"ADC2 MUX", "INP2", "AMIC2_MIXER"},
++	{"ADC2 MUX", "INP2", "AMIC2"},
+ 	{"AMIC2_MIXER", "Switch", "AMIC2"},
+ 	{"AMIC2_MIXER", NULL, "VA_AMIC2_MIXER"},
+ 	{"VA_AMIC2_MIXER", "Switch", "VA AMIC2"},
+@@ -3700,12 +3705,12 @@
+ 	{"ADC3 REQ", NULL, "ADC3"},
+ 	{"ADC3", NULL, "HDR34 MUX"},
+ 	{"HDR34 MUX", "NO_HDR34", "ADC3 MUX"},
+-	{"HDR34 MUX", "HDR34", "AMIC5_MIXER"},
+-	{"ADC3 MUX", "INP4", "AMIC4_MIXER"},
++	{"HDR34 MUX", "HDR34", "AMIC5"},
++	{"ADC3 MUX", "INP4", "AMIC4"},
+ 	{"AMIC4_MIXER", "Switch", "AMIC4"},
+ 	{"AMIC4_MIXER", NULL, "VA_AMIC4_MIXER"},
+ 	{"VA_AMIC4_MIXER", "Switch", "VA AMIC4"},
+-	{"ADC3 MUX", "INP6", "AMIC6_MIXER"},
++	{"ADC3 MUX", "INP6", "AMIC6"},
+ 	{"AMIC6_MIXER", "Switch", "AMIC6"},
+ 	{"AMIC6_MIXER", NULL, "VA_AMIC6_MIXER"},
+ 	{"VA_AMIC6_MIXER", "Switch", "VA AMIC6"},
+@@ -3714,11 +3719,11 @@
+ 	{"ADC4_MIXER", "Switch", "ADC4 REQ"},
+ 	{"ADC4 REQ", NULL, "ADC4"},
+ 	{"ADC4", NULL, "ADC4 MUX"},
+-	{"ADC4 MUX", "INP5", "AMIC5_MIXER"},
++	{"ADC4 MUX", "INP5", "AMIC5"},
+ 	{"AMIC5_MIXER", "Switch", "AMIC5"},
+ 	{"AMIC5_MIXER", NULL, "VA_AMIC5_MIXER"},
+ 	{"VA_AMIC5_MIXER", "Switch", "VA AMIC5"},
+-	{"ADC4 MUX", "INP7", "AMIC7_MIXER"},
++	{"ADC4 MUX", "INP7", "AMIC7"},
+ 	{"AMIC7_MIXER", "Switch", "AMIC7"},
+ 	{"AMIC7_MIXER", NULL, "VA_AMIC7_MIXER"},
+ 	{"VA_AMIC7_MIXER", "Switch", "VA AMIC7"},
+--- a/asoc/codecs/wsa883x/Kbuild
++++ b/asoc/codecs/wsa883x/Kbuild
+@@ -20,7 +20,7 @@
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 		include $(AUDIO_ROOT)/config/lahainaauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_LITO), y)
+--- a/config/lahainaauto.conf
++++ b/config/lahainaauto.conf
+@@ -39,3 +39,8 @@
+ export CONFIG_SND_SWR_HAPTICS=m
+ export CONFIG_DIGITAL_CDC_RSC_MGR=m
+ export CONFIG_AUXPCM_DISABLE=m
++# a52sxq (Samsung): TI TAS256x smart amp on QUIN MI2S; module in asoc/codecs/tas256x (as on 5.4)
++export CONFIG_SND_SOC_TAS256x=m
++export CONFIG_TAS25XX_ALGO=m
++# a52sxq (Samsung): q6audio-adaptation platform (SoundAlive/SoundBooster/voice controls the HAL hard-codes)
++export CONFIG_SEC_SND_ADAPTATION=m
+--- a/config/lahainaautoconf.h
++++ b/config/lahainaautoconf.h
+@@ -45,3 +45,8 @@
+ #define CONFIG_AUXPCM_DISABLE 1
+ #define CONFIG_MSM_EXT_DISPLAY 1
+ #define CONFIG_SWRM_VER_1P7 1
++/* a52sxq (Samsung): TI TAS256x smart amp on QUIN MI2S; module in asoc/codecs/tas256x (as on 5.4) */
++#define CONFIG_SND_SOC_TAS256x 1
++#define CONFIG_TAS25XX_ALGO 1
++/* a52sxq (Samsung): q6audio-adaptation platform (controls hard-coded in the audio HAL) */
++#define CONFIG_SEC_SND_ADAPTATION 1
+--- a/dsp/Kbuild
++++ b/dsp/Kbuild
+@@ -19,7 +19,7 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+@@ -66,22 +66,22 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LITO), y)
+ 			include $(AUDIO_ROOT)/config/litoauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 			include $(AUDIO_ROOT)/config/bengalauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LAHAINA), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_SM8150), y)
+@@ -104,7 +104,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_QCS405), y)
+ 			include $(AUDIO_ROOT)/config/qcs405auto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+@@ -154,6 +154,9 @@
+ 	Q6_OBJS += q6asm.o
+ 	Q6_OBJS += q6audio-v2.o
+ 	Q6_OBJS += q6voice.o
++ifdef CONFIG_SEC_SND_ADAPTATION
++	Q6_OBJS += q6voice_adaptation.o
++endif
+ 	Q6_OBJS += q6core.o
+ 	Q6_OBJS += q6common.o
+ 	Q6_OBJS += rtac.o
+@@ -235,7 +238,7 @@
+ 		$(UAPI_INC)
+ 
+ EXTRA_CFLAGS += $(INCS)
+-EXTRA_CFLAGS += $(KERNEL_SRC)/drivers/pinctrl/
++EXTRA_CFLAGS += -I$(KERNEL_SRC)/drivers/pinctrl/
+ 
+ CDEFINES +=	-DANI_LITTLE_BYTE_ENDIAN \
+ 		-DANI_LITTLE_BIT_ENDIAN \
+--- a/dsp/msm_audio_ion.c
++++ b/dsp/msm_audio_ion.c
+@@ -201,7 +201,7 @@
+ 	return rc;
+ }
+ 
+-static int msm_audio_ion_unmap_kernel(void *vaddr, void *handle, bool cma_mem)
++static int __maybe_unused msm_audio_ion_unmap_kernel(void *vaddr, void *handle, bool cma_mem)
+ {
+ 	int rc = 0;
+ 	struct device *cb_dev;
+@@ -255,9 +255,21 @@
+ 		alloc_data = list_entry(ptr, struct msm_audio_alloc_data, list);
+ 		if (alloc_data->type == MSM_AUDIO_MEM_TYPE_ION) {
+ 			if (alloc_data->handle == handle) {
+-				rc = msm_audio_ion_unmap_kernel(
+-							alloc_data->vaddr,
+-							handle, cma_mem);
++				/*
++				 * a52sxq: msm_audio_ion_map_kernel() records the kernel mapping in
++				 * alloc_data->vmap (an iosys_map), never in ->vaddr, so the old call
++				 * here always failed (leak) or, once skipped, released a still-mapped
++				 * dma_buf (BUG at dma-buf.c:179, A52s 2026-11-13). Undo the real
++				 * mapping; imported CMA buffers have none.
++				 */
++				rc = 0;
++				if (alloc_data->vmap) {
++					dma_buf_vunmap((struct dma_buf *)handle, alloc_data->vmap);
++					rc = dma_buf_end_cpu_access((struct dma_buf *)handle,
++								    DMA_BIDIRECTIONAL);
++					kfree(alloc_data->vmap);
++					alloc_data->vmap = NULL;
++				}
+ 			if (rc) {
+ 				pr_err("%s: Unable to unmap ion mem rc: %d\n",
+ 				       __func__, rc);
+@@ -399,7 +411,8 @@
+ 	struct reserved_mem *rmem = NULL;
+ 	u64 size = 0;
+ 	struct device_node *node = NULL;
+-	u64 srcVM[1] = {VMID_HLOS};
++	/* a52sxq: qcom_scm_assign_mem() takes a BITMAP of the current owners, not a VMID list */
++	u64 srcVM[1] = {BIT_ULL(VMID_HLOS)};
+ 	struct qcom_scm_vmperm destVM[2] = {{VMID_MSS_MSA, PERM_READ | PERM_WRITE},
+ 		{VMID_HLOS, PERM_READ | PERM_WRITE}};
+ 	node = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
+@@ -729,7 +742,18 @@
+ 		}
+ 	}
+ 
+-	msm_audio_dma_buf_map(*handle, paddr, (dma_addr_t *) plen, &bufsz);
++	/*
++	 * a52sxq: attach + map the imported dma_buf like 5.4 did (msm_audio_dma_buf_map there is
++	 * msm_audio_ion_dma_buf_map here). The call that was here registered the user's buffer
++	 * as a kernel DMA allocation with shifted arguments: paddr was never filled, and on
++	 * free (audio_cal_release) dma_free_coherent() was called on memory the kernel never
++	 * allocated -> oops in __free_pages (seen on the A52s 2026-11-13 when the audio HAL exited).
++	 */
++	rc = msm_audio_ion_dma_buf_map((struct dma_buf *)*handle, paddr, plen, true);
++	if (rc) {
++		pr_err("%s: dma_buf map failed: %d\n", __func__, rc);
++		goto err_ion_flag;
++	}
+ 
+ 	return 0;
+ 
+--- a/dsp/q6_init.c
++++ b/dsp/q6_init.c
+@@ -25,11 +25,17 @@
+ 	msm_mdf_init();
+ 	voice_mhi_init();
+ 	digital_cdc_rsc_mgr_init();
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	voice_adaptation_init();
++#endif
+ 	return 0;
+ }
+ 
+ static void __exit audio_q6_exit(void)
+ {
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	voice_adaptation_exit();
++#endif
+ 	digital_cdc_rsc_mgr_exit();
+ 	msm_mdf_exit();
+ 	avtimer_exit();
+--- a/dsp/q6_init.h
++++ b/dsp/q6_init.h
+@@ -108,5 +108,9 @@
+ }
+ #endif /* CONFIG_DIGITAL_CDC_RSC_MGR */
+ 
+-#endif
++#ifdef CONFIG_SEC_SND_ADAPTATION
++int voice_adaptation_init(void);
++void voice_adaptation_exit(void);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ 
++#endif
+--- a/dsp/q6adm.c
++++ b/dsp/q6adm.c
+@@ -23,6 +23,9 @@
+ #include <ipc/apr.h>
+ #include "adsp_err.h"
+ #include <soc/qcom/secure_buffer.h>
++#ifdef CONFIG_SEC_SND_ADAPTATION
++#include <dsp/q6voice_adaptation.h>
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ #include "../asoc/msm-pcm-routing-v2.h"
+ 
+ #define TIMEOUT_MS 1000
+@@ -2542,9 +2545,15 @@
+ {
+ 	struct cal_block_data		*cal_block = NULL;
+ 	int ret;
+-	u64 src_vmid_list = BIT(VMID_LPASS) | BIT_ULL(VMID_ADSP_HEAP);
+-	struct qcom_scm_vmperm dst_vmids[] = {{QCOM_SCM_VMID_HLOS,
+-		PERM_READ | PERM_WRITE | PERM_EXEC}};
++	/*
++	 * a52sxq: lend HLOS -> LPASS + ADSP_HEAP (5.4: hyp_assign_phys source {HLOS}, dest
++	 * {LPASS, ADSP_HEAP} RW). The donor had the reclaim direction here, as in voice_get_cal().
++	 */
++	u64 src_vmid_list = BIT_ULL(QCOM_SCM_VMID_HLOS);
++	struct qcom_scm_vmperm dst_vmids[] = {
++		{ QCOM_SCM_VMID_LPASS, QCOM_SCM_PERM_RW },
++		{ QCOM_SCM_VMID_ADSP_HEAP, QCOM_SCM_PERM_RW },
++	};
+ 
+ 	pr_debug("%s: cal index %d\n", __func__, cal_index);
+ 
+@@ -3514,6 +3523,18 @@
+ 			rate = 16000;
+ 	}
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	if ((topology == VPM_TX_SM_LVVEFQ_COPP_TOPOLOGY) ||
++		(topology == VPM_TX_DM_LVVEFQ_COPP_TOPOLOGY) ||
++		(topology == VPM_TX_SM_LVSAFQ_COPP_TOPOLOGY) ||
++		(topology == VPM_TX_DM_LVSAFQ_COPP_TOPOLOGY) ||
++		(topology == VOICE_TX_DIAMONDVOICE_FVSAM_SM) ||
++		(topology == VOICE_TX_DIAMONDVOICE_FVSAM_DM) ||
++		(topology == VOICE_TX_DIAMONDVOICE_FVSAM_QM) ||
++		(topology == VOICE_TX_DIAMONDVOICE_FRSAM_DM))
++		rate = 16000;
++#endif /* CONFIG_SEC_SND_ADAPTATION */
++
+ 	if (topology == FFECNS_TOPOLOGY) {
+ 		this_adm.ffecns_port_id = port_id;
+ 		pr_debug("%s: ffecns port id =%x\n", __func__,
+--- a/dsp/q6afe.c
++++ b/dsp/q6afe.c
+@@ -23,7 +23,15 @@
+ #include <dsp/msm-audio-event-notify.h>
+ #include <ipc/apr_tal.h>
+ #include "adsp_err.h"
++#ifdef CONFIG_SEC_SND_ADAPTATION
++#include <asoc/sec_audio_adaptation.h>
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ #include "q6afecal-hwdep.h"
++#if IS_ENABLED(CONFIG_TAS25XX_ALGO)
++#include <dsp/tas_qualcomm.h>
++static int32_t tas_smartamp_algo_callback(uint32_t opcode, uint32_t *payload,
++					uint32_t payload_size);
++#endif /*CONFIG_TAS25XX_ALGO*/
+ 
+ #define WAKELOCK_TIMEOUT	5000
+ #define AFE_CLK_TOKEN	1024
+@@ -260,6 +268,14 @@
+ 	struct vad_config vad_cfg[AFE_MAX_PORTS];
+ 	struct work_struct afe_dc_work;
+ 	struct notifier_block event_notifier;
++#if IS_ENABLED(CONFIG_TAS25XX_ALGO)
++	struct afe_smartamp_calib_get_resp tas_calib_data;
++	uint32_t tas_module_rx;
++	uint32_t tas_module_tx;
++#endif /*CONFIG_TAS25XX_ALGO*/
++#ifdef CONFIG_SEC_SND_ADAPTATION
++	uint32_t volume_monitor_data[VOLUME_MONITOR_GET_PAYLOAD_SIZE];
++#endif
+ 	/* FTM spk params */
+ 	uint32_t initial_cal;
+ 	uint32_t v_vali_flag;
+@@ -1061,6 +1077,33 @@
+ 	return true;
+ }
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++static void volumemonitor_afe_cb_handler(uint32_t opcode, uint32_t *payload,
++					uint32_t payload_size)
++{
++	size_t expected_size =
++		sizeof(u32) + sizeof(struct afe_volume_monitor_get_params_t);
++
++	switch (opcode) {
++	case AFE_PORT_CMDRSP_GET_PARAM_V3:
++		expected_size += sizeof(struct param_hdr_v3);
++		if (payload_size < expected_size) {
++			pr_err("%s: Error: received size %d, expected size %zu\n",
++				 __func__, payload_size, expected_size);
++			return;
++		}
++		memcpy(&this_afe.volume_monitor_data, &payload[5],
++			sizeof(this_afe.volume_monitor_data));
++		break;
++	default:
++		pr_err("%s: Unrecognized command %d\n", __func__, opcode);
++		return;
++	}
++
++	atomic_set(&this_afe.state, 0);
++}
++#endif
++
+ static int32_t afe_callback(struct apr_client_data *data, void *priv)
+ {
+ 	uint16_t i = 0;
+@@ -1169,10 +1212,26 @@
+ 		} else if (param_id == AFE_PARAM_ID_DEV_TIMING_STATS) {
+ 			av_dev_drift_afe_cb_handler(data->opcode, data->payload,
+ 						    data->payload_size);
++#ifdef CONFIG_SEC_SND_ADAPTATION
++		} else if (param_id == AFE_MODULE_PARAM_ID_GET_VOLUME_MONITOR) {
++			volumemonitor_afe_cb_handler(data->opcode, data->payload,
++							data->payload_size);
++#endif
+ 		} else {
++#if IS_ENABLED(CONFIG_TAS25XX_ALGO)
++			if ((payload[1] == this_afe.tas_module_rx) ||
++				(payload[1] == this_afe.tas_module_tx)) {
++				if (tas_smartamp_algo_callback(data->opcode, data->payload,
++							data->payload_size))
++					return -EINVAL;
++			} else if (sp_make_afe_callback(data->opcode, data->payload,
++						data->payload_size))
++				return -EINVAL;
++#else
+ 			if (sp_make_afe_callback(data->opcode, data->payload,
+ 						 data->payload_size))
+ 				return -EINVAL;
++#endif /*CONFIG_TAS25XX_ALGO*/
+ 		}
+ 		if (afe_token_is_valid(data->token))
+ 			wake_up(&this_afe.wait[data->token]);
+@@ -7375,6 +7434,182 @@
+ }
+ EXPORT_SYMBOL(afe_loopback_gain);
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++int afe_set_volume_monitor(int port_id, int enable,  int volume_level, int avc_support, int db_atten)
++{
++	int ret = 0;
++	int index;
++	struct afe_volume_monitor_set_params_t volume_monitor_set_param;
++	struct param_hdr_v3 param_hdr;
++	u8 *packed_param_data = NULL;
++	int packed_data_size = 0;
++	u8 *param_data;
++
++	memset(&param_hdr, 0, sizeof(param_hdr));
++	param_hdr.module_id = AFE_MODULE_ID_VOLUME_MONITOR;
++	param_hdr.instance_id = INSTANCE_ID_0;
++	param_hdr.param_id = AFE_MODULE_PARAM_ID_SET_VOLUME_MONITOR;
++	param_hdr.param_size = sizeof(struct afe_volume_monitor_set_params_t);
++
++	packed_data_size = sizeof(union param_hdrs) + param_hdr.param_size;
++
++	packed_param_data = kzalloc(packed_data_size, GFP_KERNEL);
++	if (!packed_param_data)
++		return -ENOMEM;
++
++	volume_monitor_set_param.payload[0] = enable;
++	volume_monitor_set_param.payload[1] = volume_level;
++	volume_monitor_set_param.payload[2] = avc_support;
++	volume_monitor_set_param.payload[3] = db_atten;
++
++	param_data = (u8 *) &volume_monitor_set_param;
++
++	ret = q6common_pack_pp_params(packed_param_data, &param_hdr, param_data, &packed_data_size);
++	if (ret) {
++	    pr_err("%s: Failed to pack param header and data, error %d\n",
++	                 __func__, ret);
++	    goto fail_cmd;
++	}
++
++	index = q6audio_get_port_index(port_id);
++
++	ret = q6afe_set_params(port_id, index, NULL, packed_param_data, packed_data_size);
++	if (ret) {
++	    pr_err("%s: Comamnd %d failed %d\n",
++	                 __func__, AFE_MODULE_PARAM_ID_SET_VOLUME_MONITOR, ret);
++	    ret = -EINVAL;
++	}
++fail_cmd:
++	kfree(packed_param_data);
++	return ret;
++}
++
++EXPORT_SYMBOL(afe_set_volume_monitor);
++
++int afe_get_volume_monitor(int port_id, int *volume_monitor_value)
++{
++	struct param_hdr_v3 param_hdr;
++	int ret = 0;
++	int i;
++
++	memset(&param_hdr, 0, sizeof(param_hdr));
++
++	param_hdr.module_id = AFE_MODULE_ID_VOLUME_MONITOR;
++	param_hdr.instance_id = INSTANCE_ID_0;
++	param_hdr.param_id = AFE_MODULE_PARAM_ID_GET_VOLUME_MONITOR;
++	param_hdr.param_size = sizeof(struct afe_volume_monitor_get_params_t);
++
++	ret = q6afe_get_params(port_id, NULL, &param_hdr);
++	if (ret) {
++		pr_err("%s: Failed to get volume monitor data\n", __func__);
++		goto done;
++	}
++
++	for(i=0; i < VOLUME_MONITOR_GET_PAYLOAD_SIZE; i++) {
++		volume_monitor_value[i] = this_afe.volume_monitor_data[i];
++	}
++
++	pr_info("%s:end\n", __func__);
++done:
++	return ret;
++}
++EXPORT_SYMBOL(afe_get_volume_monitor);
++
++int afe_set_remote_mic_vol(int port_id, int volindex)
++{
++	int ret = 0;
++	int index;
++	struct afe_remote_mic_params_t remote_mic_vol_param;
++	struct param_hdr_v3 param_hdr;
++	u8 *packed_param_data = NULL;
++	int packed_data_size = 0;
++	u8 *param_data;
++
++	memset(&param_hdr, 0, sizeof(param_hdr));
++	param_hdr.module_id = AFE_MODULE_LVVEFQ_TX;
++	param_hdr.instance_id = 0x8000;
++	param_hdr.param_id = DIAMONDVOICE_REMOTEVOL_PARAM;
++	param_hdr.param_size = sizeof(struct afe_remote_mic_params_t);
++
++	packed_data_size = sizeof(union param_hdrs) + param_hdr.param_size;
++
++	packed_param_data = kzalloc(packed_data_size, GFP_KERNEL);
++	if (!packed_param_data)
++		return -ENOMEM;
++
++	remote_mic_vol_param.payload = volindex;
++
++	param_data = (u8 *) &remote_mic_vol_param;
++
++	ret = q6common_pack_pp_params(packed_param_data, &param_hdr, param_data, &packed_data_size);
++	if (ret) {
++		pr_err("%s: Failed to pack param header and data, error %d\n",
++					 __func__, ret);
++		goto fail_cmd;
++	}
++
++	index = q6audio_get_port_index(port_id);
++
++	ret = q6afe_set_params(port_id, index, NULL, packed_param_data, packed_data_size);
++	if (ret) {
++		pr_err("%s: Comamnd %d failed %d\n",
++					 __func__, AFE_MODULE_LVVEFQ_TX, ret);
++		ret = -EINVAL;
++	}
++fail_cmd:
++	kfree(packed_param_data);
++	return ret;
++}
++EXPORT_SYMBOL(afe_set_remote_mic_vol);
++
++int afe_set_sa_listenback(int port_id, int enable)
++{
++	int ret = 0;
++	int index;
++	struct afe_listen_enable_params_t listenback_enable_param;
++	struct param_hdr_v3 param_hdr;
++	u8 *packed_param_data = NULL;
++	int packed_data_size = 0;
++	u8 *param_data;
++
++	memset(&param_hdr, 0, sizeof(param_hdr));
++	param_hdr.module_id = MODULE_ID_PP_LISTENBACK;
++	param_hdr.instance_id = INSTANCE_ID_0;
++	param_hdr.param_id = PARAM_ID_PP_LISTENBACK_SET_PARAMS;
++	param_hdr.param_size = sizeof(struct afe_listen_enable_params_t);
++
++	packed_data_size = sizeof(union param_hdrs) + param_hdr.param_size;
++
++	packed_param_data = kzalloc(packed_data_size, GFP_KERNEL);
++	if (!packed_param_data)
++		return -ENOMEM;
++
++	listenback_enable_param.payload = enable;
++
++	param_data = (u8 *) &listenback_enable_param;
++
++	ret = q6common_pack_pp_params(packed_param_data, &param_hdr, param_data, &packed_data_size);
++	if (ret) {
++		pr_err("%s: Failed to pack param header and data, error %d\n",
++					 __func__, ret);
++		goto fail_cmd;
++	}
++
++	index = q6audio_get_port_index(port_id);
++
++	ret = q6afe_set_params(port_id, index, NULL, packed_param_data, packed_data_size);
++	if (ret) {
++		pr_err("%s: Comamnd %d failed %d\n",
++					 __func__, PARAM_ID_PP_LISTENBACK_SET_PARAMS, ret);
++		ret = -EINVAL;
++	}
++fail_cmd:
++	kfree(packed_param_data);
++	return ret;
++}
++EXPORT_SYMBOL(afe_set_sa_listenback);
++#endif
++
+ int afe_pseudo_port_start_nowait(u16 port_id)
+ {
+ 	struct afe_pseudoport_start_command start;
+@@ -12027,6 +12262,164 @@
+ 	kfree(data);
+ }
+ 
++#if IS_ENABLED(CONFIG_TAS25XX_ALGO)
++/*For DC Detection*/
++static void (*tas256x_sw_reset)(void *data);
++static dc_detection_data_t *s_dc_detect;
++void register_tas256x_reset_func(void *fptr, dc_detection_data_t *data)
++{
++	pr_info("[TI-SmartPA:%s]\n", __func__);
++	tas256x_sw_reset = fptr;
++	s_dc_detect = data;
++}
++EXPORT_SYMBOL(register_tas256x_reset_func);
++
++void afe_tas_smartamp_init(uint32_t module_id_rx, uint32_t module_id_tx)
++{
++	this_afe.tas_module_rx = module_id_rx;
++	this_afe.tas_module_tx = module_id_tx;
++}
++EXPORT_SYMBOL(afe_tas_smartamp_init);
++
++static int32_t tas_smartamp_algo_callback(uint32_t opcode, uint32_t *payload,
++					uint32_t payload_size)
++{
++	struct param_hdr_v3 param_hdr;
++	u32 *data_dest = NULL;
++	u32 *data_start = NULL;
++
++	pr_debug("[TI-SmartPA:%s] ", __func__);
++	memset(&param_hdr, 0, sizeof(param_hdr));
++	switch (opcode) {
++	case AFE_PORT_CMDRSP_GET_PARAM_V2:
++		param_hdr.module_id = payload[1];
++		param_hdr.instance_id = INSTANCE_ID_0;
++		param_hdr.param_id = payload[2];
++		param_hdr.param_size = payload[3];
++		data_start = &payload[4];
++		break;
++	case AFE_PORT_CMDRSP_GET_PARAM_V3:
++		memcpy(&param_hdr, &payload[1], sizeof(struct param_hdr_v3));
++		data_start = &payload[5];
++		break;
++	default:
++		pr_err("[TI-SmartPA:%s] Unrecognized command %d\n", __func__, opcode);
++		return -EINVAL;
++	}
++	data_dest = (u32 *) &this_afe.tas_calib_data;
++	data_dest[0] = payload[0];
++	memcpy(&data_dest[1], &param_hdr, sizeof(struct param_hdr_v3));
++	memcpy(&data_dest[5], data_start, param_hdr.param_size);
++	if (param_hdr.param_id == CAPI_V2_TAS_SA_DC_DETECT) {
++		pr_err("[TI-SmartPA:%s] Detected DC, Calling TAS256X Software Reset\n", __func__);
++		if (tas256x_sw_reset && s_dc_detect) {
++			s_dc_detect->channel = this_afe.tas_calib_data.res_cfg.payload[0];
++			tas256x_sw_reset(s_dc_detect);
++		}
++	}
++	if (!data_dest[0]) {
++		atomic_set(&this_afe.state, 0);
++	} else {
++		pr_debug("[TI-SmartPA:%s] status: %d", __func__, data_dest[0]);
++		atomic_set(&this_afe.state, -1);
++	}
++	return 0;
++}
++
++int afe_tas_smartamp_get_calib_data(uint32_t module_id, uint32_t param_id,
++		int32_t length, uint8_t *data, uint16_t port_id)
++{
++	int ret = -EINVAL;
++	struct param_hdr_v3 param_hdr;
++	uint32_t port = 0x0;
++
++	if (!data || length <= 0) {
++		pr_err("[TI-SmartPA:%s] Invalid params, length: %d\n",
++			__func__, length);
++		goto fail_cmd;
++	}
++
++	pr_info("[TI-SmartPA:%s] module id : 0x%x ", __func__, module_id);
++	if (module_id == this_afe.tas_module_rx) {
++		port = port_id;
++	} else if (module_id == this_afe.tas_module_rx) {
++		port = port_id + 1;
++	} else {
++		pr_err("[TI-SmartPA:%s] invalid module id %d\n", __func__, module_id);
++		goto fail_cmd;
++	}
++	memset(&param_hdr, 0, sizeof(param_hdr));
++	param_hdr.module_id = module_id;
++	param_hdr.instance_id = INSTANCE_ID_0;
++	param_hdr.param_id = param_id;
++	param_hdr.param_size = sizeof(struct afe_smartamp_get_calib);
++	ret = q6afe_get_params(port, NULL, &param_hdr);
++	if (ret < 0) {
++		pr_err("[TI-SmartPA:%s] get param port 0x%x param id[0x%x]failed %d\n",
++			__func__, port, param_hdr.param_id, ret);
++		goto fail_cmd;
++	}
++
++	memcpy(data, &this_afe.tas_calib_data.res_cfg, length);
++
++	ret = 0;
++fail_cmd:
++	return ret;
++}
++EXPORT_SYMBOL(afe_tas_smartamp_get_calib_data);
++
++int afe_tas_smartamp_set_calib_data(uint32_t module_id, uint32_t param_id,
++				int32_t length, uint8_t *data, uint16_t port_id)
++{
++	int ret = -EINVAL;
++	uint32_t port = 0x0;
++	struct param_hdr_v3 param_hdr;
++
++	u8 *packed_param_data = NULL;
++	u32 packed_param_size = 0;
++	u32 single_param_size = 0;
++
++	pr_info("[TI-SmartPA:%s] length: %d\n", __func__, length);
++	if (!data || (length < 0)) {
++		pr_err("[TI-SmartPA:%s] Invalid params\n", __func__);
++		return ret;
++	}
++
++	pr_info("[TI-SmartPA:%s] module id : 0x%x\n", __func__, module_id);
++	if (module_id == this_afe.tas_module_rx) {
++		port = port_id;
++	} else if (module_id == this_afe.tas_module_tx) {
++		port = port_id + 1;
++	} else {
++		pr_err("[TI-SmartPA:%s] invalid module id %d\n", __func__, module_id);
++		return ret;
++	}
++	packed_param_size = sizeof(param_hdr) + length;
++	packed_param_data = kzalloc(packed_param_size, GFP_KERNEL);
++	if (!packed_param_data)
++		return -ENOMEM;
++
++	packed_param_size = 0;
++	param_hdr.module_id = module_id;
++	param_hdr.instance_id = INSTANCE_ID_0;
++	param_hdr.param_id = param_id;
++	param_hdr.param_size = length;
++	ret = q6common_pack_pp_params(packed_param_data, &param_hdr,
++			(u8 *) data, &single_param_size);
++	if (ret) {
++		pr_err("[TI-SmartPA:%s] Failed to pack param data, error %d\n", __func__,
++		       ret);
++		goto done;
++	}
++	packed_param_size += single_param_size;
++	ret = q6afe_set_params(port, q6audio_get_port_index(port),
++			       NULL, packed_param_data, packed_param_size);
++done:
++	kfree(packed_param_data);
++	return ret;
++} EXPORT_SYMBOL(afe_tas_smartamp_set_calib_data);
++#endif
++
+ int __init afe_init(void)
+ {
+ 	int i = 0, ret;
+--- a/dsp/q6asm.c
++++ b/dsp/q6asm.c
+@@ -110,6 +110,14 @@
+ /* session id: 0 reserved */
+ static struct audio_session session[ASM_ACTIVE_STREAMS_ALLOWED + 1];
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++struct audio_session *q6asm_get_audio_session(void)
++{
++	return session;
++}
++EXPORT_SYMBOL(q6asm_get_audio_session);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
++
+ struct asm_buffer_node {
+ 	struct list_head list;
+ 	phys_addr_t buf_phys_addr;
+--- a/dsp/q6voice.c
++++ b/dsp/q6voice.c
+@@ -27,6 +27,10 @@
+ #include <dsp/voice_mhi.h>
+ #include <soc/qcom/secure_buffer.h>
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++#include <dsp/q6voice_adaptation.h>
++#endif /* CONFIG_SEC_SND_ADAPTATION */
++
+ #define TIMEOUT_MS 1000
+ 
+ 
+@@ -155,6 +159,13 @@
+ 					      struct param_hdr_v3 param_hdr,
+ 					      u8 *param_data);
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++struct common_data *voice_get_common_data(void)
++{
++	return &common;
++}
++#endif /* CONFIG_SEC_SND_ADAPTATION */
++
+ static void voice_itr_init(struct voice_session_itr *itr,
+ 			   u32 session_id)
+ {
+@@ -2763,9 +2774,18 @@
+ 			 int col_data_idx, int session_id)
+ {
+ 	int ret = 0;
+-	u64 src_vmid_list = BIT(VMID_LPASS) | BIT_ULL(VMID_ADSP_HEAP);
+-	struct qcom_scm_vmperm dst_vmids[] = {{QCOM_SCM_VMID_HLOS,
+-		PERM_READ | PERM_WRITE | PERM_EXEC}};
++	/*
++	 * a52sxq: lend the CMA cal buffer HLOS -> LPASS + ADSP_HEAP, as hyp_assign_phys() did on
++	 * 5.4 (source {HLOS}, dest {LPASS, ADSP_HEAP} RW). The donor copied the RECLAIM vmids of
++	 * the unmap paths here (source {LPASS, ADSP_HEAP}, dest HLOS RWX): the buffer is owned by
++	 * HLOS, so TZ rejected the call (-EINVAL, "qcom_scm_assign_mem failed ret = -22"), the
++	 * VOCPROC cal (cal 2) was never registered and the call ran on uncalibrated CVP.
++	 */
++	u64 src_vmid_list = BIT_ULL(QCOM_SCM_VMID_HLOS);
++	struct qcom_scm_vmperm dst_vmids[] = {
++		{ QCOM_SCM_VMID_LPASS, QCOM_SCM_PERM_RW },
++		{ QCOM_SCM_VMID_ADSP_HEAP, QCOM_SCM_PERM_RW },
++	};
+ 	*cal_block = cal_utils_get_only_cal_block(
+ 		common.cal_data[cal_block_idx]);
+ 	if (*cal_block == NULL) {
+@@ -7147,6 +7167,10 @@
+ 
+ 		pr_debug("%s: VOC_STATE: %d\n", __func__, v->voc_state);
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++		voice_sec_loopback_end_cmd(session_id);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
++
+ 		ret = voice_destroy_vocproc(v);
+ 		if (ret < 0)
+ 			pr_err("%s:  destroy voice failed\n", __func__);
+@@ -7611,6 +7635,10 @@
+ 			goto fail;
+ 		}
+ 
++#ifdef CONFIG_SEC_SND_ADAPTATION
++		voice_sec_loopback_start_cmd(session_id);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
++
+ 		v->voc_state = VOC_RUN;
+ 	} else {
+ 		pr_err("%s: Error: Start voice called in state %d\n",
+@@ -10103,7 +10131,13 @@
+ 	if (mem_hdr != NULL) {
+ 		set_param->mem_hdr = *mem_hdr;
+ 	} else if (param_data != NULL) {
+-		memcpy(set_param->param_data, param_data, param_size);
++		/*
++		 * a52sxq: param_data[0] is the packet's trailing payload, allocated above
++		 * (pkt_size includes param_size); plain memcpy() WARNs "field-spanning write"
++		 * on every call start (voice_send_cvp_media_format_cmd, rb16 2026-11-15).
++		 */
++		unsafe_memcpy(set_param->param_data, param_data, param_size,
++			      /* sized by the kzalloc above */);
+ 	} else {
+ 		pr_err("%s: Both memory header and param data are NULL\n",
+ 		       __func__);
+--- a/dsp/codecs/Kbuild
++++ b/dsp/codecs/Kbuild
+@@ -19,7 +19,7 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+@@ -30,7 +30,7 @@
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_TRINKET), y)
+ 		include $(AUDIO_ROOT)/config/sm6150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_KONA), y)
+@@ -39,17 +39,17 @@
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_LITO), y)
+ 		include $(AUDIO_ROOT)/config/litoauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 		include $(AUDIO_ROOT)/config/bengalauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_SM8150), y)
+ 		include $(AUDIO_ROOT)/config/sm8150auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/sm8150autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
+@@ -58,12 +58,12 @@
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_QCS405), y)
+ 		include $(AUDIO_ROOT)/config/qcs405auto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 		include $(AUDIO_ROOT)/config/lahainaauto.conf
+-		export
++		# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 	endif
+ 	ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+--- a/include/dsp/q6asm-v2.h
++++ b/include/dsp/q6asm-v2.h
+@@ -770,4 +770,7 @@
+ /* Provide default asm channel mapping for given channel count */
+ int q6asm_map_channels(u8 *channel_mapping, uint32_t channels,
+ 		bool use_back_flavor);
++#ifdef CONFIG_SEC_SND_ADAPTATION
++struct audio_session *q6asm_get_audio_session(void);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ #endif /* __Q6_ASM_H__ */
+--- a/include/dsp/q6voice.h
++++ b/include/dsp/q6voice.h
+@@ -2147,4 +2147,7 @@
+ int voc_get_source_tracking(struct source_tracking_param *sourceTrackingData);
+ int voc_set_afe_sidetone(uint32_t session_id, bool sidetone_enable);
+ bool voc_get_afe_sidetone(void);
++#ifdef CONFIG_SEC_SND_ADAPTATION
++struct common_data *voice_get_common_data(void);
++#endif /* CONFIG_SEC_SND_ADAPTATION */
+ #endif
+--- a/ipc/Kbuild
++++ b/ipc/Kbuild
+@@ -20,7 +20,7 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all breaks GNU make 4.4 here; the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+@@ -72,22 +72,22 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LITO), y)
+ 			include $(AUDIO_ROOT)/config/litoauto.conf
+-			export
++			# export (a52sxq: export-all breaks GNU make 4.4 here; the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 			include $(AUDIO_ROOT)/config/bengalauto.conf
+-			export
++			# export (a52sxq: export-all breaks GNU make 4.4 here; the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all breaks GNU make 4.4 here; the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LAHAINA), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all breaks GNU make 4.4 here; the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_SM8150), y)
+@@ -101,7 +101,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_QCS405), y)
+ 			include $(AUDIO_ROOT)/config/qcs405auto.conf
+-			export
++			# export (a52sxq: export-all breaks GNU make 4.4 here; the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
+--- a/ipc/apr.c
++++ b/ipc/apr.c
+@@ -307,6 +307,8 @@
+ 	dispatch_event(opcode, APR_DEST_QDSP6);
+ }
+ 
++static bool apr_children_added;
++
+ static void apr_add_child_devices(struct work_struct *work)
+ {
+ 	int ret;
+@@ -316,6 +318,8 @@
+ 	if (ret)
+ 		dev_err(apr_priv->dev, "%s: failed to add child nodes, ret=%d\n",
+ 			__func__, ret);
++	else
++		apr_children_added = true;
+ }
+ 
+ static void apr_adsp_up(void)
+@@ -326,7 +330,7 @@
+ 		apr_set_q6_state(APR_SUBSYS_LOADED);
+ 
+ 		spin_lock(&apr_priv->apr_lock);
+-		if (apr_priv->is_initial_boot)
++		if (!apr_children_added)
+ 			schedule_work(&apr_priv->add_chld_dev_work);
+ 		spin_unlock(&apr_priv->apr_lock);
+ 		snd_event_notify(apr_priv->dev, SND_EVENT_UP);
+--- a/soc/Kbuild
++++ b/soc/Kbuild
+@@ -19,7 +19,7 @@
+ 
+ ifeq ($(TARGET_SUPPORT), sa410m)
+ 	include $(AUDIO_ROOT)/config/sa410mauto.conf
+-	export
++	# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 	INCS    +=  -include $(AUDIO_ROOT)/config/sa410mautoconf.h
+ endif
+ 
+@@ -62,22 +62,22 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LITO), y)
+ 			include $(AUDIO_ROOT)/config/litoauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/litoautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_BENGAL), y)
+ 			include $(AUDIO_ROOT)/config/bengalauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/bengalautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_YUPIK), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_LAHAINA), y)
+ 			include $(AUDIO_ROOT)/config/lahainaauto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_SM6150), y)
+@@ -91,7 +91,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_TRINKET), y)
+ 			include $(AUDIO_ROOT)/config/sm6150auto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/sm6150autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_SDMSHRIKE), y)
+@@ -105,7 +105,7 @@
+ 		endif
+ 		ifeq ($(CONFIG_ARCH_QCS405), y)
+ 			include $(AUDIO_ROOT)/config/qcs405auto.conf
+-			export
++			# export (a52sxq: export-all makes GNU make 4.4 expand every kbuild variable per $(shell); the .conf lines export themselves)
+ 			INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
+ 		endif
+ 		ifeq ($(CONFIG_QTI_QUIN_GVM), y)

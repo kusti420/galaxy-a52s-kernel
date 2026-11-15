@@ -1,0 +1,13 @@
+gic_intr_routing: nr_irqs is irq_get_nr_irqs() in 6.18
+
+--- a/bsp612/soc-repo/drivers/soc/qcom/gic_intr_routing.c
++++ b/bsp612/soc-repo/drivers/soc/qcom/gic_intr_routing.c
+@@ -618,7 +618,7 @@
+ 		gic_chip = READ_ONCE(gic_routing_data.gic_chip);
+ 	}
+ 
+-	for (i = 1; i < nr_irqs; i++) {
++	for (i = 1; i < irq_get_nr_irqs(); i++) {
+ 		if (atomic_add_return(0,
+ 		    &gic_routing_data.abort_balancing))
+ 			return;

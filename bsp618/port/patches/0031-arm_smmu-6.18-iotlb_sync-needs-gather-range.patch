@@ -1,0 +1,42 @@
+arm_smmu (soc-repo fork): fill the unmap gather, or 6.18 never syncs/flushes the TLB
+
+ACK 6.18's iommu_iotlb_sync() (include/linux/iommu.h) calls domain->ops->iotlb_sync only when
+the gather holds a range (start < end); 6.12 called it unconditionally. The fork's unmap goes
+through the qcom io-pgtable (qcom_arm_lpae_unmap_pages), which never adds a range to the gather:
+it only sets smmu_domain->deferred_flush through tlb_add_inv and relies on arm_smmu_iotlb_sync
+-> arm_smmu_flush_iotlb_all -> TLBIASID + sync. On 6.18 that callback was skipped for every
+strict-mode unmap (iommu_unmap, dma-iommu __iommu_dma_unmap, ...), so no TLB invalidation was
+issued at all and stale entries survived IOVA reuse. (Upstream arm-smmu is not hit: its
+io-pgtable issues TLBIVAL per page from tlb_add_page during the unmap, only the sync is lost.)
+
+First 6.18 boots (ab618-a2s1 phone 2, ab618-p1s1 phone 1): ~0.19 s after USB_STATE=CONFIGURED
+a600000.dwc3 (SID 0xe0, CB 0x22) took a write permission fault on IOVA 0xeff87000 (FSR
+0x40000408 PF W SS, FSYNR0 PLVL 3), soft walk and ATOS both translate it (page mapped, phys
+differs per boot): the composite ep0 buffer (kmalloc 4 KiB, page aligned) mapped DMA_TO_DEVICE
+for an IN control transfer, unmapped, then remapped at the same IOVA (rcache) DMA_FROM_DEVICE
+for the next OUT data stage (cdc_ncm SET_NTB_INPUT_SIZE / cdc_acm SET_LINE_CODING); the SMMU
+still used the read-only TLB entry.
+
+Fix: after a successful unmap, add the unmapped range to a non-queued gather so the core calls
+arm_smmu_iotlb_sync again (which flushes the whole context, as on 6.12). Flush-queue gathers are
+left alone (dma-iommu flushes them through ->flush_iotlb_all).
+
+--- a/bsp612/soc-repo/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/bsp612/soc-repo/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -2497,6 +2497,16 @@
+ 	if (ret)
+ 		trace_unmap_pages(smmu_domain, iova, pgsize, pgcount);
+ 
++	/*
++	 * bsp618/port: 6.18's iommu_iotlb_sync() only calls ->iotlb_sync when the gather holds
++	 * a range (start < end). The qcom io-pgtable unmap never adds one (it only sets
++	 * deferred_flush via tlb_add_inv, and arm_smmu_iotlb_sync flushes the whole context),
++	 * so without this every strict-mode unmap kept its stale TLB entry. Queued (flush-queue)
++	 * gathers are flushed through ->flush_iotlb_all instead and are left alone.
++	 */
++	if (ret && gather && !iommu_iotlb_gather_queued(gather))
++		iommu_iotlb_gather_add_range(gather, iova, ret);
++
+ 	return ret;
+ }
+ 

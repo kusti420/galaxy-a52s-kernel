@@ -1,0 +1,580 @@
+diff --git a/drivers612/display/techpack/display-drivers/include/uapi/display/drm/sde_drm.h b/drivers612/display/techpack/display-drivers/include/uapi/display/drm/sde_drm.h
+index db82afd..fdc4d20 100644
+--- a/drivers612/display/techpack/display-drivers/include/uapi/display/drm/sde_drm.h
++++ b/drivers612/display/techpack/display-drivers/include/uapi/display/drm/sde_drm.h
+@@ -554,6 +554,13 @@ struct sde_drm_roi_v1 {
+ #define SDE_RECOVERY_CAPTURE		1
+ #define SDE_RECOVERY_HARD_RESET		2
+ 
++/**
++ * sde fod dim layer
++ * (a52sxq: LineageOS 5.4 FOD; the composer passes the UDFPS layer's z-order
++ * with this bit set in the plane "zpos" property, see sde_plane.c)
++ */
++#define FOD_PRESSED_LAYER_ZORDER	0x20000000u
++
+ /**
+  * Define UBWC statistics config
+  */
+diff --git a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.c b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.c
+index 9d49233..a99eb14 100644
+--- a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.c
++++ b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.c
+@@ -43,6 +43,44 @@
+ #define RSCC_MODE_THRESHOLD_TIME_US 40
+ #define DCS_COMMAND_THRESHOLD_TIME_US 40
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++/*
++ * a52sxq: LineageOS 5.4 FOD dim layer (5.4 dsi_panel.c:44-73): alpha of the
++ * full-screen black dim layer staged under the UDFPS layer, by backlight level.
++ */
++struct bda {
++	u32 brightness;
++	u32 alpha;
++};
++
++static const struct bda fod_dim_lut[] = {
++	{0, 0xFF},
++	{1, 0xEC},
++	{2, 0xE6},
++	{3, 0xE0},
++	{4, 0xDC},
++	{6, 0xD5},
++	{10, 0xCA},
++	{20, 0xB7},
++	{21, 0xB5},
++	{30, 0xA8},
++	{42, 0x9A},
++	{63, 0x85},
++	{84, 0x74},
++	{105, 0x65},
++	{126, 0x58},
++	{147, 0x4C},
++	{168, 0x40},
++	{189, 0x36},
++	{210, 0x2C},
++	{231, 0x23},
++	{252, 0x1A},
++	{273, 0x11},
++	{294, 0x9},
++	{315, 0x1},
++};
++#endif
++
+ static void dsi_dce_prepare_pps_header(char *buf, u32 pps_delay_ms)
+ {
+ 	char *bp;
+@@ -1183,9 +1221,50 @@ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl)
+ 		rc = -ENOTSUPP;
+ 	}
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	bl->real_bl_level = bl_lvl;
++#endif
++
+ 	return rc;
+ }
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++/* a52sxq: LineageOS 5.4 FOD (5.4 dsi_panel.c:1105-1137) */
++static u32 dsi_panel_get_backlight(struct dsi_panel *panel)
++{
++	return READ_ONCE(panel->bl_config.real_bl_level);
++}
++
++static u32 interpolate(uint32_t x, uint32_t xa, uint32_t xb,
++		       uint32_t ya, uint32_t yb)
++{
++	return ya - (ya - yb) * (x - xa) / (xb - xa);
++}
++
++u32 dsi_panel_get_fod_dim_alpha(struct dsi_panel *panel)
++{
++	u32 brightness = dsi_panel_get_backlight(panel);
++	int len = ARRAY_SIZE(fod_dim_lut);
++	int i;
++
++	for (i = 0; i < len; i++)
++		if (fod_dim_lut[i].brightness >= brightness)
++			break;
++
++	if (i == 0)
++		return fod_dim_lut[i].alpha;
++
++	if (i == len)
++		return fod_dim_lut[i - 1].alpha;
++
++	return interpolate(brightness,
++			   fod_dim_lut[i - 1].brightness,
++			   fod_dim_lut[i].brightness,
++			   fod_dim_lut[i - 1].alpha,
++			   fod_dim_lut[i].alpha);
++}
++#endif
++
+ static u32 dsi_panel_get_brightness(struct dsi_backlight_config *bl)
+ {
+ 	u32 cur_bl_level;
+@@ -3202,6 +3281,9 @@ static int dsi_panel_parse_bl_config(struct dsi_panel *panel)
+ 
+ 	panel->bl_config.bl_scale = MAX_BL_SCALE_LEVEL;
+ 	panel->bl_config.bl_scale_sv = MAX_SV_BL_SCALE_LEVEL;
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	panel->bl_config.real_bl_level = 0;
++#endif
+ 	panel->bl_config.dimming_min_bl = 0;
+ 	panel->bl_config.dimming_status = DIMMING_ENABLE;
+ 	panel->bl_config.user_disable_notification = false;
+diff --git a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.h b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.h
+index 0302335..b984b39 100644
+--- a/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.h
++++ b/drivers612/display/techpack/display-drivers/msm/dsi/dsi_panel.h
+@@ -158,6 +158,10 @@ struct dsi_backlight_config {
+ 
+ 	/* DCS params */
+ 	bool lp_mode;
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	/* a52sxq/LineageOS 5.4 FOD: last level passed to dsi_panel_set_backlight() */
++	u32 real_bl_level;
++#endif
+ };
+ 
+ struct dsi_reset_seq {
+@@ -378,6 +382,11 @@ int dsi_panel_post_unprepare(struct dsi_panel *panel);
+ 
+ int dsi_panel_set_backlight(struct dsi_panel *panel, u32 bl_lvl);
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++/* a52sxq/LineageOS 5.4 FOD: dim layer alpha for the current backlight level */
++u32 dsi_panel_get_fod_dim_alpha(struct dsi_panel *panel);
++#endif
++
+ int dsi_panel_update_pps(struct dsi_panel *panel);
+ 
+ int dsi_panel_send_qsync_on_dcs(struct dsi_panel *panel,
+diff --git a/drivers612/display/techpack/display-drivers/msm/msm_drv.h b/drivers612/display/techpack/display-drivers/msm/msm_drv.h
+index 0e3b09c..1eaeea9 100644
+--- a/drivers612/display/techpack/display-drivers/msm/msm_drv.h
++++ b/drivers612/display/techpack/display-drivers/msm/msm_drv.h
+@@ -153,6 +153,8 @@ enum msm_mdp_plane_property {
+ 	PLANE_PROP_FP16_UNMULT,
+ 	PLANE_PROP_UCSC_UNMULT,
+ 	PLANE_PROP_UCSC_ALPHA_DITHER,
++	/* a52sxq: LineageOS 5.4 FOD layer flag (set from the zpos bit, see sde_plane.c) */
++	PLANE_PROP_FOD,
+ 
+ 	/* enum/bitmask properties */
+ 	PLANE_PROP_BLEND_OP,
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+index b77ea98..cc50c74 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+@@ -1044,6 +1044,19 @@ struct sde_connector_dyn_hdr_metadata *sde_connector_get_dyn_hdr_meta(
+ 	return &c_state->dyn_hdr_meta;
+ }
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++/* a52sxq FOD: the state being kicked off stages the FOD dim layer (sde_crtc.c) */
++static bool _sde_connector_fod_layer_active(struct drm_connector *connector)
++{
++	struct drm_crtc *crtc = connector->state ? connector->state->crtc : NULL;
++
++	if (!crtc || !crtc->state || !crtc->state->active)
++		return false;
++
++	return to_sde_crtc_state(crtc->state)->fod_dim_layer != NULL;
++}
++#endif
++
+ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ {
+ 	struct sde_connector *c_conn;
+@@ -1054,6 +1067,7 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+ 	struct samsung_display_driver_data *vdd;
+ 	u32 finger_mask_state;
++	bool fod, fod_edge, prop_edge, want;
+ #endif
+ 
+ 	if (!connector) {
+@@ -1117,23 +1131,48 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ 			 * level itself. S23 stock compared the property with vdd->finger_mask on
+ 			 * every kickoff, which would cancel a mask set through sysfs.
+ 			 */
+-			if (finger_mask_state != c_conn->ichthys_finger_mask_prop) {
+-				bool want = finger_mask_state != 0;
+-
+-				c_conn->ichthys_finger_mask_prop = finger_mask_state;
+-				if (want != !!vdd->finger_mask) {
+-					mutex_lock(&vdd->vrr.vrr_lock);
+-					vdd->br_info.common_br.finger_mask_bl_level = !want ? 0 :
+-						(finger_mask_state > 1 ? finger_mask_state :
+-						 ICHTHYS_FINGER_MASK_DEFAULT_LEVEL);
++			/*
++			 * a52sxq: LineageOS 5.4 FOD (5.4 sde_crtc.c:5036-5057 +
++			 * sde_connector.c:906 + dsi_display.c:8631). While the committed
++			 * crtc state stages the FOD (UDFPS) dim layer, the mask is on at
++			 * level 331, as 5.4's sde_crtc_fod_atomic_check set it; when the
++			 * layer goes, it is switched off. Decided here, on the state being
++			 * kicked off, so the HBM DCS goes out in the kickoff of the first
++			 * frame with (without) the dim layer, as on 5.4.
++			 *
++			 * Both sources share vdd->finger_mask: the mask is wanted while the
++			 * FOD layer is shown OR the property is non-zero. The property only
++			 * acts on its edges, the FOD layer is level-triggered for "on"
++			 * (5.4: every check with the layer and no mask turned it on, e.g.
++			 * after ss_panel_off_post cleared it) and edge-triggered for "off",
++			 * so neither source cancels a mask the other one holds, and the
++			 * mask cannot stay on once both are gone.
++			 */
++			fod = _sde_connector_fod_layer_active(connector);
++			fod_edge = fod != c_conn->ichthys_fod_layer;
++			prop_edge = finger_mask_state != c_conn->ichthys_finger_mask_prop;
++			c_conn->ichthys_fod_layer = fod;
++			c_conn->ichthys_finger_mask_prop = finger_mask_state;
++			want = fod || finger_mask_state != 0;
++
++			if ((prop_edge || fod_edge || (fod && !vdd->finger_mask)) &&
++					want != !!vdd->finger_mask) {
++				mutex_lock(&vdd->vrr.vrr_lock);
++				vdd->br_info.common_br.finger_mask_bl_level = !want ? 0 :
++					(finger_mask_state > 1 ? finger_mask_state :
++					 ICHTHYS_FINGER_MASK_DEFAULT_LEVEL);
++				if (fod_edge || (fod && !vdd->finger_mask))
++					/* same text as 5.4 sde_connector.c:908 */
++					SDE_INFO("[FINGER_MASK]updated finger mask mode %d (fod layer %d, property %u)\n",
++						want, fod, finger_mask_state);
++				else
+ 					SDE_INFO("[FINGER_MASK] property %u -> mask %d\n",
+ 						finger_mask_state, want);
+-					vdd->finger_mask_updated = true;
+-					vdd->finger_mask = want;
+-					ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
+-					vdd->finger_mask_updated = false;
+-					mutex_unlock(&vdd->vrr.vrr_lock);
+-				}
++				vdd->finger_mask_updated = true;
++				vdd->finger_mask = want;
++				ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
++				vdd->finger_mask_updated = false;
++				mutex_unlock(&vdd->vrr.vrr_lock);
+ 			}
+ 		}
+ 	}
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.h b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.h
+index 6115ccd..c32dcd8 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.h
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.h
+@@ -657,6 +657,8 @@ struct sde_connector {
+ #if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
+ 	/* IchthysOS: last "fingerprint_mask" property value seen at pre_kickoff (edge detection) */
+ 	u32 ichthys_finger_mask_prop;
++	/* a52sxq: FOD (UDFPS) dim layer staged in the last kicked-off crtc state */
++	bool ichthys_fod_layer;
+ #endif
+ 	bool misr_event_notify_enabled;
+ 	struct sde_misr_sign previous_misr_sign;
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.c
+index 3d251c4..56a26a1 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.c
+@@ -2024,6 +2024,12 @@ static void _sde_crtc_blend_setup_mixer(struct drm_crtc *crtc,
+ 			for (i = 0; i < cstate->num_dim_layers; i++)
+ 				_sde_crtc_setup_dim_layer_cfg(crtc, sde_crtc,
+ 						mixer, &cstate->dim_layer[i]);
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++			/* a52sxq: LineageOS 5.4 FOD dim layer (5.4 sde_crtc.c:1567) */
++			if (cstate->fod_dim_layer)
++				_sde_crtc_setup_dim_layer_cfg(crtc, sde_crtc,
++						mixer, cstate->fod_dim_layer);
++#endif
+ 			clear_bit(SDE_CRTC_DIRTY_DIM_LAYERS, cstate->dirty);
+ 		}
+ 	}
+@@ -5181,6 +5187,11 @@ static struct drm_crtc_state *sde_crtc_duplicate_state(struct drm_crtc *crtc)
+ 			&cstate->property_state, cstate->property_values);
+ 	sde_cp_duplicate_state_info(&old_cstate->base, &cstate->base);
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	/* a52sxq FOD: recomputed by atomic_check; never point into old_cstate */
++	cstate->fod_dim_layer = NULL;
++#endif
++
+ 	/* duplicate base helper */
+ 	__drm_atomic_helper_crtc_duplicate_state(crtc, &cstate->base);
+ 
+@@ -6200,6 +6211,132 @@ static int _sde_crtc_check_zpos(struct drm_crtc_state *state,
+ 	return rc;
+ }
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++/*
++ * a52sxq: LineageOS 5.4 FOD (fingerprint-on-display), 5.4 sde_crtc.c:4961-5058
++ * (kernel/samsung/sm7325 58af9aab0070^). LineageOS's SurfaceFlinger marks the
++ * UDFPS layer by FOD_PRESSED_LAYER_ZORDER in its z-order; sde_plane turns that
++ * into the "fod" plane property. While such a plane is staged, a full-screen
++ * black dim layer (alpha from dsi_panel_get_fod_dim_alpha) is staged right
++ * below it and every plane at or above its stage moves up one stage.
++ * The Samsung finger mask (HBM) is switched from the committed state in
++ * sde_connector_pre_kickoff(), not here (atomic_check also runs for
++ * TEST_ONLY commits, which must not touch the panel state).
++ */
++static struct dsi_display *_sde_crtc_fod_get_display(struct sde_crtc_state *cstate)
++{
++	struct sde_connector *c_conn;
++	int i;
++
++	for (i = 0; i < cstate->num_connectors; i++) {
++		if (!cstate->connectors[i] ||
++		    cstate->connectors[i]->connector_type != DRM_MODE_CONNECTOR_DSI)
++			continue;
++		c_conn = to_sde_connector(cstate->connectors[i]);
++		if (c_conn->display)
++			return (struct dsi_display *)c_conn->display;
++	}
++
++	return NULL;
++}
++
++static struct sde_hw_dim_layer *
++sde_crtc_setup_fod_dim_layer(struct sde_crtc_state *cstate, uint32_t stage)
++{
++	struct drm_crtc_state *crtc_state = &cstate->base;
++	struct drm_display_mode *mode = &crtc_state->adjusted_mode;
++	struct sde_hw_dim_layer *dim_layer = NULL;
++	struct dsi_display *display;
++	struct sde_kms *kms;
++	uint32_t alpha;
++	uint32_t layer_stage;
++
++	kms = _sde_crtc_get_kms(crtc_state->crtc);
++	if (!kms || !kms->catalog) {
++		SDE_ERROR("Invalid kms\n");
++		goto error;
++	}
++
++	if (!test_bit(SDE_FEATURE_BASE_LAYER, kms->catalog->features))
++		layer_stage = SDE_STAGE_0 + stage;	/* = 5.4 (no base layer) */
++	else
++		layer_stage = stage;
++	if (layer_stage >= kms->catalog->mixer[0].sblk->maxblendstages) {
++		SDE_ERROR("Stage too large %u vs max %u\n", layer_stage,
++			  kms->catalog->mixer[0].sblk->maxblendstages);
++		goto error;
++	}
++
++	if (cstate->num_dim_layers == SDE_MAX_DIM_LAYERS) {
++		SDE_ERROR("Max dim layers reached\n");
++		goto error;
++	}
++
++	display = _sde_crtc_fod_get_display(cstate);
++	if (!display || !display->panel) {
++		SDE_ERROR("Invalid primary display\n");
++		goto error;
++	}
++
++	/* 5.4 held panel_lock around this u32 read; READ_ONCE in the helper instead */
++	alpha = dsi_panel_get_fod_dim_alpha(display->panel);
++
++	dim_layer = &cstate->fod_dim_layer_cfg;
++	dim_layer->flags = SDE_DRM_DIM_LAYER_INCLUSIVE;
++	dim_layer->stage = layer_stage;
++	dim_layer->rect.x = 0;
++	dim_layer->rect.y = 0;
++	dim_layer->rect.w = mode->hdisplay;
++	dim_layer->rect.h = mode->vdisplay;
++	dim_layer->color_fill.color_0 = 0;
++	dim_layer->color_fill.color_1 = 0;
++	dim_layer->color_fill.color_2 = 0;
++	dim_layer->color_fill.color_3 = alpha;
++
++error:
++	return dim_layer;
++}
++
++static void
++sde_crtc_fod_atomic_check(struct drm_crtc *crtc, struct sde_crtc_state *cstate,
++			  struct plane_state *pstates, int cnt)
++{
++	struct sde_crtc_state *old_cstate = crtc->state ?
++			to_sde_crtc_state(crtc->state) : NULL;
++	uint32_t dim_layer_stage = 0;
++	int plane_idx;
++
++	for (plane_idx = 0; plane_idx < cnt; plane_idx++)
++		if (sde_plane_is_fod_layer(pstates[plane_idx].drm_pstate))
++			break;
++
++	if (plane_idx == cnt) {
++		cstate->fod_dim_layer = NULL;
++	} else {
++		dim_layer_stage = pstates[plane_idx].stage;
++		cstate->fod_dim_layer = sde_crtc_setup_fod_dim_layer(cstate,
++							     dim_layer_stage);
++	}
++
++	/*
++	 * The mixer only (re)programs dim layers when this bit is set. 5.4
++	 * relied on the composer setting the dim layer property in every
++	 * commit; set it ourselves whenever the FOD dim layer is shown (its
++	 * alpha follows the backlight) and on the commit that removes it, so a
++	 * removed FOD dim layer can never stay on the mixer.
++	 */
++	if (cstate->fod_dim_layer || (old_cstate && old_cstate->fod_dim_layer))
++		set_bit(SDE_CRTC_DIRTY_DIM_LAYERS, cstate->dirty);
++
++	if (!cstate->fod_dim_layer)
++		return;
++
++	for (plane_idx = 0; plane_idx < cnt; plane_idx++)
++		if (pstates[plane_idx].stage >= dim_layer_stage)
++			pstates[plane_idx].stage++;
++}
++#endif
++
+ static int _sde_crtc_atomic_check_pstates(struct drm_crtc *crtc,
+ 		struct drm_crtc_state *state,
+ 		struct plane_state *pstates,
+@@ -6229,6 +6366,10 @@ static int _sde_crtc_atomic_check_pstates(struct drm_crtc *crtc,
+ 	if (rc)
+ 		return rc;
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	sde_crtc_fod_atomic_check(crtc, cstate, pstates, cnt);
++#endif
++
+ 	/* assign mixer stages based on sorted zpos property */
+ 	rc = _sde_crtc_check_zpos(state, sde_crtc, pstates, cstate, mode, cnt);
+ 	if (rc)
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.h b/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.h
+index a31f836..278e0cd 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.h
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_crtc.h
+@@ -565,6 +565,10 @@ struct sde_line_insertion_param {
+  * @cont_splash_populated: State was populated as part of cont. splash
+  * @param: sde line insertion parameters
+  * @hwfence_in_fences_set: input hw fences are configured for the commit
++ * @fod_dim_layer: a52sxq/LineageOS 5.4 FOD: NULL, or &fod_dim_layer_cfg while
++ *	a plane of this state carries the FOD (UDFPS) layer; set in atomic_check,
++ *	reset on duplicate (never points into another state)
++ * @fod_dim_layer_cfg: storage for the FOD dim layer (not counted in num_dim_layers)
+  */
+ struct sde_crtc_state {
+ 	struct drm_crtc_state base;
+@@ -590,6 +594,10 @@ struct sde_crtc_state {
+ 	uint32_t cwb_enc_mask;
+ 	uint32_t cached_cwb_enc_mask;
+ 	struct sde_hw_dim_layer dim_layer[SDE_MAX_DIM_LAYERS];
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	struct sde_hw_dim_layer *fod_dim_layer;
++	struct sde_hw_dim_layer fod_dim_layer_cfg;
++#endif
+ 	uint32_t num_ds;
+ 	uint32_t num_ds_enabled;
+ 	struct sde_hw_ds_cfg ds_cfg[SDE_MAX_DS_COUNT];
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.c
+index d2562b1..9f984a0 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.c
+@@ -3052,6 +3052,7 @@ static void _sde_plane_map_prop_to_dirty_bits(void)
+ 	plane_prop_array[PLANE_PROP_V_DECIMATE] =
+ 	plane_prop_array[PLANE_PROP_SRC_CONFIG] =
+ 	plane_prop_array[PLANE_PROP_ZPOS] =
++	plane_prop_array[PLANE_PROP_FOD] =
+ 	plane_prop_array[PLANE_PROP_EXCL_RECT_V1] =
+ 	plane_prop_array[PLANE_PROP_UBWC_STATS_ROI] =
+ 		SDE_PLANE_DIRTY_RECTS;
+@@ -3644,6 +3645,21 @@ static void _sde_plane_atomic_disable(struct drm_plane *plane,
+ 				multirect_index, SDE_SSPP_MULTIRECT_TIME_MX);
+ }
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++/* a52sxq: LineageOS 5.4 FOD (5.4 sde_plane.c:3596) */
++int sde_plane_is_fod_layer(const struct drm_plane_state *drm_state)
++{
++	struct sde_plane_state *pstate;
++
++	if (!drm_state)
++		return 0;
++
++	pstate = to_sde_plane_state(drm_state);
++
++	return sde_plane_get_property(pstate, PLANE_PROP_FOD);
++}
++#endif
++
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0))
+ static void _sde_plane_atomic_update(struct drm_plane *plane,
+ 				struct drm_plane_state *old_state)
+@@ -4154,9 +4170,23 @@ static void _sde_plane_install_properties(struct drm_plane *plane,
+ 		zpos_def = drm_plane_index(plane) + 1;
+ 	}
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	/*
++	 * a52sxq: LineageOS 5.4 FOD. The composer passes the UDFPS layer's
++	 * z-order with FOD_PRESSED_LAYER_ZORDER (bit 29) set; the DRM core
++	 * range-checks "zpos", so the range must cover that bit (5.4: INT_MAX).
++	 * The real stage limit is still enforced by _sde_crtc_check_zpos().
++	 */
++	zpos_max = INT_MAX;
++#endif
+ 	msm_property_install_range(&psde->property_info, "zpos",
+ 		0x0, 0, zpos_max, zpos_def, PLANE_PROP_ZPOS);
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++	msm_property_install_range(&psde->property_info, "fod",
++		0x0, 0, INT_MAX, 0, PLANE_PROP_FOD);
++#endif
++
+ 	msm_property_install_range(&psde->property_info, "alpha",
+ 		0x0, 0, 255, 255, PLANE_PROP_ALPHA);
+ 
+@@ -4477,6 +4507,24 @@ static int sde_plane_atomic_set_property(struct drm_plane *plane,
+ 		SDE_ERROR_PLANE(psde, "invalid state\n");
+ 	} else {
+ 		pstate = to_sde_plane_state(state);
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++		/*
++		 * a52sxq: LineageOS 5.4 FOD (sde_plane.c:4280 of the 5.4 tree).
++		 * The FOD bit of zpos becomes the "fod" property, zpos keeps the
++		 * real z-order.
++		 */
++		if (msm_property_index(&psde->property_info, property) ==
++				PLANE_PROP_ZPOS) {
++			ret = msm_property_atomic_set(&psde->property_info,
++					&pstate->property_state,
++					psde->property_info.property_array[PLANE_PROP_FOD],
++					!!(val & FOD_PRESSED_LAYER_ZORDER));
++			if (ret)
++				SDE_ERROR("failed to set fod prop");
++
++			val &= ~FOD_PRESSED_LAYER_ZORDER;
++		}
++#endif
+ 		ret = msm_property_atomic_set(&psde->property_info,
+ 				&pstate->property_state, property, val);
+ 		if (!ret) {
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.h b/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.h
+index 43f0da9..62175b1 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.h
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_plane.h
+@@ -375,6 +375,16 @@ int sde_plane_helper_reset_custom_properties(struct drm_plane *plane,
+  */
+ bool sde_plane_is_sec_ui_allowed(struct drm_plane *plane);
+ 
++#if IS_ENABLED(CONFIG_DISPLAY_SAMSUNG)
++/**
++ * sde_plane_is_fod_layer - a52sxq/LineageOS: the plane carries the UDFPS
++ *	(fingerprint-on-display) layer, i.e. its zpos had FOD_PRESSED_LAYER_ZORDER
++ * @drm_state: Pointer to drm plane state
++ * Returns: non-zero for the FOD layer
++ */
++int sde_plane_is_fod_layer(const struct drm_plane_state *drm_state);
++#endif
++
+ /* sde_plane_secure_ctrl_xin_client - controls the VBIF programming of
+  *	the xin-client before the secure-ui session. Programs the QOS
+  *	and OT limits in VBIF for the sec-ui allowed xins

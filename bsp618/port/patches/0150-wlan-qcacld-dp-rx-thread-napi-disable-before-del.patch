@@ -1,0 +1,43 @@
+wlan (qcacld-3.0): disable the rx-thread GRO napi before deleting it
+
+What: dp_rx_tm_thread_napi_deinit() calls napi_disable() before netif_napi_del().
+
+Why: dp_rx_tm_thread_napi_init() netif_napi_add()s a GRO-only napi per DP rx
+thread on a dummy netdev and napi_enable()s it unconditionally; deinit deleted
+it while still enabled. 6.12's __netif_napi_del() did not care
+(bsp612/kernel/net/core/dev.c:6868). 6.18's __netif_napi_del_locked() has
+  WARN_ON(!test_bit(NAPI_STATE_SCHED, &napi->state));
+("Make sure NAPI is disabled (or was never enabled)", ack/net/core/dev.c:7603-7604),
+so every DP teardown (driver stop / idle shutdown after Wi-Fi off, SSR,
+unload) would print one WARN splat per rx thread. Not an oops: panic_on_warn
+is not set (gki_defconfig, android-cmdline-618.txt), but the WARN taints the
+kernel and buries real problems in the log.
+
+Safety: the napi is never scheduled (its poll is a QDF_DEBUG_PANIC stub,
+dp_rx_thread.c:767) and deinit runs after dp_rx_tm_shutdown() has waited for
+every rx thread's shutdown_event (dp_rx_thread.c:1377), so nothing uses it
+for GRO any more; napi_disable() on an enabled, unscheduled napi returns
+immediately. init and deinit are gated by the same cfg_dp_gro_enable check
+(dp_rx_thread.c:881-883 / 917-919), so napi_disable() never runs on a napi that was
+not enabled (which would spin forever). Nothing else disables this napi.
+Correct on every kernel version, so no LINUX_VERSION_CODE guard.
+
+Applies with -p1 at the bsp618/src root (6.12 source; patch 0022 does not
+touch this file).
+
+--- a/drivers612/conn/wlan/work/qcacld-3.0/core/dp/txrx3.0/dp_rx_thread.c	2026-11-14 15:39:30.538834189 +0200
++++ b/drivers612/conn/wlan/work/qcacld-3.0/core/dp/txrx3.0/dp_rx_thread.c	2026-11-14 15:44:50.589734768 +0200
+@@ -840,6 +840,13 @@
+ 	struct net_device *dummy_nd;
+ 
+ 	dummy_nd = dp_rx_thread_get_dummy_netdev_ptr(rx_thread);
++	/*
++	 * bsp618/port: dp_rx_tm_thread_napi_init() always napi_enable()s this
++	 * GRO-only napi; 6.18 __netif_napi_del_locked() WARNs when a still
++	 * enabled napi is deleted. It is never scheduled and the rx threads are
++	 * stopped by now, so napi_disable() returns at once.
++	 */
++	napi_disable(&rx_thread->napi);
+ 	netif_napi_del(&rx_thread->napi);
+ 	qdf_net_if_destroy_dummy_if((struct qdf_net_if *)dummy_nd);
+ 	dp_rx_thread_set_dummy_netdev_ptr(rx_thread, NULL);

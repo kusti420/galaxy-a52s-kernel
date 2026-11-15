@@ -1,0 +1,2 @@
+#include "yupik.dts"
+#include "./drivers612/conn/wlan/icnss2-node.dtsi"

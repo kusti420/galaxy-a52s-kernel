@@ -1,0 +1,12 @@
+#!/bin/busybox sh
+# Way out of the Android test boot: plain restart. Under kexec the bootloader then starts the
+# 6.18 harness (which reads this kernel's console from ramoops and leaves by itself); with
+# sec_core loaded the bootloader starts Android directly. Storage is safe to cut: every real
+# partition is read-only or held, /data and /metadata are RAM disks.
+echo "a52sxq-init: leave: $*" > /dev/kmsg
+echo "a52sxq-init: clean exit" > /dev/kmsg
+/bin/busybox sleep 1
+( /bin/busybox sleep 20; echo b > /proc/sysrq-trigger ) &  # device_shutdown() can block on a wedged device lock
+/bin/busybox reboot -f
+/bin/busybox sleep 5
+exec /rb reboot

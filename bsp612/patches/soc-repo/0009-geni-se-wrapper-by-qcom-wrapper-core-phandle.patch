@@ -1,0 +1,202 @@
+a52sxq: QUP serial engines may name their wrapper with "qcom,wrapper-core" (5.4 DT layout)
+
+Qualcomm's 6.12 drivers find the QUP wrapper of a serial engine as dev->parent only, so the SE
+nodes must be children of the wrapper node and their devices live under
+/sys/devices/platform/soc/9c0000.qcom,qupv3_0_geni_se/98c000.i2c/... On 5.4 the SE nodes are
+direct /soc children with a qcom,wrapper-core phandle: /sys/devices/platform/soc/98c000.i2c/...
+The Galaxy A52s ROM's SELinux genfscon labels (sysfs_battery for the SM5714 fuel gauge,
+sysfs_power_writable for the touch "enabled" node, ...) are keyed to the 5.4 paths
+(research/sepolicy/PATHS.md). geni_se_common_wrapper_dev() takes the phandle when present and
+falls back to dev->parent, so both layouts work with these modules; the board tree is moved to
+the 5.4 layout by drivers612/boarddt/tools/sysfscompat.py.
+
+--- a/drivers/i2c/busses/i2c-msm-geni.c
++++ b/drivers/i2c/busses/i2c-msm-geni.c
+--- a/drivers/i2c/busses/i2c-msm-geni.c
++++ b/drivers/i2c/busses/i2c-msm-geni.c
+@@ -3182,14 +3182,14 @@
+ 		return ret;
+ 	}
+ 
+-	gi2c->m_ahb_clk = devm_clk_get(gi2c->dev->parent, "m-ahb");
++	gi2c->m_ahb_clk = devm_clk_get(gi2c->wrapper_dev, "m-ahb");
+ 	if (IS_ERR(gi2c->m_ahb_clk)) {
+ 		ret = PTR_ERR(gi2c->m_ahb_clk);
+ 		dev_err(&pdev->dev, "Err getting M AHB clk %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	gi2c->s_ahb_clk = devm_clk_get(gi2c->dev->parent, "s-ahb");
++	gi2c->s_ahb_clk = devm_clk_get(gi2c->wrapper_dev, "s-ahb");
+ 	if (IS_ERR(gi2c->s_ahb_clk)) {
+ 		ret = PTR_ERR(gi2c->s_ahb_clk);
+ 		dev_err(&pdev->dev, "Err getting S AHB clk %d\n", ret);
+@@ -3317,9 +3317,9 @@
+ 	}
+ 
+ 	gi2c->i2c_rsc.dev = dev;
+-	gi2c->i2c_rsc.wrapper = dev_get_drvdata(dev->parent);
++	gi2c->wrapper_dev = geni_se_common_wrapper_dev(dev);	/* a52sxq: phandle or parent */
++	gi2c->i2c_rsc.wrapper = gi2c->wrapper_dev ? dev_get_drvdata(gi2c->wrapper_dev) : NULL;
+ 	gi2c->i2c_rsc.base = gi2c->base;
+-	gi2c->wrapper_dev = dev->parent;
+ 
+ 	if (!gi2c->i2c_rsc.wrapper) {
+ 		dev_err(&pdev->dev, "SE Wrapper is NULL, deferring probe\n");
+--- a/drivers/spi/spi-msm-geni.c
++++ b/drivers/spi/spi-msm-geni.c
+@@ -3281,7 +3281,6 @@
+ 				   struct spi_controller *spi, struct geni_se *spi_rsc)
+ {
+ 	int ret;
+-	struct device *dev = &pdev->dev;
+ 
+ 	ret = geni_se_get_common_resources(pdev, spi_rsc);
+ 	if (ret) {
+@@ -3351,14 +3350,14 @@
+ 		return ret;
+ 	}
+ 
+-	geni_mas->m_ahb_clk = devm_clk_get(dev->parent, "m-ahb");
++	geni_mas->m_ahb_clk = devm_clk_get(geni_mas->wrapper_dev, "m-ahb");
+ 	if (IS_ERR(geni_mas->m_ahb_clk)) {
+ 		ret = PTR_ERR(geni_mas->m_ahb_clk);
+ 		dev_err(&pdev->dev, "Err getting M AHB clk %d\n", ret);
+ 		return ret;
+ 	}
+ 
+-	geni_mas->s_ahb_clk = devm_clk_get(dev->parent, "s-ahb");
++	geni_mas->s_ahb_clk = devm_clk_get(geni_mas->wrapper_dev, "s-ahb");
+ 	if (IS_ERR(geni_mas->s_ahb_clk)) {
+ 		ret = PTR_ERR(geni_mas->s_ahb_clk);
+ 		dev_err(&pdev->dev, "Err getting S AHB clk %d\n", ret);
+@@ -3413,7 +3412,8 @@
+ 	geni_mas = spi_controller_get_devdata(spi);
+ 	geni_mas->dev = dev;
+ 	geni_mas->spi_rsc.dev = dev;
+-	geni_mas->spi_rsc.wrapper = dev_get_drvdata(dev->parent);
++	geni_mas->wrapper_dev = geni_se_common_wrapper_dev(dev);	/* a52sxq: phandle or parent */
++	geni_mas->spi_rsc.wrapper = geni_mas->wrapper_dev ? dev_get_drvdata(geni_mas->wrapper_dev) : NULL;
+ 	spi->dev.of_node = pdev->dev.of_node;
+ 
+ 	if (!geni_mas->spi_rsc.wrapper) {
+@@ -3425,8 +3425,6 @@
+ 	if (ret)
+ 		goto spi_geni_probe_err;
+ 
+-	geni_mas->wrapper_dev = dev->parent;
+-
+ 	/*
+ 	 * For LE, clocks, gpio and icb voting will be provided by
+ 	 * LA. The SPI operates in GSI mode only for LE usecase,
+--- a/drivers/tty/serial/msm_geni_serial.c
++++ b/drivers/tty/serial/msm_geni_serial.c
+@@ -6103,7 +6103,6 @@
+ 					struct msm_geni_serial_port *dev_port)
+ {
+ 	int ret = 0;
+-	struct device *dev = &pdev->dev;
+ 
+ 	dev_port->serial_rsc.se_clk = devm_clk_get(&pdev->dev, "se-clk");
+ 	if (IS_ERR(dev_port->serial_rsc.se_clk)) {
+@@ -6113,7 +6112,7 @@
+ 		return ret;
+ 	}
+ 
+-	dev_port->serial_rsc.m_ahb_clk = devm_clk_get(dev->parent, "m-ahb");
++	dev_port->serial_rsc.m_ahb_clk = devm_clk_get(dev_port->wrapper_dev, "m-ahb");
+ 	if (IS_ERR(dev_port->serial_rsc.m_ahb_clk)) {
+ 		ret = PTR_ERR(dev_port->serial_rsc.m_ahb_clk);
+ 		dev_err(&pdev->dev, "Err getting M AHB clk %d\n", ret);
+@@ -6121,7 +6120,7 @@
+ 		return ret;
+ 	}
+ 
+-	dev_port->serial_rsc.s_ahb_clk = devm_clk_get(dev->parent, "s-ahb");
++	dev_port->serial_rsc.s_ahb_clk = devm_clk_get(dev_port->wrapper_dev, "s-ahb");
+ 	if (IS_ERR(dev_port->serial_rsc.s_ahb_clk)) {
+ 		ret = PTR_ERR(dev_port->serial_rsc.s_ahb_clk);
+ 		dev_err(&pdev->dev, "Err getting S AHB clk %d\n", ret);
+@@ -6195,12 +6194,13 @@
+ 	bool is_console = dev_port->is_console;
+ 	u32 wake_char = 0;
+ 
+-	dev_port->wrapper_dev = pdev->dev.parent;
+-	dev_port->serial_rsc.wrapper_dev = pdev->dev.parent;
++	/* a52sxq: wrapper by qcom,wrapper-core phandle (5.4 layout) or the parent */
++	dev_port->wrapper_dev = geni_se_common_wrapper_dev(&pdev->dev);
++	dev_port->serial_rsc.wrapper_dev = dev_port->wrapper_dev;
+ 	dev_port->serial_rsc.ctrl_dev = &pdev->dev;
+ 
+ 	dev_port->se.dev = &pdev->dev;
+-	dev_port->se.wrapper = dev_get_drvdata(pdev->dev.parent);
++	dev_port->se.wrapper = dev_port->wrapper_dev ? dev_get_drvdata(dev_port->wrapper_dev) : NULL;
+ 	if (!dev_port->se.wrapper) {
+ 		dev_err(&pdev->dev, "SE Wrapper is NULL, deferring probe\n");
+ 		return -EPROBE_DEFER;
+--- a/include/linux/qcom-geni-se-common.h
++++ b/include/linux/qcom-geni-se-common.h
+@@ -14,6 +14,7 @@
+ #include <linux/ipc_logging.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/of_platform.h>
+ 
+ #ifdef CONFIG_ARM64
+ #define GENI_SE_DMA_PTR_L(ptr) ((u32)ptr)
+@@ -237,6 +238,36 @@
+ }
+ 
+ /**
++ * geni_se_common_wrapper_dev() - the QUP wrapper device of a serial engine
++ * @dev: the serial engine's device
++ *
++ * a52sxq-wrapper-core: Qualcomm's 6.12 device trees put the SE nodes under their wrapper node,
++ * so the wrapper is dev->parent. The 5.4 layout (the Galaxy A52s' sysfs paths, which its ROM's
++ * SELinux genfscon labels are keyed to: /sys/devices/platform/soc/98c000.i2c/...) has the SE
++ * nodes directly under /soc and names the wrapper with a "qcom,wrapper-core" phandle, as the 5.4
++ * drivers did. That phandle wins when present.
++ *
++ * The returned pointer is borrowed: wrapper devices are populated from /soc at boot and never
++ * unregistered. NULL while the wrapper node has no device yet (callers defer).
++ */
++static inline struct device *geni_se_common_wrapper_dev(struct device *dev)
++{
++	struct device_node *np;
++	struct platform_device *wpdev;
++
++	np = of_parse_phandle(dev->of_node, "qcom,wrapper-core", 0);
++	if (!np)
++		return dev->parent;
++	wpdev = of_find_device_by_node(np);
++	of_node_put(np);
++	if (!wpdev)
++		return NULL;
++	put_device(&wpdev->dev);
++	dev_info_once(dev, "a52sxq-wrapper-core: SE wrapper %s\n", dev_name(&wpdev->dev));
++	return &wpdev->dev;
++}
++
++/**
+  * geni_common_reg_dma_addr() - Maps a hardware register for DMA access
+  * @dev: Pointer to the device
+  * @iova: Pointer to store the mapped DMA address
+@@ -255,7 +286,7 @@
+ 	phys_addr_t reg_phys_addr;
+ 	struct platform_device *wrapper_pdev = NULL;
+ 	struct platform_device *pdev = to_platform_device(dev);
+-	struct device *wrapper_dev = pdev->dev.parent;
++	struct device *wrapper_dev = geni_se_common_wrapper_dev(&pdev->dev);
+ 
+ 	if (!wrapper_dev || !dev_is_platform(wrapper_dev)) {
+ 		dev_err(&pdev->dev,
+@@ -356,7 +387,8 @@
+ 	const __be32 *vote_index_list;
+ 	int len, i, no_of_entries;
+ 	u32 geni_to_core, cpu_to_geni, geni_to_ddr;
+-	struct device_node *wrapper_node = pdev->dev.parent->of_node;
++	struct device *wrapper_dev = geni_se_common_wrapper_dev(&pdev->dev);
++	struct device_node *wrapper_node = wrapper_dev ? wrapper_dev->of_node : NULL;
+ 
+ 	vote_index_list = of_get_property(pdev->dev.of_node, VOTE_INDEX_PROP_NAME, &len);
+ 	if (!vote_index_list || len % sizeof(u32)) {

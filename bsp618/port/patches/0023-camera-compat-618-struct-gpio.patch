@@ -1,0 +1,30 @@
+camera: compat header for 6.18 (legacy struct gpio removed from <linux/gpio.h>)
+
+The camera techpack keeps its 5.4 GPIO tables (struct gpio arrays, freed through
+compat's cam_gpio_free_array()). 6.18 dropped the struct together with
+gpio_request_array()/gpio_free_array(); compat/cam_compat_612.h (force-included into every
+camera object) defines it again with the 6.12 layout, version-guarded so the same header
+still builds the 6.12 module. This one header blocked all 138 objects.
+
+--- a/drivers612/camera/work/compat/cam_compat_612.h
++++ b/drivers612/camera/work/compat/cam_compat_612.h
+@@ -50,6 +50,19 @@
+ #define __raw_writel_no_log(v, a) __raw_writel(v, a)
+ #define __raw_readl_no_log(a) __raw_readl(a)
+ 
++/*
++ * bsp618/port: 6.18 removed the legacy struct gpio array API from <linux/gpio.h>
++ * (gpio_request_array()/gpio_free_array() and the struct itself, v6.17). The camera keeps
++ * its 5.4 GPIO tables: the struct comes back here, same layout as 6.12.
++ */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 17, 0)
++struct gpio {
++	unsigned	gpio;
++	unsigned long	flags;
++	const char	*label;
++};
++#endif
++
+ /* of_gpio: of_get_gpio()/of_gpio_count()/gpio_free_array() were removed */
+ #define of_get_gpio(np, index) of_get_named_gpio(np, "gpios", index)
+ #define of_gpio_count(np) of_count_phandle_with_args(np, "gpios", "#gpio-cells")

@@ -1,0 +1,119 @@
+AANC Noise Level	OK	audio.primary.lahaina.so
+App Type Config	OK	audio.primary.lahaina.so
+App Type Gain	OK	audio.primary.lahaina.so
+Audio Effect	OK	audio.primary.lahaina.so
+BT SampleRate	OK	audio.primary.lahaina.so
+BT SampleRate RX	OK	audio.primary.lahaina.so
+BT SampleRate TX	OK	audio.primary.lahaina.so
+Backend DAI Name Table	OK	audio.primary.lahaina.so,sound_trigger.primary.lahaina.so
+Backend Device Channel Map	OK	audio.primary.lahaina.so
+CVD Version	OK	audio.primary.lahaina.so
+Compress Gapless Playback	OK	audio.primary.lahaina.so
+DSD Volume	OK	audio.primary.lahaina.so
+DSP AEC Effect	MISSING-6.12	audio.primary.lahaina.so
+Device PP Params	OK	audio.primary.lahaina.so
+Display Port RX Bit Format	OK	audio.primary.lahaina.so
+Display Port RX Channels	OK	audio.primary.lahaina.so
+Display Port RX Format	OK	audio.primary.lahaina.so
+Display Port RX SampleRate	OK	audio.primary.lahaina.so
+Display Port1 RX Bit Format	OK	audio.primary.lahaina.so
+Display Port1 RX Channels	OK	audio.primary.lahaina.so
+Display Port1 RX Format	OK	audio.primary.lahaina.so
+Display Port1 RX SampleRate	OK	audio.primary.lahaina.so
+Echo Ref Mute	MISSING-6.12	audio.primary.lahaina.so
+FFECNS Effect	OK	sound_trigger.primary.lahaina.so
+HD Voice Enable	OK	audio.primary.lahaina.so
+HDMI EDID	OK	audio.primary.lahaina.so
+HDMI RX CA	OK	audio.primary.lahaina.so
+HDMI RX Format	OK	audio.primary.lahaina.so
+HDMI_RX Bit Format	OK	audio.primary.lahaina.so
+HDMI_RX Channels	OK	audio.primary.lahaina.so
+HDMI_RX SampleRate	OK	audio.primary.lahaina.so
+HiFi Filter	OK	audio.primary.lahaina.so
+Incall_Music Audio Mixer MultiMedia1	OK	audio.primary.lahaina.so
+Incall_Music_2 Audio Mixer MultiMedia1	OK	audio.primary.lahaina.so
+Instance ID Support	OK	audio.primary.lahaina.so
+LRSM data	MISSING-6.12	audio.primary.lahaina.so
+Listen App Type Config V2	OK	sound_trigger.primary.lahaina.so
+Listenback Enable	MISSING-6.12	audio.primary.lahaina.so
+Loopback Enable	MISSING-6.12	audio.primary.lahaina.so
+MAD_SEL MUX	OK	sound_trigger.primary.lahaina.so
+MI2S_RX Channels	OK	audio.primary.lahaina.so
+MultiMedia1 Mixer VOC_REC_DL	OK	audio.primary.lahaina.so
+NB Mode	MISSING-6.12	audio.primary.lahaina.so
+PRI SPDIF TX Format	OK	audio.primary.lahaina.so
+PRIM_MI2S_RX Format	OK	audio.primary.lahaina.so
+PRIM_MI2S_RX SampleRate	OK	audio.primary.lahaina.so
+PRIM_SPDIF_TX Channels	OK	audio.primary.lahaina.so
+PRIM_SPDIF_TX Format	OK	audio.primary.lahaina.so
+PRIM_SPDIF_TX SampleRate	OK	audio.primary.lahaina.so
+PROXY_RX Channels	OK	audio.primary.lahaina.so
+Playback Device Channel Map	OK	audio.primary.lahaina.so
+QUAT MI2S TX Format	OK	audio.primary.lahaina.so
+RX_CDC_DMA_RX_0 Format	OK	audio.primary.lahaina.so
+RX_CDC_DMA_RX_0 SampleRate	OK	audio.primary.lahaina.so
+RX_CDC_DMA_RX_1 Format	OK	audio.primary.lahaina.so
+RX_CDC_DMA_RX_1 SampleRate	OK	audio.primary.lahaina.so
+Remote Mic Vol Index	MISSING-6.12	audio.primary.lahaina.so
+SA LISTENBACK RX volume	MISSING-6.12	audio.primary.lahaina.so
+SB FM RX Volume	MISSING-6.12	audio.primary.lahaina.so
+SB RX Volume	MISSING-6.12	audio.primary.lahaina.so
+SB enable	MISSING-6.12	audio.primary.lahaina.so
+SB flatmotion	MISSING-6.12	audio.primary.lahaina.so
+SB rotation	MISSING-6.12	audio.primary.lahaina.so
+SEC MI2S LOOPBACK Volume	OK	audio.primary.lahaina.so
+SEC MI2S TX Format	OK	audio.primary.lahaina.so
+SEC SPDIF TX Format	OK	audio.primary.lahaina.so
+SEC_SPDIF_TX Channels	OK	audio.primary.lahaina.so
+SEC_SPDIF_TX Format	OK	audio.primary.lahaina.so
+SEC_SPDIF_TX SampleRate	OK	audio.primary.lahaina.so
+SLIM_0_RX Format	OK	audio.primary.lahaina.so
+SLIM_0_RX SampleRate	OK	audio.primary.lahaina.so
+SLIM_0_TX Format	OK	audio.primary.lahaina.so
+SLIM_0_TX SampleRate	OK	audio.primary.lahaina.so
+SLIM_2_RX Format	OK	audio.primary.lahaina.so
+SLIM_2_RX SampleRate	OK	audio.primary.lahaina.so
+SLIM_5_RX Format	OK	audio.primary.lahaina.so
+SLIM_5_RX SampleRate	OK	audio.primary.lahaina.so
+Sec Set DHA data	MISSING-6.12	audio.primary.lahaina.so
+Set Custom Stereo OnOff	OK	audio.primary.lahaina.so
+Slowtalk Enable	OK	audio.primary.lahaina.so
+Speaker Sensor Mode	MISSING-6.12	audio.primary.lahaina.so
+Swap channel	OK	audio.primary.lahaina.so
+TX_CDC_DMA_TX_3 Format	OK	audio.primary.lahaina.so
+TX_CDC_DMA_TX_3 SampleRate	OK	audio.primary.lahaina.so
+TX_CDC_DMA_TX_4 Format	OK	audio.primary.lahaina.so
+TX_CDC_DMA_TX_4 SampleRate	OK	audio.primary.lahaina.so
+Tert MI2S LOOPBACK Volume	OK	audio.primary.lahaina.so
+USB_AUDIO_RX Channels	OK	audio.primary.lahaina.so
+USB_AUDIO_RX Format	OK	audio.primary.lahaina.so
+USB_AUDIO_RX SampleRate	OK	audio.primary.lahaina.so
+USB_AUDIO_RX dev_token	OK	audio.primary.lahaina.so
+USB_AUDIO_RX endian	OK	audio.primary.lahaina.so
+USB_AUDIO_RX service_interval	OK	audio.primary.lahaina.so
+USB_AUDIO_TX Channels	OK	audio.primary.lahaina.so
+USB_AUDIO_TX Format	OK	audio.primary.lahaina.so
+USB_AUDIO_TX SampleRate	OK	audio.primary.lahaina.so
+USB_AUDIO_TX dev_token	OK	audio.primary.lahaina.so
+USB_AUDIO_TX endian	OK	audio.primary.lahaina.so
+VAD CFG	OK	sound_trigger.primary.lahaina.so
+VA_CDC_DMA_TX_0 Format	OK	audio.primary.lahaina.so
+VA_CDC_DMA_TX_0 SampleRate	OK	audio.primary.lahaina.so
+VSP data	MISSING-6.12	audio.primary.lahaina.so
+Vbat ADC data	OK	audio.primary.lahaina.so
+Voc Rec Config	OK	audio.primary.lahaina.so
+Voc VSID	OK	audio.primary.lahaina.so
+Voice Device Info	MISSING-6.12	audio.primary.lahaina.so
+Voice Isolation Mode	MISSING-6.12	audio.primary.lahaina.so
+Voice Mic Break Enable	OK	audio.primary.lahaina.so
+Voice Rx Device Mute	OK	audio.primary.lahaina.so
+Voice Rx Gain	OK	audio.primary.lahaina.so
+Voice Tx Device Mute	OK	audio.primary.lahaina.so
+Voice Tx Mute	OK	audio.primary.lahaina.so
+Voip Dtx Mode	OK	audio.primary.lahaina.so
+Voip Mode Config	OK	audio.primary.lahaina.so
+Voip Rate Config	OK	audio.primary.lahaina.so
+Voip Rx Gain	OK	audio.primary.lahaina.so
+Voip Tx Mute	OK	audio.primary.lahaina.so
+WSA_CDC_DMA_RX_0 Format	OK	audio.primary.lahaina.so
+WSA_CDC_DMA_RX_0 SampleRate	OK	audio.primary.lahaina.so

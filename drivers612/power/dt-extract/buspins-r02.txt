@@ -1,0 +1,90 @@
+/* ==== /soc/pinctrl@f000000/qupv3_se3_i2c_pins/qupv3_se3_i2c_active  (r02 lines 13938-13951) ==== */
+				qupv3_se3_i2c_active: qupv3_se3_i2c_active {
+					phandle = <0x1d2>;
+
+					mux {
+						pins = "gpio12", "gpio13";
+						function = "qup03";
+					};
+
+					config {
+						pins = "gpio12", "gpio13";
+						drive-strength = <0x02>;
+						bias-pull-up;
+					};
+				};
+/* ==== /soc/pinctrl@f000000/qupv3_se3_i2c_pins/qupv3_se3_i2c_sleep  (r02 lines 13953-13966) ==== */
+				qupv3_se3_i2c_sleep: qupv3_se3_i2c_sleep {
+					phandle = <0x1d3>;
+
+					mux {
+						pins = "gpio12", "gpio13";
+						function = "gpio";
+					};
+
+					config {
+						pins = "gpio12", "gpio13";
+						drive-strength = <0x02>;
+						bias-disable;
+					};
+				};
+/* ==== /soc/pinctrl@f000000/qupv3_se0_i2c_pins/qupv3_se0_i2c_active  (r02 lines 13624-13637) ==== */
+				qupv3_se0_i2c_active: qupv3_se0_i2c_active {
+					phandle = <0x1c5>;
+
+					mux {
+						pins = "gpio0", "gpio1";
+						function = "qup00";
+					};
+
+					config {
+						pins = "gpio0", "gpio1";
+						drive-strength = <0x02>;
+						bias-pull-up;
+					};
+				};
+/* ==== /soc/pinctrl@f000000/qupv3_se0_i2c_pins/qupv3_se0_i2c_sleep  (r02 lines 13639-13652) ==== */
+				qupv3_se0_i2c_sleep: qupv3_se0_i2c_sleep {
+					phandle = <0x1c6>;
+
+					mux {
+						pins = "gpio0", "gpio1";
+						function = "gpio";
+					};
+
+					config {
+						pins = "gpio0", "gpio1";
+						drive-strength = <0x02>;
+						bias-disable;
+					};
+				};
+/* ==== /soc/pinctrl@f000000/qupv3_se8_i2c_pins/qupv3_se8_i2c_active  (r02 lines 14270-14283) ==== */
+				qupv3_se8_i2c_active: qupv3_se8_i2c_active {
+					phandle = <0x1e4>;
+
+					mux {
+						pins = "gpio32", "gpio33";
+						function = "qup10";
+					};
+
+					config {
+						pins = "gpio32", "gpio33";
+						drive-strength = <0x02>;
+						bias-pull-up;
+					};
+				};
+/* ==== /soc/pinctrl@f000000/qupv3_se8_i2c_pins/qupv3_se8_i2c_sleep  (r02 lines 14285-14298) ==== */
+				qupv3_se8_i2c_sleep: qupv3_se8_i2c_sleep {
+					phandle = <0x1e5>;
+
+					mux {
+						pins = "gpio32", "gpio33";
+						function = "gpio";
+					};
+
+					config {
+						pins = "gpio32", "gpio33";
+						drive-strength = <0x02>;
+						bias-disable;
+					};
+				};

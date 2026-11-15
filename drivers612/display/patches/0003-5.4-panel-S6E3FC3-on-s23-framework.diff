@@ -1,0 +1,603 @@
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/display/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c	2026-11-07 15:57:17.817132417 +0200
++++ techpack/display-drivers/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c	2026-11-11 20:45:17.936035014 +0200
+@@ -506,6 +506,30 @@
+ 	return true;
+ }
+ 
++/*
++ * a52sxq port to the S23 (sm8550) framework: cell_id_dsi, octa_id_dsi and ddi_id_dsi are no
++ * longer fixed arrays of raw bytes inside vdd. They are heap strings holding exactly the text
++ * that /sys/class/lcd/panel/{cell_id,octa_id,SVC_OCTA*} print (the 5.4 sysfs code did this
++ * formatting; in the S23 framework the panel driver does). MAX_* are the 5.4 sizes.
++ */
++#define MAX_CELL_ID 16
++#define MAX_OCTA_ID 20
++static void ss_fc3_set_id_string(struct samsung_display_driver_data *vdd,
++		u8 **dst, int *dst_len, const char *text)
++{
++	int len = strlen(text) + 1;
++
++	kfree(*dst);
++	*dst = kzalloc(len, GFP_KERNEL);
++	if (!*dst) {
++		*dst_len = 0;
++		LCD_ERR(vdd, "fail to kzalloc for id string\n");
++		return;
++	}
++	memcpy(*dst, text, len);
++	*dst_len = len;
++}
++
+ static int ss_module_info_read(struct samsung_display_driver_data *vdd)
+ {
+ 	unsigned char buf[11] = {0,};
+@@ -553,26 +577,17 @@
+ 
+ 		/* CELL ID (manufacture date + white coordinates) */
+ 		/* Manufacture Date */
+-		vdd->cell_id_dsi[0] = buf[4];
+-		vdd->cell_id_dsi[1] = buf[5];
+-		vdd->cell_id_dsi[2] = buf[6];
+-		vdd->cell_id_dsi[3] = buf[7];
+-		vdd->cell_id_dsi[4] = buf[8];
+-		vdd->cell_id_dsi[5] = buf[9];
+-		vdd->cell_id_dsi[6] = buf[10];
+-		/* White Coordinates */
+-		vdd->cell_id_dsi[7] = buf[0];
+-		vdd->cell_id_dsi[8] = buf[1];
+-		vdd->cell_id_dsi[9] = buf[2];
+-		vdd->cell_id_dsi[10] = buf[3];
+-
+-		LCD_INFO(vdd, "DSI%d CELL ID : %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+-			vdd->ndx, vdd->cell_id_dsi[0],
+-			vdd->cell_id_dsi[1],	vdd->cell_id_dsi[2],
+-			vdd->cell_id_dsi[3],	vdd->cell_id_dsi[4],
+-			vdd->cell_id_dsi[5],	vdd->cell_id_dsi[6],
+-			vdd->cell_id_dsi[7],	vdd->cell_id_dsi[8],
+-			vdd->cell_id_dsi[9],	vdd->cell_id_dsi[10]);
++		/* White Coordinates follow (5.4 sysfs format: 11 bytes as hex + newline) */
++		{
++			char temp[40];
++
++			snprintf(temp, sizeof(temp),
++				"%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
++				buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10],
++				buf[0], buf[1], buf[2], buf[3]);
++			ss_fc3_set_id_string(vdd, &vdd->cell_id_dsi, &vdd->cell_id_len, temp);
++			LCD_INFO(vdd, "DSI%d CELL ID : %s", vdd->ndx, temp);
++		}
+ 	} else {
+ 		LCD_ERR(vdd, "DSI%d no module_info_rx_cmds cmds(%d)", vdd->ndx, vdd->panel_revision);
+ 		return false;
+@@ -665,13 +680,16 @@
+ 	if (ss_get_cmds(vdd, RX_DDI_ID)->count) {
+ 		ss_panel_data_read(vdd, RX_DDI_ID, ddi_id, LEVEL1_KEY);
+ 
+-		for (loop = 0; loop < 5; loop++)
+-			vdd->ddi_id_dsi[loop] = ddi_id[loop];
+-
+-		LCD_INFO(vdd, "DSI%d : %02x %02x %02x %02x %02x\n", vdd->ndx,
+-			vdd->ddi_id_dsi[0], vdd->ddi_id_dsi[1],
+-			vdd->ddi_id_dsi[2], vdd->ddi_id_dsi[3],
+-			vdd->ddi_id_dsi[4]);
++		{
++			char temp[20];
++			int len = 0;
++
++			for (loop = 0; loop < 5; loop++)
++				len += scnprintf(temp + len, sizeof(temp) - len, "%02x", ddi_id[loop]);
++			scnprintf(temp + len, sizeof(temp) - len, "\n");
++			ss_fc3_set_id_string(vdd, &vdd->ddi_id_dsi, &vdd->ddi_id_len, temp);
++			LCD_INFO(vdd, "DSI%d : %s", vdd->ndx, temp);
++		}
+ 	} else {
+ 		LCD_ERR(vdd, "DSI%d no ddi_id_rx_cmds cmds", vdd->ndx);
+ 		return false;
+@@ -683,7 +701,9 @@
+ static int ss_octa_id_read(struct samsung_display_driver_data *vdd)
+ {
+ 	char cell_id_buffer[MAX_CELL_ID] = {0,};
+-	int loop;
++	u8 octa_id[MAX_OCTA_ID] = {0,};
++	char temp[64];
++	int loop, len = 0;
+ 
+ 	if (IS_ERR_OR_NULL(vdd)) {
+ 		LCD_ERR(vdd, "Invalid data vdd : 0x%zx", (size_t)vdd);
+@@ -692,11 +712,8 @@
+ 
+ 	/* Read Panel Unique OCTA ID (A1 12th ~ 15th(4bytes) + Cell ID(16bytes)) */
+ 	if (ss_get_cmds(vdd, RX_OCTA_ID)->count) {
+-		memset(vdd->octa_id_dsi, 0x00, MAX_OCTA_ID);
+-
+ 		/* Read A1 12th ~ 15th(4bytes) */
+-		ss_panel_data_read(vdd, RX_OCTA_ID,
+-				vdd->octa_id_dsi, LEVEL1_KEY);
++		ss_panel_data_read(vdd, RX_OCTA_ID, octa_id, LEVEL1_KEY);
+ 
+ 		if (ss_get_cmds(vdd, RX_CELL_ID)->count) {
+ 			memset(cell_id_buffer, 0x00, MAX_CELL_ID);
+@@ -706,18 +723,18 @@
+ 
+ 		/* Copy from cell_id(16bytes) */
+ 		for (loop = 0; loop < MAX_CELL_ID; loop++)
+-			vdd->octa_id_dsi[loop + 4] = cell_id_buffer[loop];
+-		LCD_INFO(vdd, "octa id: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+-			vdd->octa_id_dsi[0], vdd->octa_id_dsi[1],
+-			vdd->octa_id_dsi[2], vdd->octa_id_dsi[3],
+-			vdd->octa_id_dsi[4], vdd->octa_id_dsi[5],
+-			vdd->octa_id_dsi[6], vdd->octa_id_dsi[7],
+-			vdd->octa_id_dsi[8], vdd->octa_id_dsi[9],
+-			vdd->octa_id_dsi[10], vdd->octa_id_dsi[11],
+-			vdd->octa_id_dsi[12], vdd->octa_id_dsi[13],
+-			vdd->octa_id_dsi[14], vdd->octa_id_dsi[15],
+-			vdd->octa_id_dsi[16], vdd->octa_id_dsi[17],
+-			vdd->octa_id_dsi[18], vdd->octa_id_dsi[19]);
++			octa_id[loop + 4] = cell_id_buffer[loop];
++
++		/* same text as the 5.4 octa_id sysfs node: site, rework, poc, 2 bytes hex, 16 chars */
++		len += scnprintf(temp + len, sizeof(temp) - len, "%d%d%d%02x%02x",
++			(octa_id[0] & 0xf0) >> 4, octa_id[0] & 0x0f, octa_id[1] & 0x0f,
++			octa_id[2], octa_id[3]);
++		for (loop = 4; loop < MAX_OCTA_ID; loop++)
++			len += scnprintf(temp + len, sizeof(temp) - len, "%c",
++				octa_id[loop] != 0 ? octa_id[loop] : '0');
++		scnprintf(temp + len, sizeof(temp) - len, "\n");
++		ss_fc3_set_id_string(vdd, &vdd->octa_id_dsi, &vdd->octa_id_len, temp);
++		LCD_INFO(vdd, "octa id: %s", temp);
+ 
+ 	} else {
+ 		LCD_ERR(vdd, "DSI%d no octa_id_rx_cmds cmd\n", vdd->ndx);
+@@ -1226,7 +1243,13 @@
+ 	vdd->panel_hbm_entry_delay = 0;
+ 
+ 	/* te high -> 52us (120fps) -> te low -> tx start */
+-	vdd->panel_hbm_entry_after_te = 60; //52us is TE high time
++	/*
++	 * 5.4: ss_wait_for_te_gpio(vdd, 2, 60us) before the HBM command, waiting on the TE GPIO.
++	 * S23 framework: ss_wait_for_vsync(vdd, 2, panel_hbm_entry_after_vsync_pre) (also us), but it
++	 * waits on the SDE vsync event, not on the TE pin. Same count and delay; the edge it is
++	 * measured from differs. TO VERIFY ON HARDWARE (fingerprint HBM flicker/timing).
++	 */
++	vdd->panel_hbm_entry_after_vsync_pre = 60; //52us is TE high time
+ 	vdd->panel_hbm_exit_delay = 0;
+ 
+ 	/* mdnie */
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/display/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_mdnie_S6E3FC3_AMS646YD01_LO.h	2026-07-17 18:14:47.290457818 +0300
++++ techpack/display-drivers/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_mdnie_S6E3FC3_AMS646YD01_LO.h	2026-11-11 20:43:26.871589027 +0200
+@@ -4628,243 +4628,243 @@
+ };
+ 
+ static struct dsi_cmd_desc DSI0_BYPASS_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_BYPASS_MDNIE_1), DSI0_BYPASS_MDNIE_1, 0, NULL}, false, 0, DSI0_BYPASS_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_BYPASS_MDNIE_2), DSI0_BYPASS_MDNIE_2, 0, NULL}, false, 0, DSI0_BYPASS_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_BYPASS_MDNIE_3), DSI0_BYPASS_MDNIE_3, 0, NULL}, false, 0, DSI0_BYPASS_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_BYPASS_MDNIE_4), DSI0_BYPASS_MDNIE_4, 0, NULL}, false, 0, DSI0_BYPASS_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_BYPASS_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_BYPASS_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_BYPASS_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_BYPASS_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_COLOR_BLIND_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_COLOR_BLIND_MDNIE_1), DSI0_COLOR_BLIND_MDNIE_1, 0, NULL}, false, 0, DSI0_COLOR_BLIND_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_COLOR_BLIND_MDNIE_2), DSI0_COLOR_BLIND_MDNIE_2, 0, NULL}, false, 0, DSI0_COLOR_BLIND_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_COLOR_BLIND_MDNIE_3), DSI0_COLOR_BLIND_MDNIE_3, 0, NULL}, false, 0, DSI0_COLOR_BLIND_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_COLOR_BLIND_MDNIE_4), DSI0_COLOR_BLIND_MDNIE_4, 0, NULL}, false, 0, DSI0_COLOR_BLIND_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_COLOR_BLIND_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_COLOR_BLIND_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_COLOR_BLIND_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_COLOR_BLIND_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_NIGHT_MODE_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_NIGHT_MODE_MDNIE_1), DSI0_NIGHT_MODE_MDNIE_1, 0, NULL}, false, 0, DSI0_NIGHT_MODE_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_NIGHT_MODE_MDNIE_2), DSI0_NIGHT_MODE_MDNIE_2, 0, NULL}, false, 0, DSI0_NIGHT_MODE_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_NIGHT_MODE_MDNIE_3), DSI0_NIGHT_MODE_MDNIE_3, 0, NULL}, false, 0, DSI0_NIGHT_MODE_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_NIGHT_MODE_MDNIE_4), DSI0_NIGHT_MODE_MDNIE_4, 0, NULL}, false, 0, DSI0_NIGHT_MODE_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_NIGHT_MODE_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_NIGHT_MODE_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_NIGHT_MODE_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_NIGHT_MODE_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_HBM_CE_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_MDNIE_1), DSI0_HBM_CE_MDNIE_1, 0, NULL}, false, 0, DSI0_HBM_CE_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_MDNIE_2), DSI0_HBM_CE_MDNIE_2, 0, NULL}, false, 0, DSI0_HBM_CE_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_MDNIE_3), DSI0_HBM_CE_MDNIE_3, 0, NULL}, false, 0, DSI0_HBM_CE_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_MDNIE_4), DSI0_HBM_CE_MDNIE_4, 0, NULL}, false, 0, DSI0_HBM_CE_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_HBM_CE_D65_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_D65_MDNIE_1), DSI0_HBM_CE_D65_MDNIE_1, 0, NULL}, false, 0, DSI0_HBM_CE_D65_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_D65_MDNIE_2), DSI0_HBM_CE_D65_MDNIE_2, 0, NULL}, false, 0, DSI0_HBM_CE_D65_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_D65_MDNIE_3), DSI0_HBM_CE_D65_MDNIE_3, 0, NULL}, false, 0, DSI0_HBM_CE_D65_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HBM_CE_D65_MDNIE_4), DSI0_HBM_CE_D65_MDNIE_4, 0, NULL}, false, 0, DSI0_HBM_CE_D65_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_D65_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_D65_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_D65_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_HBM_CE_D65_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_RGB_SENSOR_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_RGB_SENSOR_MDNIE_1), DSI0_RGB_SENSOR_MDNIE_1, 0, NULL}, false, 0, DSI0_RGB_SENSOR_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_RGB_SENSOR_MDNIE_2), DSI0_RGB_SENSOR_MDNIE_2, 0, NULL}, false, 0, DSI0_RGB_SENSOR_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_RGB_SENSOR_MDNIE_3), DSI0_RGB_SENSOR_MDNIE_3, 0, NULL}, false, 0, DSI0_RGB_SENSOR_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_RGB_SENSOR_MDNIE_4), DSI0_RGB_SENSOR_MDNIE_4, 0, NULL}, false, 0, DSI0_RGB_SENSOR_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_RGB_SENSOR_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_RGB_SENSOR_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_RGB_SENSOR_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_RGB_SENSOR_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_SCREEN_CURTAIN_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_SCREEN_CURTAIN_MDNIE_1), DSI0_SCREEN_CURTAIN_MDNIE_1, 0, NULL}, false, 0, DSI0_SCREEN_CURTAIN_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_SCREEN_CURTAIN_MDNIE_2), DSI0_SCREEN_CURTAIN_MDNIE_2, 0, NULL}, false, 0, DSI0_SCREEN_CURTAIN_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_SCREEN_CURTAIN_MDNIE_3), DSI0_SCREEN_CURTAIN_MDNIE_3, 0, NULL}, false, 0, DSI0_SCREEN_CURTAIN_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_SCREEN_CURTAIN_MDNIE_4), DSI0_SCREEN_CURTAIN_MDNIE_4, 0, NULL}, false, 0, DSI0_SCREEN_CURTAIN_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_SCREEN_CURTAIN_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_SCREEN_CURTAIN_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_SCREEN_CURTAIN_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_SCREEN_CURTAIN_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_LIGHT_NOTIFICATION_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_LIGHT_NOTIFICATION_MDNIE_1), DSI0_LIGHT_NOTIFICATION_MDNIE_1, 0, NULL}, false, 0, DSI0_LIGHT_NOTIFICATION_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_LIGHT_NOTIFICATION_MDNIE_2), DSI0_LIGHT_NOTIFICATION_MDNIE_2, 0, NULL}, false, 0, DSI0_LIGHT_NOTIFICATION_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_LIGHT_NOTIFICATION_MDNIE_3), DSI0_LIGHT_NOTIFICATION_MDNIE_3, 0, NULL}, false, 0, DSI0_LIGHT_NOTIFICATION_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_LIGHT_NOTIFICATION_MDNIE_4), DSI0_LIGHT_NOTIFICATION_MDNIE_4, 0, NULL}, false, 0, DSI0_LIGHT_NOTIFICATION_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_LIGHT_NOTIFICATION_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_LIGHT_NOTIFICATION_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_LIGHT_NOTIFICATION_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_LIGHT_NOTIFICATION_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_HDR_VIDEO_1_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_1_MDNIE_1), DSI0_HDR_VIDEO_1_MDNIE_1, 0, NULL}, false, 0, DSI0_HDR_VIDEO_1_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_1_MDNIE_2), DSI0_HDR_VIDEO_1_MDNIE_2, 0, NULL}, false, 0, DSI0_HDR_VIDEO_1_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_1_MDNIE_3), DSI0_HDR_VIDEO_1_MDNIE_3, 0, NULL}, false, 0, DSI0_HDR_VIDEO_1_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_1_MDNIE_4), DSI0_HDR_VIDEO_1_MDNIE_4, 0, NULL}, false, 0, DSI0_HDR_VIDEO_1_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_1_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_1_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_1_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_1_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_HDR_VIDEO_2_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_2_MDNIE_1), DSI0_HDR_VIDEO_2_MDNIE_1, 0, NULL}, false, 0, DSI0_HDR_VIDEO_2_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_2_MDNIE_2), DSI0_HDR_VIDEO_2_MDNIE_2, 0, NULL}, false, 0, DSI0_HDR_VIDEO_2_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_2_MDNIE_3), DSI0_HDR_VIDEO_2_MDNIE_3, 0, NULL}, false, 0, DSI0_HDR_VIDEO_2_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_2_MDNIE_4), DSI0_HDR_VIDEO_2_MDNIE_4, 0, NULL}, false, 0, DSI0_HDR_VIDEO_2_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_2_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_2_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_2_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_2_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_HDR_VIDEO_3_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_3_MDNIE_1), DSI0_HDR_VIDEO_3_MDNIE_1, 0, NULL}, false, 0, DSI0_HDR_VIDEO_3_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_3_MDNIE_2), DSI0_HDR_VIDEO_3_MDNIE_2, 0, NULL}, false, 0, DSI0_HDR_VIDEO_3_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_3_MDNIE_3), DSI0_HDR_VIDEO_3_MDNIE_3, 0, NULL}, false, 0, DSI0_HDR_VIDEO_3_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HDR_VIDEO_3_MDNIE_4), DSI0_HDR_VIDEO_3_MDNIE_4, 0, NULL}, false, 0, DSI0_HDR_VIDEO_3_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_3_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_3_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_3_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_HDR_VIDEO_3_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_UI_DYNAMIC_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_DYNAMIC_MDNIE_1), DSI0_UI_DYNAMIC_MDNIE_1, 0, NULL}, false, 0, DSI0_UI_DYNAMIC_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_DYNAMIC_MDNIE_2), DSI0_UI_DYNAMIC_MDNIE_2, 0, NULL}, false, 0, DSI0_UI_DYNAMIC_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_DYNAMIC_MDNIE_3), DSI0_UI_DYNAMIC_MDNIE_3, 0, NULL}, false, 0, DSI0_UI_DYNAMIC_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_DYNAMIC_MDNIE_4), DSI0_UI_DYNAMIC_MDNIE_4, 0, NULL}, false, 0, DSI0_UI_DYNAMIC_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_DYNAMIC_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_DYNAMIC_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_DYNAMIC_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_DYNAMIC_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_UI_AUTO_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_AUTO_MDNIE_1), DSI0_UI_AUTO_MDNIE_1, 0, NULL}, false, 0, DSI0_UI_AUTO_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_AUTO_MDNIE_2), DSI0_UI_AUTO_MDNIE_2, 0, NULL}, false, 0, DSI0_UI_AUTO_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_AUTO_MDNIE_3), DSI0_UI_AUTO_MDNIE_3, 0, NULL}, false, 0, DSI0_UI_AUTO_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_UI_AUTO_MDNIE_4), DSI0_UI_AUTO_MDNIE_4, 0, NULL}, false, 0, DSI0_UI_AUTO_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_AUTO_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_AUTO_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_AUTO_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_UI_AUTO_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_GALLERY_AUTO_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_GALLERY_AUTO_MDNIE_1), DSI0_GALLERY_AUTO_MDNIE_1, 0, NULL}, false, 0, DSI0_GALLERY_AUTO_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_GALLERY_AUTO_MDNIE_2), DSI0_GALLERY_AUTO_MDNIE_2, 0, NULL}, false, 0, DSI0_GALLERY_AUTO_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_GALLERY_AUTO_MDNIE_3), DSI0_GALLERY_AUTO_MDNIE_3, 0, NULL}, false, 0, DSI0_GALLERY_AUTO_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_GALLERY_AUTO_MDNIE_4), DSI0_GALLERY_AUTO_MDNIE_4, 0, NULL}, false, 0, DSI0_GALLERY_AUTO_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_GALLERY_AUTO_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_GALLERY_AUTO_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_GALLERY_AUTO_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_GALLERY_AUTO_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_EBOOK_AUTO_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_EBOOK_AUTO_MDNIE_1), DSI0_EBOOK_AUTO_MDNIE_1, 0, NULL}, false, 0, DSI0_EBOOK_AUTO_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_EBOOK_AUTO_MDNIE_2), DSI0_EBOOK_AUTO_MDNIE_2, 0, NULL}, false, 0, DSI0_EBOOK_AUTO_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_EBOOK_AUTO_MDNIE_3), DSI0_EBOOK_AUTO_MDNIE_3, 0, NULL}, false, 0, DSI0_EBOOK_AUTO_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_EBOOK_AUTO_MDNIE_4), DSI0_EBOOK_AUTO_MDNIE_4, 0, NULL}, false, 0, DSI0_EBOOK_AUTO_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_EBOOK_AUTO_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_EBOOK_AUTO_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_EBOOK_AUTO_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_EBOOK_AUTO_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc DSI0_HMT_COLOR_TEMP_6500K_MDNIE[] = {
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_on), level_0_key_on, 0, NULL}, false, 0, level_0_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_on), level_1_key_on, 0, NULL}, false, 0, level_1_key_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_on), multi_cmd_on, 0, NULL}, false, 0, multi_cmd_on},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_1), DSI0_HMT_COLOR_TEMP_6500K_MDNIE_1, 0, NULL}, false, 0, DSI0_HMT_COLOR_TEMP_6500K_MDNIE_1},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_2), DSI0_HMT_COLOR_TEMP_6500K_MDNIE_2, 0, NULL}, false, 0, DSI0_HMT_COLOR_TEMP_6500K_MDNIE_2},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_3), DSI0_HMT_COLOR_TEMP_6500K_MDNIE_3, 0, NULL}, false, 0, DSI0_HMT_COLOR_TEMP_6500K_MDNIE_3},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_4), DSI0_HMT_COLOR_TEMP_6500K_MDNIE_4, 0, NULL}, false, 0, DSI0_HMT_COLOR_TEMP_6500K_MDNIE_4},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_off), multi_cmd_off, 0, NULL}, false, 20, multi_cmd_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(multi_cmd_dummy), multi_cmd_dummy, 0, NULL}, false, 0, multi_cmd_dummy},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_1_key_off), level_1_key_off, 0, NULL}, true, 0, level_1_key_off},
+-	{{0, MIPI_DSI_DCS_LONG_WRITE, 0, 0, 0, sizeof(level_0_key_off), level_0_key_off, 0, NULL}, true, 0, level_0_key_off},
++	MDNIE_CMD_LW(level_0_key_on, false, 0),
++	MDNIE_CMD_LW(level_1_key_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_on, false, 0),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_1, false, 0),
++	MDNIE_CMD_LW(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_2, false, 0),
++	MDNIE_CMD_LW(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_3, false, 0),
++	MDNIE_CMD_LW(DSI0_HMT_COLOR_TEMP_6500K_MDNIE_4, false, 0),
++	MDNIE_CMD_LW(multi_cmd_off, false, 20),
++	MDNIE_CMD_LW(multi_cmd_dummy, false, 0),
++	MDNIE_CMD_LW(level_1_key_off, true, 0),
++	MDNIE_CMD_LW(level_0_key_off, true, 0),
+ };
+ 
+ static struct dsi_cmd_desc *mdnie_tune_value_dsi0[MAX_APP_MODE][MAX_MODE][MAX_OUTDOOR_MODE] = {

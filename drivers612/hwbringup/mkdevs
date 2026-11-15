@@ -1,0 +1,14 @@
+#!/bin/busybox sh
+# device nodes from sysfs (the 6.12 GKI has no devtmpfs; the ramdisk's own loop stops after 2 min)
+for u in /sys/dev/char/*/uevent /sys/dev/block/*/uevent; do
+	[ -r "$u" ] || continue
+	MAJOR=; MINOR=; DEVNAME=
+	while IFS='=' read -r k v; do
+		case "$k" in MAJOR) MAJOR=$v;; MINOR) MINOR=$v;; DEVNAME) DEVNAME=$v;; esac
+	done < "$u"
+	[ -n "$DEVNAME" ] && [ -n "$MAJOR" ] || continue
+	[ -e "/dev/$DEVNAME" ] && continue
+	case "$u" in /sys/dev/block/*) t=b;; *) t=c;; esac
+	case "$DEVNAME" in */*) mkdir -p "/dev/${DEVNAME%/*}";; esac
+	mknod -m 660 "/dev/$DEVNAME" $t "$MAJOR" "$MINOR" 2>/dev/null
+done

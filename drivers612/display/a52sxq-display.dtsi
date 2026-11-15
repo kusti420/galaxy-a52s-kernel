@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Samsung Galaxy A52s 5G (a52sxq) display for the Qualcomm 6.12 BSP base (yupik.dtb built from
+ * bsp612/devicetree, downstream bindings), for msm_drm.ko = Qualcomm display techpack r7 +
+ * Samsung ss_dsi_panel framework + panel S6E3FC3_AMS646YD01.
+ *
+ * Include from the a52sxq board overlay/dts, after the base. Layout:
+ *   dts/yupik-sde.dtsi                               SoC nodes (the 6.12 base has NO display nodes)
+ *   dts/a52sxq-display-board.dtsi                    pins, sde_wb, sde_dsi, Samsung name nodes
+ *   dts/a52sxq-panel-S6E3FC3_AMS646YD01_LO_FHD.dtsi  the panel + self display tables
+ *   dts/a52sxq-panel-PBA_BOOTING_FHD.dtsi            dummy panel for a board without a panel
+ * Those four are generated from the tree the phone boots (tools/gen-dts.py) and are value-for-value
+ * the phone's. Everything that had to change for the 6.12 driver is in THIS file, so the delta
+ * against the phone is visible in one place.
+ *
+ * Hardware revisions: Samsung ships three overlays (r00: hw rev 0, r01: hw rev 1, r02: hw rev
+ * 2..0x20). Bench phones are rev 3 and rev 4: both select r02, so there is no rev 3 / rev 4
+ * difference. The display nodes are also identical in r00, r01 and r02 (checked with diff).
+ *
+ * Wiring (all from the phone's tree):
+ *   reset        TLMM 44   (active: no pull, 8 mA; suspend: pull-down, 2 mA)
+ *   TE           TLMM 80   (function mdp_vsync, pull-down)
+ *   UB con-det   TLMM 47   (input, no pull)       samsung,ub-con-det
+ *   ESD irq      TLMM 3    (input, no pull)       samsung,esd-irq-gpio1, trigger "falling"
+ *   panel_vci    PM8350C L13 (L13C)  3.0 V        found BY REGULATOR NAME, see below
+ *   panel_vddi   PM8350C L8  (L8C)   1.8 V        found BY REGULATOR NAME; also sde_dsi vddio-supply
+ *   DSI ctrl     vdda-1p2 = L6B 1.2 V; PHY vdda-0p9 = L10C 0.88 V; refgen
+ *   ELVDD/ELVSS  not in the device tree (panel PMIC enabled by the DDI itself)
+ */
+
+#include <dt-bindings/clock/qcom,dispcc-sc7280.h>
+#include <dt-bindings/clock/qcom,gcc-sc7280.h>
+
+#include "dts/yupik-sde.dtsi"
+#include "dts/a52sxq-display-board.dtsi"
+#include "dts/a52sxq-panel-S6E3FC3_AMS646YD01_LO_FHD.dtsi"
+#include "dts/a52sxq-panel-PBA_BOOTING_FHD.dtsi"
+
+/* ---------------------------------------------------------------------------------------------
+ * 1. Panel rails. Samsung's panel code asks for the supplies "panel_vci" and "panel_vddi" (the
+ *    names in qcom,panel-supply-entries) on the dsi-display device, which has no
+ *    panel_vci-supply / panel_vddi-supply property. The regulator core then falls back to a
+ *    lookup by regulator NAME (regulator_dev_lookup -> regulator_lookup_by_name, still there in
+ *    6.12), which is why Samsung renames the two LDOs. Keep the renames or add *-supply
+ *    properties (both are done here, so either lookup works).
+ *    Voltages are the phone's: min == max, never the base's wide reference-board range
+ *    (base: L8C 1.62-2.0 V, L13C 2.7-3.544 V).
+ * ------------------------------------------------------------------------------------------- */
+&L8C {
+	regulator-name = "panel_vddi";
+	regulator-min-microvolt = <1800000>;
+	regulator-max-microvolt = <1800000>;
+	qcom,init-voltage = <1620000>;	/* as on the phone (0x18b820), although below min: kept identical */
+	regulator-boot-on;
+};
+
+&L13C {
+	regulator-name = "panel_vci";
+	regulator-min-microvolt = <3000000>;
+	regulator-max-microvolt = <3000000>;
+	qcom,init-voltage = <2700000>;	/* as on the phone (0x2932e0) */
+	regulator-boot-on;
+};
+
+&sde_dsi {
+	panel_vci-supply = <&L13C>;	/* added: explicit, the phone relies on the name lookup */
+	panel_vddi-supply = <&L8C>;	/* added */
+
+	/* -----------------------------------------------------------------------------------------
+	 * 2. 6.12 binding change (display techpack r7, dsi_pll_5nm.c / dsi_display_clocks_init):
+	 *    the PHY PLL registers only <phy 0> = byte clock and <phy 1> = dsi (pixel) clock, and
+	 *    dsi_display picks them by the prefixes "pll_byte" / "pll_dsi". The 5.4 names
+	 *    (mux_byte_clk0, cphy_*, src_*, shadow_*; ids from mdss-5nm-pll-clk.h) no longer exist.
+	 *    mdp_core_clk is kept as on the phone (holds the display clock controller's state
+	 *    until the splash is taken over).
+	 * --------------------------------------------------------------------------------------- */
+	clocks = <&mdss_dsi_phy0 0>,
+		 <&mdss_dsi_phy0 1>,
+		 <&dispcc DISP_CC_MDSS_MDP_CLK>;
+	clock-names = "pll_byte_clk0", "pll_dsi_clk0", "mdp_core_clk";
+};
+
+&ss_dsi_panel_S6E3FC3_AMS646YD01_LO_FHD {
+	qcom,dsi-select-clocks = "pll_byte_clk0", "pll_dsi_clk0";	/* was mux_byte_clk0, mux_pixel_clk0 */
+};
+
+&ss_dsi_panel_PBA_BOOTING_FHD {
+	qcom,dsi-select-clocks = "pll_byte_clk0", "pll_dsi_clk0";
+};
+
+/* ---------------------------------------------------------------------------------------------
+ * 3. 6.12 binding change (sde_hw_catalog.c): every dgm block of qcom,sde-sspp-dma-blocks needs a
+ *    cell-index.
+ * ------------------------------------------------------------------------------------------- */
+&mdss_mdp {
+	qcom,sde-sspp-dma-blocks {
+		dgm@0 {
+			cell-index = <0>;
+		};
+
+		dgm@1 {
+			cell-index = <1>;
+		};
+	};
+};
+
+/* ---------------------------------------------------------------------------------------------
+ * 4. Base nodes to disable / not to add.
+ *    The 6.12 yupik base (yupik.dtsi) contains no mdss/sde/dsi/panel/backlight node at all:
+ *    the Qualcomm reference panels (nt36672e, r66451, sim), dsi_panel_pwr_supply*, the IDP/QRD
+ *    sde_dsi and the WLED backlight live in the separate display-devicetree project, which the
+ *    BSP build does not pull in, and yupik-idp/qrd overlays are not applied on this phone.
+ *    So nothing has to be disabled today. If display-devicetree (yupik-sde*.dtsi,
+ *    yupik-sde-display*.dtsi) is ever added to the base, do NOT include its
+ *    yupik-sde-display-{idp,qrd}.dtsi: this file defines sde_dsi, sde_wb, mdss_mdp, mdss_dsi0,
+ *    mdss_dsi_phy0, sde_rscc, smmu_sde_{unsec,sec} itself and the labels would clash. The 5.4
+ *    phone tree did carry 12 Qualcomm panels under mdss_mdp (nt36672e x5, r66451 x6, sim) and
+ *    dsi_panel_pwr_supply{,_labibb,_amoled,_no_labibb}; they are unreferenced there and are
+ *    dropped here.
+ *    Not carried over on purpose: sde_dp + ext_disp (DisplayPort; removed from
+ *    mdss_mdp/connectors), disp_rdump_memory (ramdump label of the splash region).
+ *    Kept from the base as they are: reserved-memory splash_region 0xe1000000+0x2300000 and
+ *    dfps_data_memory 0xe3300000+0x100000 (identical to the phone's), disp_cc_mdss_core_gdsc.
+ * ------------------------------------------------------------------------------------------- */
+
+/*
+ * The display RSC driver (qcom,sde-rsc) takes its RPMh device from a child of the display
+ * RSC's DRV node; the 6.12 yupik base has the RSC but not this child. Without it:
+ * "rpmh device node is not available", sde_rscc fails and mdss_mdp never binds
+ * (found on hardware 2026-11-12).
+ */
+&disp_rsc_drv0 {
+	sde_rsc_rpmh {
+		compatible = "qcom,sde-rsc-rpmh";
+		cell-index = <0>;
+	};
+};

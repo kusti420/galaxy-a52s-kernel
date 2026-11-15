@@ -1,0 +1,149 @@
+/* ==== /soc/qcom,spmi@c440000/qcom,pmk8350@0/vadc@3100  (r02 lines 5005-5152) ==== */
+				pmk8350_vadc: vadc@3100 {
+					phandle = <0x571>;
+					io-channel-ranges;
+					#io-channel-cells = <0x01>;
+					interrupt-names = "eoc-int-en-set";
+					interrupts = <0x00 0x31 0x00 0x01>;
+					#size-cells = <0x00>;
+					#address-cells = <0x01>;
+					reg = <0x3100>;
+					compatible = "qcom,spmi-adc7";
+
+					chg_thm {
+						qcom,scale-fn-type = <0x05>;
+						qcom,ratiometric;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,pre-scaling = <0x01 0x01>;
+						reg = <0x14a>;
+						label = "chg_thm";
+					};
+
+					bat_thm {
+						qcom,scale-fn-type = <0x05>;
+						qcom,ratiometric;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,pre-scaling = <0x01 0x01>;
+						reg = <0x14b>;
+						label = "bat_thm";
+					};
+
+					wf_therm {
+						qcom,scale-fn-type = <0x05>;
+						qcom,pre-scaling = <0x01 0x01>;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,ratiometric;
+						label = "wf_therm";
+						reg = <0x14c>;
+					};
+
+					pa_therm {
+						qcom,scale-fn-type = <0x05>;
+						qcom,pre-scaling = <0x01 0x01>;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,ratiometric;
+						label = "pa_therm";
+						reg = <0x148>;
+					};
+
+					ap_therm {
+						qcom,scale-fn-type = <0x05>;
+						qcom,pre-scaling = <0x01 0x01>;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,ratiometric;
+						label = "ap_therm";
+						reg = <0x146>;
+					};
+
+					pm7325_wide_rfc_therm {
+						qcom,pre-scaling = <0x01 0x01>;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,ratiometric;
+						label = "pm7325_wide_rfc_therm";
+						reg = <0x147>;
+					};
+
+					pm7325_cam_flash_therm {
+						qcom,pre-scaling = <0x01 0x01>;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,ratiometric;
+						label = "pm7325_cam_flash_therm";
+						reg = <0x145>;
+					};
+
+					pm7325_quiet_therm {
+						qcom,pre-scaling = <0x01 0x01>;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,ratiometric;
+						label = "pm7325_quiet_therm";
+						reg = <0x144>;
+					};
+
+					pm7325_vph_pwr {
+						qcom,pre-scaling = <0x01 0x03>;
+						label = "pm7325_vph_pwr";
+						reg = <0x18e>;
+					};
+
+					pm7325_die_temp {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pm7325_die_temp";
+						reg = <0x103>;
+					};
+
+					pm7325_vref_1p25 {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pm7325_vref_1p25";
+						reg = <0x101>;
+					};
+
+					pm7325_ref_gnd {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pm7325_ref_gnd";
+						reg = <0x100>;
+					};
+
+					pmr735a_die_temp {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pmr735a_die_temp";
+						reg = <0x403>;
+					};
+
+					pmr735a_vref_1p25 {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pmr735a_vref_1p25";
+						reg = <0x401>;
+					};
+
+					pmr735a_ref_gnd {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pmr735a_ref_gnd";
+						reg = <0x400>;
+					};
+
+					pmk8350_xo_therm {
+						qcom,pre-scaling = <0x01 0x01>;
+						qcom,hw-settle-time = <0xc8>;
+						qcom,ratiometric;
+						label = "pmk8350_xo_therm";
+						reg = <0x44>;
+					};
+
+					pmk8350_die_temp {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pmk8350_die_temp";
+						reg = <0x03>;
+					};
+
+					pmk8350_vref_1p25 {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pmk8350_vref_1p25";
+						reg = <0x01>;
+					};
+
+					pmk8350_ref_gnd {
+						qcom,pre-scaling = <0x01 0x01>;
+						label = "pmk8350_ref_gnd";
+						reg = <0x00>;
+					};
+				};

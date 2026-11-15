@@ -1,0 +1,3 @@
+# Samsung sec_vibrator framework (/sys/class/timed_output/vibrator) + DC motor driver
+ccflags-y += -I$(src)/include
+obj-m += sec_vibrator.o dc_vibrator.o

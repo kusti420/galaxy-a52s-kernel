@@ -1,0 +1,17 @@
+qcom-hv-haptics: haptics_get_status_data(): name uninitialised for unknown selectors
+
+For a selector outside 0..BRAKE_CAL_SCALAR and the three named ones, 'name' was used
+uninitialised by dev_dbg() and trace_qcom_haptics_status() (the tracepoint copies the
+string: a wild pointer dereference). Use "UNKNOWN_STS". (clang: -Wsometimes-uninitialized)
+
+--- a/bsp612/soc-repo/drivers/input/misc/qcom-hv-haptics.c
++++ b/bsp612/soc-repo/drivers/input/misc/qcom-hv-haptics.c
+@@ -1271,6 +1271,8 @@
+ 		name = "FIFO_REAL_TIME_STS";
+ 	else if (sel == AUTO_BRAKE_CAL_STS)
+ 		name = "AUTO_BRAKE_CAL_STS";
++	else
++		name = "UNKNOWN_STS";
+ 
+ 	dev_dbg(chip->dev, "Get status data[%s] = (%#x, %#x)\n", name, data[0], data[1]);
+ 	trace_qcom_haptics_status(name, data[0], data[1]);

@@ -1,0 +1,319 @@
+ufs-qcom (soc-repo fork): build against the 6.18 UFS core
+
+The fork stays (not upstream ufs-qcom): the vendor DT keeps the 6.12 UFS nodes, and the vendor
+PHY driver phy-qcom-ufs-qmp-v4-yupik takes its per-UFS-vendor tables and lane/hibern8 calls
+from ufs_qcom_phy_*() calls that only this host driver makes (see PORT-STATUS.md).
+
+- enum ufs_trace_str_t moved from <ufs/ufs.h> to drivers/ufs/core/ufs_trace_types.h.
+- ufshcd_dme_rmw() is exported by the 6.18 core; the static copy in ufs-qcom.h goes.
+- the MCQ resource table (enum ufshcd_res, struct ufshcd_res_info, hba->res[]) left struct
+  ufs_hba: same table, kept in struct ufs_qcom_host. MCQ is UFSHCI 4.0 and unused on the
+  SM7325 controller; this only keeps the code building.
+- msi_lock_descs()/msi_unlock_descs() -> __msi_lock_descs()/__msi_unlock_descs() (the 6.18
+  msi_descs_lock guard's primitives).
+- ufs_stats.last_intr_status/_ts are gone: dropped from the error dump.
+- UFS_DEVICE_QUIRK_DELAY_AFTER_LPM is gone: the 6.18 core waits hba->vcc_off_delay_us after
+  every VCC-off (2 ms default); set to 5000, the quirk's 5 ms, which applied to the Samsung
+  part of this phone.
+- pwr_change_notify() lost dev_max_params: the PRE_CHANGE negotiation moved to the new
+  .negotiate_pwr_mode op (same ufs_qcom_get_pwr_dev_param() call).
+- ufs_hba_variant_ops.program_key is gone: with SCSI_UFS_CRYPTO_QTI (lahaina config) the host
+  sets UFSHCD_QUIRK_CUSTOM_CRYPTO_PROFILE and ufshcd-crypto-qti programs the keyslots, so the
+  core never called it on 6.12 either.
+
+--- a/bsp612/soc-repo/drivers/ufs/host/ufs-qcom.c
++++ b/bsp612/soc-repo/drivers/ufs/host/ufs-qcom.c
+@@ -105,6 +105,9 @@
+ 
+ static DEFINE_PER_CPU(struct freq_qos_request, qos_min_req);
+ 
++/* bsp618/port: the MCQ resource table lives in the host on 6.18 (see ufs-qcom.h) */
++#define ufs_qcom_res(hba) (((struct ufs_qcom_host *)ufshcd_get_variant(hba))->res)
++
+ int ufsqcom_dump_regs(struct ufs_hba *hba, size_t offset, size_t len,
+ 		     const char *prefix, enum ufshcd_res id)
+ {
+@@ -119,7 +122,7 @@
+ 		return -ENOMEM;
+ 
+ 	for (pos = 0; pos < len; pos += 4)
+-		regs[pos / 4] = readl(hba->res[id].base + offset + pos);
++		regs[pos / 4] = readl(ufs_qcom_res(hba)[id].base + offset + pos);
+ 
+ 	print_hex_dump(KERN_ERR, prefix,
+ 		       len > 4 ? DUMP_PREFIX_OFFSET : DUMP_PREFIX_NONE,
+@@ -686,7 +689,7 @@
+ 	return 0;
+ }
+ 
+-static int ufs_qcom_ice_program_key(struct ufs_hba *hba,
++static int __maybe_unused ufs_qcom_ice_program_key(struct ufs_hba *hba,
+ 				    const union ufs_crypto_cfg_entry *cfg,
+ 				    int slot)
+ {
+@@ -1756,7 +1759,7 @@
+ 	if (!host->esi_affinity_mask)
+ 		return;
+ 
+-	msi_lock_descs(hba->dev);
++	__msi_lock_descs(hba->dev);
+ 	msi_for_each_desc(desc, hba->dev, MSI_DESC_ALL) {
+ 		/* Affine IRQ for each desc parsed from DT node */
+ 		mask = get_cpu_mask(host->esi_affinity_mask[i]);
+@@ -1772,7 +1775,7 @@
+ 					__func__, i, desc->irq, ret);
+ 		i++;
+ 	}
+-	msi_unlock_descs(hba->dev);
++	__msi_unlock_descs(hba->dev);
+ }
+ 
+ static int ufs_qcom_cpu_online(unsigned int cpu)
+@@ -2277,9 +2280,23 @@
+ 	}
+ }
+ 
++/* bsp618/port: 6.18 asks for the negotiation separately, before PRE_CHANGE */
++static int ufs_qcom_negotiate_pwr_mode(struct ufs_hba *hba,
++				       const struct ufs_pa_layer_attr *dev_max_params,
++				       struct ufs_pa_layer_attr *dev_req_params)
++{
++	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
++	struct ufs_pa_layer_attr dev_max = *dev_max_params;
++	int ret;
++
++	ret = ufs_qcom_get_pwr_dev_param(&host->host_pwr_cap, &dev_max, dev_req_params);
++	if (ret)
++		dev_err(hba->dev, "%s: failed to determine capabilities\n", __func__);
++	return ret;
++}
++
+ static int ufs_qcom_pwr_change_notify(struct ufs_hba *hba,
+ 				enum ufs_notify_change_status status,
+-				struct ufs_pa_layer_attr *dev_max_params,
+ 				struct ufs_pa_layer_attr *dev_req_params)
+ {
+ 	u32 val;
+@@ -2295,14 +2312,6 @@
+ 
+ 	switch (status) {
+ 	case PRE_CHANGE:
+-		ret = ufs_qcom_get_pwr_dev_param(&host->host_pwr_cap,
+-						 dev_max_params, dev_req_params);
+-		if (ret) {
+-			dev_err(hba->dev, "%s: failed to determine capabilities\n",
+-					__func__);
+-			goto out;
+-		}
+-
+ 		/* enable the device ref clock before changing to HS mode */
+ 		if (!ufshcd_is_hs_mode(&hba->pwr_info) &&
+ 			ufshcd_is_hs_mode(dev_req_params))
+@@ -3742,9 +3751,6 @@
+ 	dev_err(hba->dev, "last_hibern8_exit_tstamp at %lld us, hibern8_exit_cnt=%d\n",
+ 		ktime_to_us(hba->ufs_stats.last_hibern8_exit_tstamp),
+ 		hba->ufs_stats.hibern8_exit_cnt);
+-	dev_err(hba->dev, "last intr at %lld us, last intr status=0x%x\n",
+-		ktime_to_us(hba->ufs_stats.last_intr_ts),
+-		hba->ufs_stats.last_intr_status);
+ 	dev_err(hba->dev, "error handling flags=0x%x, req. abort count=%d\n",
+ 		hba->eh_flags, hba->req_abort_count);
+ 	dev_err(hba->dev, "hba->ufs_version=0x%x, Host capabilities=0x%x, caps=0x%x\n",
+@@ -3966,6 +3972,12 @@
+ 
+ 	/* Make a two way bind between the qcom host and the hba */
+ 	host->hba = hba;
++	/*
++	 * bsp618/port: UFS_DEVICE_QUIRK_DELAY_AFTER_LPM (5 ms after VCC off, Samsung and Toshiba
++	 * parts on 6.12) is gone; the 6.18 core waits vcc_off_delay_us (2 ms default) for every
++	 * device. Keep the 6.12 delay.
++	 */
++	hba->vcc_off_delay_us = 5000;
+ 	ufshcd_set_variant(hba, host);
+ 	ut = &host->uqt;
+ #if defined(CONFIG_UFS_DBG)
+@@ -5242,8 +5254,7 @@
+ 	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+ 	  .model = UFS_ANY_MODEL,
+ 	  .quirk = UFS_DEVICE_QUIRK_PA_HIBER8TIME |
+-			UFS_DEVICE_QUIRK_PA_TX_HSG1_SYNC_LENGTH |
+-			UFS_DEVICE_QUIRK_DELAY_AFTER_LPM },
++			UFS_DEVICE_QUIRK_PA_TX_HSG1_SYNC_LENGTH },
+ 	{ .wmanufacturerid = UFS_VENDOR_SAMSUNG,
+ 	  .model = "KLUEG4RHHD-B0G1",
+ 	  .quirk = UFS_DEVICE_QUIRK_PA_TX_DEEMPHASIS_TUNING },
+@@ -5274,9 +5285,6 @@
+ 	{ .wmanufacturerid = UFS_VENDOR_WDC,
+ 	  .model = UFS_ANY_MODEL,
+ 	  .quirk = UFS_DEVICE_QUIRK_HOST_PA_TACTIVATE },
+-	{ .wmanufacturerid = UFS_VENDOR_TOSHIBA,
+-	  .model = UFS_ANY_MODEL,
+-	  .quirk = UFS_DEVICE_QUIRK_DELAY_AFTER_LPM },
+ 	{}
+ };
+ 
+@@ -5308,10 +5316,10 @@
+ 	struct resource *res_mem, *res_mcq;
+ 	int i, ret;
+ 
+-	memcpy(hba->res, ufs_res_info, sizeof(ufs_res_info));
++	memcpy(ufs_qcom_res(hba), ufs_res_info, sizeof(ufs_res_info));
+ 
+ 	for (i = 0; i < RES_MAX; i++) {
+-		res = &hba->res[i];
++		res = &ufs_qcom_res(hba)[i];
+ 		res->resource = platform_get_resource_byname(pdev,
+ 							     IORESOURCE_MEM,
+ 							     res->name);
+@@ -5337,7 +5345,7 @@
+ 	}
+ 
+ 	/* MCQ resource provided in DT */
+-	res = &hba->res[RES_MCQ];
++	res = &ufs_qcom_res(hba)[RES_MCQ];
+ 	/* Bail if MCQ resource is provided */
+ 	if (res->base)
+ 		goto out;
+@@ -5383,8 +5391,8 @@
+ 	struct ufshcd_mcq_opr_info_t *opr;
+ 	int i;
+ 
+-	mem_res = &hba->res[RES_UFS];
+-	sqdao_res = &hba->res[RES_MCQ_SQD];
++	mem_res = &ufs_qcom_res(hba)[RES_UFS];
++	sqdao_res = &ufs_qcom_res(hba)[RES_MCQ_SQD];
+ 
+ 	if (!mem_res->base || !sqdao_res->base)
+ 		return -EINVAL;
+@@ -5408,7 +5416,7 @@
+ static int ufs_qcom_get_outstanding_cqs(struct ufs_hba *hba,
+ 					unsigned long *ocqs)
+ {
+-	struct ufshcd_res_info *mcq_vs_res = &hba->res[RES_MCQ_VS];
++	struct ufshcd_res_info *mcq_vs_res = &ufs_qcom_res(hba)[RES_MCQ_VS];
+ 
+ 	if (!mcq_vs_res->base)
+ 		return -EINVAL;
+@@ -5466,7 +5474,7 @@
+ 		return ret;
+ 	}
+ 
+-	msi_lock_descs(hba->dev);
++	__msi_lock_descs(hba->dev);
+ 	msi_for_each_desc(desc, hba->dev, MSI_DESC_ALL) {
+ 		ret = devm_request_irq(hba->dev, desc->irq,
+ 				       ufs_qcom_mcq_esi_handler,
+@@ -5478,17 +5486,17 @@
+ 			break;
+ 		}
+ 	}
+-	msi_unlock_descs(hba->dev);
++	__msi_unlock_descs(hba->dev);
+ 
+ 	if (ret) {
+ 		/* Rewind */
+-		msi_lock_descs(hba->dev);
++		__msi_lock_descs(hba->dev);
+ 		msi_for_each_desc(desc, hba->dev, MSI_DESC_ALL) {
+ 			if (desc == failed_desc)
+ 				break;
+ 			devm_free_irq(hba->dev, desc->irq, hba);
+ 		}
+-		msi_unlock_descs(hba->dev);
++		__msi_unlock_descs(hba->dev);
+ 		platform_device_msi_free_irqs_all(hba->dev);
+ 	} else {
+ 		if (host->hw_ver.major == 6)
+@@ -5596,6 +5604,7 @@
+ 	.setup_clocks           = ufs_qcom_setup_clocks,
+ 	.hce_enable_notify      = ufs_qcom_hce_enable_notify,
+ 	.link_startup_notify    = ufs_qcom_link_startup_notify,
++	.negotiate_pwr_mode	= ufs_qcom_negotiate_pwr_mode,
+ 	.pwr_change_notify	= ufs_qcom_pwr_change_notify,
+ 	.hibern8_notify		= ufs_qcom_hibern8_notify,
+ 	.apply_dev_quirks	= ufs_qcom_apply_dev_quirks,
+@@ -5604,7 +5613,6 @@
+ 	.dbg_register_dump	= ufs_qcom_dump_dbg_regs,
+ 	.device_reset		= ufs_qcom_device_reset,
+ 	.config_scaling_param   = ufs_qcom_config_scaling_param,
+-	.program_key		= ufs_qcom_ice_program_key,
+ 	.fixup_dev_quirks       = ufs_qcom_fixup_dev_quirks,
+ 	.mcq_config_resource	= ufs_qcom_mcq_config_resource,
+ 	.get_hba_mac		= ufs_qcom_get_hba_mac,
+--- a/bsp612/soc-repo/drivers/ufs/host/ufs-qcom.h
++++ b/bsp612/soc-repo/drivers/ufs/host/ufs-qcom.h
+@@ -495,7 +495,30 @@
+ 	u32 desired_working_mode;
+ };
+ 
++/*
++ * bsp618/port: the MCQ resource table (enum ufshcd_res, struct ufshcd_res_info, hba->res[])
++ * left struct ufs_hba in 6.18 (upstream ufs-qcom maps its MCQ regions itself now). Same
++ * layout as android16-6.12, kept in the host.
++ */
++enum ufshcd_res {
++	RES_UFS,
++	RES_MCQ,
++	RES_MCQ_SQD,
++	RES_MCQ_SQIS,
++	RES_MCQ_CQD,
++	RES_MCQ_CQIS,
++	RES_MCQ_VS,
++	RES_MAX,
++};
++
++struct ufshcd_res_info {
++	const char *name;
++	struct resource *resource;
++	void __iomem *base;
++};
++
+ struct ufs_qcom_host {
++	struct ufshcd_res_info res[RES_MAX];	/* bsp618/port: was hba->res */
+ 	/*
+ 	 * Set this capability if host controller supports shared ICE.
+ 	 */
+@@ -638,31 +661,7 @@
+ 	return !!(host->caps & UFS_QCOM_CAP_SHARED_ICE);
+ }
+ 
+-/**
+- * ufshcd_dme_rmw - get modify set a dme attribute
+- * @hba - per adapter instance
+- * @mask - mask to apply on read value
+- * @val - actual value to write
+- * @attr - dme attribute
+- */
+-static inline int ufshcd_dme_rmw(struct ufs_hba *hba, u32 mask,
+-				 u32 val, u32 attr)
+-{
+-	u32 cfg = 0;
+-	int err = 0;
+-
+-	err = ufshcd_dme_get(hba, UIC_ARG_MIB(attr), &cfg);
+-	if (err)
+-		goto out;
+-
+-	cfg &= ~mask;
+-	cfg |= (val & mask);
+-
+-	err = ufshcd_dme_set(hba, UIC_ARG_MIB(attr), cfg);
+-
+-out:
+-	return err;
+-}
++/* bsp618/port: ufshcd_dme_rmw() is exported by the 6.18 UFS core (same semantics) */
+ 
+ /*
+  *  IOCTL opcode for ufs queries has the following opcode after
+--- a/bsp612/soc-repo/drivers/ufs/host/ufs-qcom-trace.h
++++ b/bsp612/soc-repo/drivers/ufs/host/ufs-qcom-trace.h
+@@ -10,6 +10,8 @@
+ #define _TRACE_UFS_QCOM_H
+ 
+ #include <linux/tracepoint.h>
++/* bsp618/port: enum ufs_trace_str_t moved from <ufs/ufs.h> into the 6.18 UFS core */
++#include "../core/ufs_trace_types.h"
+ 
+ #define str_opcode(opcode)						\
+ 	__print_symbolic(opcode,					\

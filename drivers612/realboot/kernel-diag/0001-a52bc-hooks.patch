@@ -1,0 +1,56 @@
+--- a/arch/arm64/kernel/Makefile	2026-11-14 22:12:52.336180815 +0200
++++ b/arch/arm64/kernel/Makefile	2026-11-14 22:12:52.350691638 +0200
+@@ -34,6 +34,7 @@
+ 			   cpufeature.o alternative.o cacheinfo.o		\
+ 			   smp.o smp_spin_table.o topology.o smccc-call.o	\
+ 			   syscall.o proton-pack.o idle.o patching.o pi/
++obj-y					+= a52bc.o	# a52sxq realboot DIAG build only
+ 
+ obj-$(CONFIG_COMPAT)			+= sys32.o signal32.o			\
+ 					   sys_compat.o
+--- a/arch/arm64/kernel/setup.c	2026-11-14 22:12:52.335180814 +0200
++++ b/arch/arm64/kernel/setup.c	2026-11-14 22:12:52.350651001 +0200
+@@ -54,6 +54,8 @@
+ #include <asm/xen/hypervisor.h>
+ #include <asm/mmu_context.h>
+ 
++#include "a52bc.h"	/* a52sxq realboot DIAG build only (drivers612/realboot/kernel-diag) */
++
+ static int num_standard_resources;
+ static struct resource *standard_resources;
+ 
+@@ -289,8 +291,10 @@
+ 
+ 	early_fixmap_init();
+ 	early_ioremap_init();
++	a52bc_stage(A52BC_ENTRY, __fdt_pointer);
+ 
+ 	setup_machine_fdt(__fdt_pointer);
++	a52bc_stage(A52BC_FDT, __fdt_pointer);
+ 
+ 	/*
+ 	 * Initialise the static keys early as they may be enabled by the
+@@ -298,6 +302,7 @@
+ 	 */
+ 	jump_label_init();
+ 	parse_early_param();
++	a52bc_stage(A52BC_PARAM, __fdt_pointer);
+ 
+ 	dynamic_scs_init();
+ 
+@@ -333,6 +338,7 @@
+ 	arm64_memblock_init();
+ 
+ 	paging_init();
++	a52bc_stage(A52BC_PAGING, __fdt_pointer);
+ 
+ 	acpi_table_upgrade();
+ 
+@@ -374,6 +380,7 @@
+ 			"This indicates a broken bootloader or old kernel\n",
+ 			boot_args[1], boot_args[2], boot_args[3]);
+ 	}
++	a52bc_stage(A52BC_SETUP_END, __fdt_pointer);
+ }
+ 
+ static inline bool cpu_can_disable(unsigned int cpu)

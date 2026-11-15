@@ -1,0 +1,46 @@
+sched-walt: stay inert when proxy execution is enabled
+
+What: walt_module_init() returns 0 without registering any hook or scheduling walt_init()
+(the same inert state as the task_struct vendor-area guard of patch 0018) when
+sched_proxy_exec() is true, with a pr_crit telling to boot with sched_proxy_exec=0.
+
+Why: ACK 6.18 has CONFIG_SCHED_PROXY_EXEC=y with DEFINE_STATIC_KEY_TRUE(__sched_proxy_exec)
+(ack/kernel/sched/core.c:145; ACK 6.12: DEFINE_STATIC_KEY_FALSE, bsp612/kernel/kernel/sched/
+core.c:138). The 6.18 recovery boots without the Android cmdline show "sched_proxy_exec:
+enabled" (logs/a52sxq-ack618-wdt11-recovery-200143/dmesg.txt:688). With it on, __schedule()
+runs find_proxy_task() and rq->donor != rq->curr (core.c:7830-7870), task_is_blocked() is
+blocked_on.lock != NULL (sched.h:2353) instead of the 6.12 blocked_on/BO_RUNNABLE test, and WALT's
+proxy paths (walt.c fixup_busy_time in_proxy_migration, walt_lb.c:253/760 and
+walt_storage_lb.c:98 donor checks, walt_cfs.c replace_next_task_fair donor test) run for the
+first time on this phone. sched_proxy_exec=0 (android-cmdline-618.txt) makes rq_set_donor(rq,
+next) precede rq->curr = next with no proxy step and task_is_blocked() return false, i.e. the
+6.12 behaviour. This guard turns a lost/edited cmdline into a logged "WALT stays disabled"
+instead of untested scheduler paths. No new import: task_is_blocked() already references
+__sched_proxy_exec (in the qcom KMI list, ack/gki/aarch64/symbols/qcom:2800).
+
+Not covered: /sys/kernel/sched_proxy_exec/enable (0664, one-way) can turn it on after WALT
+initialised; nothing in the ROM writes it.
+
+Applies after 0018 (paths relative to bsp618/src).
+--- a/bsp612/soc-repo/kernel/sched/walt/walt.c	2026-11-14 15:38:51.749206802 +0200
++++ b/bsp612/soc-repo/kernel/sched/walt/walt.c	2026-11-14 15:40:48.080896976 +0200
+@@ -6260,6 +6260,19 @@
+ 	if (!walt_task_vendor_area_ok())
+ 		return 0;
+ 
++	/*
++	 * bsp618/port: ACK 6.18 enables proxy execution by default (ACK 6.12: off) and changed
++	 * its state (blocked_on.lock, PROXY_WAKING, donor != curr). WALT's proxy paths
++	 * (task_is_blocked(), proxy migration accounting, donor checks in walt_lb) never ran
++	 * on this phone; with proxy exec off rq->donor == rq->curr and task_is_blocked() is
++	 * false, which is the 6.12 behaviour. Stay inert, like the vendor-area guard above,
++	 * unless the kernel was booted with sched_proxy_exec=0.
++	 */
++	if (sched_proxy_exec()) {
++		pr_crit("sched-walt: proxy execution is enabled (ACK 6.18 default): boot with sched_proxy_exec=0; WALT stays disabled\n");
++		return 0;
++	}
++
+ 	register_trace_android_vh_update_topology_flags_workfn(
+ 			android_vh_update_topology_flags_workfn, NULL);
+ 

@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Samsung Galaxy A52s 5G (a52sxq): TrustZone-facing nodes on Qualcomm's 6.12 yupik.dtb.
+ * Overlay fragment (label targets, literal numbers), same style as
+ * bsp612/dts/a52sxq-bringup-overlay.dts: #include it there together with
+ * ioncompat/a52sxq-dma-heaps.dtsi and adsprpc/a52sxq-fastrpc.dtsi.
+ * NOT compiled into any dtb by this agent, NOT booted.
+ *
+ * Compared node by node: phone's 5.4 tree (downstream-dt/a52sxq-r02.dts, hw rev 3; these are
+ * SoC-level nodes, Samsung's r03/r04 overlays do not touch them) against the 6.12 base
+ * (bsp612/devicetree/qcom/yupik.dtsi):
+ *
+ *   node                         5.4 phone                        6.12 base              action
+ *   qcom_qseecom qseecom@c1800000 memory-region = qseecom_mem,     identical + phandles   none
+ *                                hlos/qsee ce instance 0, pipe    qseecom_mem,
+ *                                pair 2, support-fde, no-clock,   qseecom_ta_mem,
+ *                                appsbl-qseecom-support,          user_contig_mem (the
+ *                                commonlib64-loaded-by-uefi,      6.12 driver registers
+ *                                reentrancy 2                     shm bridges for them)
+ *   qseecom_region               28 MiB CMA                       20 MiB CMA             override
+ *                                                                                        (below)
+ *   qseecom_ta_region            16 MiB CMA                       16 MiB CMA             none
+ *   user_contig_region           16 MiB CMA                       16 MiB CMA             none
+ *   secure_display_region        140 MiB CMA                      140 MiB CMA            none
+ *   qtee_shmbridge               "qcom,tee-shared-memory-bridge"  identical, no extra    none
+ *                                no properties                    properties
+ *   qcom_smcinvoke               "qcom,smcinvoke"                 identical              none
+ *   qcom_mem_object              -                                "qcom,mem-object"      keep
+ *   qcom_cedev qcedev@1de0000    pipe pair 3, SID 0x4e6/0x11,     identical              none
+ *                                ns cb 0x4f2,4f8,4f9,4ff; secure
+ *                                cb 0x4f3,4fc,4fd,4fe vmid 9
+ *   qcom_crypto qcrypto@1de0000  "qcom,qcrypto", pipe pair 2      no compatible (the     none
+ *                                                                 node never binds)
+ *   qcom_rng qrng@10d3000        "qcom,msm-rng"                   rng@10d3000            none
+ *                                                                 "qcom,trng" (upstream
+ *                                                                 qcom-rng driver)
+ *   qcom_tzlog tz-log@146aa720   reg 0x146aa720 0x3000, hyplog    identical              none,
+ *                                                                                        see below
+ *
+ * qcrypto: only registers kernel crypto API algorithms (no device node); the phone's userdata
+ * does not use it (inlinecrypt, upstream ICE). Left unbound; qcrypto-msm_dlkm.ko is not loaded.
+ * rng: no blob opens /dev/msm-rng (research/blob-uapi-inventory.md); /dev/hw_random comes from
+ * the upstream driver the base already selects. qrng_dlkm.ko is not loaded.
+ * tz-log: the node must stay (the hypervisor's own overlay patches /soc nodes by path and the
+ * bootloader aborts on a missing target), but tz_log_dlkm.ko must NOT be loaded: the other
+ * SM7325 port on this BSP (donors/redwood-6.12) reports a reset when it probes on yupik.
+ * Nothing in the vendor needs /proc/tzdbg.
+ */
+
+/* 5.4 phone: size = <0x00 0x1c00000> (28 MiB); 6.12 base 0x1400000. Same override as in
+ * ioncompat/a52sxq-dma-heaps.dtsi (the "qcom,qseecom" dma-heap sits on this region); keep one.
+ */
+&qseecom_mem {
+	size = <0x0 0x1c00000>;
+};

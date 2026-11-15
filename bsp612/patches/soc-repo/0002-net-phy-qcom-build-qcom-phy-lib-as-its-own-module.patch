@@ -1,0 +1,18 @@
+net: phy: qcom: build qcom-phy-lib as its own module
+
+The make-path Makefile names the composite module qca808x and lists qca808x.o as one of
+its own objects, which Kbuild cannot build ("ld.lld: cannot open qca808x.o"). Build the two
+files the way ACK's drivers/net/phy/qcom/Makefile does: qcom-phy-lib.ko (it exports its
+helpers) and qca808x.ko. Only matters for Ethernet PHYs (CONFIG_QCA808X_PHY=m in
+lahaina_perf); kept so the lahaina module set stays complete.
+
+--- a/drivers/net/phy/qcom/Makefile
++++ b/drivers/net/phy/qcom/Makefile
+@@ -2,6 +2,6 @@
+ 
+ ccflags-y += -I$(src)
+ 
++obj-$(CONFIG_QCOM_NET_PHYLIB) += qcom-phy-lib.o
+ obj-$(CONFIG_QCA808X_PHY) += qca808x.o
+-qca808x-objs += qca808x.o qcom-phy-lib.o
+ 

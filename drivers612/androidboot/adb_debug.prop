@@ -1,0 +1,24 @@
+# Loaded by second-stage init as /debug_ramdisk/adb_debug.prop, after every build.prop of the ROM
+# (system/core/init/property_service.cpp), because the test ramdisk has /force_debuggable and the
+# bootloader is unlocked. RAM only. First two lines are what AOSP's own debug ramdisk carries.
+ro.adb.secure=0
+ro.debuggable=1
+# adb without any key or setting stored on /data (which is a throwaway disk here)
+ro.secure=0
+service.adb.root=1
+persist.sys.usb.config=adb
+persist.service.adb.enable=1
+# marks the boot for scripts and logs
+ro.a52.androidtest=1
+# no data to protect, and nothing to wait for on a kernel without the display stack
+ro.setupwizard.mode=DISABLED
+#debug.sf.nobootanimation=1
+# the ROM tells the BPF loader "5.10.239" (ro.bpf.kver_override, for its 5.4 kernel): netd then gets the 5.10
+# variants of the cgroup sockopt programs and aborts in getsockoptTest() on 6.12
+ro.bpf.kver_override=6.12.81
+# show the boot animation (was disabled yesterday for a kernel without display)
+debug.sf.nobootanimation=0
+# 6.12 GKI has no /dev/ashmem: libcutils must use memfd (system_server died "Failed to create ashmem")
+# sys.use_memfd=true  (dropped 2026-11-13: bsp612 now builds with Rust, so the GKI ashmem driver exists)
+# diagnosis: SDM (Qualcomm composer) logs at verbose level
+vendor.display.enable_verbose_log=1

@@ -1,0 +1,399 @@
+Subject: icnss2: Samsung /sys/wifi interface for macloader (SM-A528B)
+
+Port of CONFIG_SEC_SS_CNSS_FEATURE_SYSFS from the phone's 5.4 icnss2
+(drivers/soc/qcom/icnss2/{main,qmi}.c). The closed vendor macloader writes
+/sys/wifi/{mac_addr,ant,pm} and reads wifiver, softap, qcwlanstate, wificable.
+mac_addr -> cnss_utils provisioned MAC (the phone's DT has no use-nv-mac);
+ant 1/2/10 -> board file bdwlan.elf<N>; firmware-ready waits up to 10 s for
+the MAC write, as on 5.4. Built with CONFIG_SEC_SS_CNSS_FEATURE_SYSFS=y.
+Changes vs 5.4: own file, gpiod API, sysfs_emit, input validation, a mutex
+around the info strings. Exports cnss_sysfs_update_driver_status() and
+cnss_sysfs_get_pm_info() for the WLAN host driver.
+---
+--- a/Kbuild
++++ b/Kbuild
+@@ -6,6 +6,11 @@
+ KBUILD_CPPFLAGS += -DCONFIG_CNSS_OUT_OF_TREE
+ endif
+ 
++# Samsung /sys/wifi (macloader) interface in icnss2
++ifeq ($(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS),y)
++KBUILD_CPPFLAGS += -DCONFIG_SEC_SS_CNSS_FEATURE_SYSFS
++endif
++
+ ifeq ($(CONFIG_CNSS2_DEBUG),y)
+ KBUILD_CPPFLAGS += -DCONFIG_CNSS2_DEBUG
+ endif
+--- a/inc/icnss2.h
++++ b/inc/icnss2.h
+@@ -287,4 +287,8 @@
+ extern struct kobject *icnss_get_wifi_kobj(struct device *dev);
+ extern bool icnss_get_fw_cap(struct device *dev, enum icnss_fw_caps fw_cap);
+ extern int icnss_get_iova_info(struct device *dev, u64 *addr, u64 *size);
++/* Samsung /sys/wifi (CONFIG_SEC_SS_CNSS_FEATURE_SYSFS in icnss2) */
++extern int cnss_sysfs_get_pm_info(void);
++extern void cnss_sysfs_update_driver_status(int32_t new_status, void *version,
++					    void *softap);
+ #endif /* _ICNSS_WLAN_H_ */
+--- a/icnss2/Makefile
++++ b/icnss2/Makefile
+@@ -16,3 +16,4 @@
+ icnss2-y += power.o
+ icnss2-y += genl.o
+ icnss2-$(CONFIG_ICNSS2_QMI) += qmi.o
++icnss2-$(CONFIG_SEC_SS_CNSS_FEATURE_SYSFS) += sec_wifi_sysfs.o
+--- a/icnss2/main.c
++++ b/icnss2/main.c
+@@ -63,6 +63,7 @@
+ #include "debug.h"
+ #include "power.h"
+ #include "genl.h"
++#include "sec_wifi_sysfs.h"
+ 
+ #define MAX_PROP_SIZE			32
+ #define NUM_LOG_PAGES			10
+@@ -1282,6 +1283,9 @@
+ 	if (!priv)
+ 		return -ENODEV;
+ 
++	/* Samsung: give macloader time to write /sys/wifi/mac_addr and ant */
++	sec_wifi_wait_macloader();
++
+ 	set_bit(ICNSS_WLFW_EXISTS, &priv->state);
+ 	clear_bit(ICNSS_FW_DOWN, &priv->state);
+ 	clear_bit(ICNSS_FW_READY, &priv->state);
+@@ -6683,6 +6687,7 @@
+ 	icnss_debugfs_create(priv);
+ 
+ 	icnss_sysfs_create(priv);
++	sec_create_wifi_sysfs(priv);
+ 
+ 	ret = device_init_wakeup(&priv->pdev->dev, true);
+ 	if (ret)
+@@ -6817,6 +6822,7 @@
+ 
+ 	icnss_unregister_power_supply_notifier(penv);
+ 
++	sec_remove_wifi_sysfs(priv);
+ 	icnss_sysfs_destroy(priv);
+ 
+ 	complete_all(&priv->unblock_shutdown);
+--- a/icnss2/qmi.c
++++ b/icnss2/qmi.c
+@@ -30,6 +30,7 @@
+ #include <soc/qcom/of_common.h>
+ #include "wlan_firmware_service_v01.h"
+ #include "main.h"
++#include "sec_wifi_sysfs.h"
+ #include "qmi.h"
+ #include "debug.h"
+ #include "genl.h"
+@@ -1110,6 +1111,13 @@
+ 	qmi_handle_release(&priv->qmi_dms);
+ }
+ 
++static bool sec_wifi_bdf_suffix(void)
++{
++	int ant = sec_wifi_ant_info();
++
++	return ant == 1 || ant == 2 || ant == 10;
++}
++
+ static int icnss_get_bdf_file_name(struct icnss_priv *priv,
+ 				   u32 bdf_type, char *filename,
+ 				   u32 filename_len)
+@@ -1120,8 +1128,19 @@
+ 
+ 	switch (bdf_type) {
+ 	case ICNSS_BDF_ELF:
+-		if (priv->board_id == 0xFF)
++		/*
++		 * Samsung: macloader's antenna setting picks the board file
++		 * (bdwlan.elf1, .elf2; 10 = the GTX-disabled one), as on 5.4.
++		 */
++		if (priv->board_id == 0xFF && sec_wifi_bdf_suffix())
++			snprintf(filename_tmp, filename_len,
++				 ELF_BDF_FILE_NAME "%d", sec_wifi_ant_info());
++		else if (priv->board_id == 0xFF)
+ 			snprintf(filename_tmp, filename_len, ELF_BDF_FILE_NAME);
++		else if (priv->board_id < 0xFF && sec_wifi_bdf_suffix())
++			snprintf(filename_tmp, filename_len,
++				 ELF_BDF_FILE_NAME_PREFIX "%02x%d",
++				 priv->board_id, sec_wifi_ant_info());
+ 		else if (priv->board_id < 0xFF)
+ 			snprintf(filename_tmp, filename_len,
+ 				 ELF_BDF_FILE_NAME_PREFIX "%02x",
+--- a/icnss2/sec_wifi_sysfs.c
++++ b/icnss2/sec_wifi_sysfs.c
+@@ -0,0 +1,248 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Samsung /sys/wifi interface, ported from the SM-A528B 5.4 kernel
++ * (drivers/soc/qcom/icnss2/main.c, CONFIG_SEC_SS_CNSS_FEATURE_SYSFS).
++ *
++ * The closed vendor "macloader" reads /mnt/vendor/efs/wifi/.mac.info and
++ * friends at boot and writes:
++ *   /sys/wifi/mac_addr  "aa:bb:cc:dd:ee:ff"  -> provisioned MAC (cnss_utils)
++ *   /sys/wifi/ant       1, 2 or 10           -> board file bdwlan.elf<N>
++ *   /sys/wifi/pm        0/1                  -> power save off for RF tests
++ * and reads wifiver, softap, qcwlanstate, wificable. The firmware-ready path
++ * waits up to 10 s for the MAC write, exactly as on 5.4.
++ */
++#include <linux/completion.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/kobject.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/sysfs.h>
++#include "main.h"
++#include "debug.h"
++#include "cnss_utils.h"
++#include "sec_wifi_sysfs.h"
++
++enum driver_modules_status {
++	DRIVER_MODULES_UNINITIALIZED,
++	DRIVER_MODULES_ENABLED,
++	DRIVER_MODULES_CLOSED
++};
++
++#define SEC_INFO_LEN		512
++#define MACLOADER_TIMEOUT	10000
++#define MAC_ADDR_SIZE		6
++
++static enum driver_modules_status current_driver_status;
++static char ver_info[SEC_INFO_LEN];
++static char softap_info[SEC_INFO_LEN];
++static u8 mac_from_macloader[MAC_ADDR_SIZE];
++static int pm_from_macloader;
++static int ant_from_macloader;
++static DECLARE_COMPLETION(macloader_done);
++static DEFINE_MUTEX(sec_info_lock);
++
++/* Called by the WLAN host driver (5.4 hdd_sysfs_update_driver_status()). */
++void cnss_sysfs_update_driver_status(int32_t new_status, void *version,
++				     void *softap)
++{
++	mutex_lock(&sec_info_lock);
++	if (new_status == DRIVER_MODULES_ENABLED) {
++		if (version)
++			strscpy(ver_info, version, sizeof(ver_info));
++		if (softap)
++			strscpy(softap_info, softap, sizeof(softap_info));
++	}
++	current_driver_status = new_status;
++	mutex_unlock(&sec_info_lock);
++}
++EXPORT_SYMBOL(cnss_sysfs_update_driver_status);
++
++int cnss_sysfs_get_pm_info(void)
++{
++	return pm_from_macloader;
++}
++EXPORT_SYMBOL(cnss_sysfs_get_pm_info);
++
++int sec_wifi_ant_info(void)
++{
++	return ant_from_macloader;
++}
++
++void sec_wifi_wait_macloader(void)
++{
++	if (!wait_for_completion_timeout(&macloader_done,
++					 msecs_to_jiffies(MACLOADER_TIMEOUT)))
++		icnss_pr_info("macloader_done timeout\n");
++}
++
++static ssize_t mac_addr_store(struct kobject *kobj,
++			      struct kobj_attribute *attr,
++			      const char *buf, size_t count)
++{
++	u8 mac[MAC_ADDR_SIZE];
++
++	if (sscanf(buf, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
++		   &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) !=
++	    MAC_ADDR_SIZE)
++		return -EINVAL;
++
++	memcpy(mac_from_macloader, mac, MAC_ADDR_SIZE);
++	icnss_pr_info("Assigning MAC from Macloader %pM\n", mac_from_macloader);
++
++	cnss_utils_set_wlan_mac_address(mac_from_macloader, MAC_ADDR_SIZE);
++	complete_all(&macloader_done);
++
++	return count;
++}
++
++static ssize_t wifiver_show(struct kobject *kobj, struct kobj_attribute *attr,
++			    char *buf)
++{
++	ssize_t len;
++
++	mutex_lock(&sec_info_lock);
++	len = sysfs_emit(buf, "%s", ver_info);
++	mutex_unlock(&sec_info_lock);
++	return len;
++}
++
++static ssize_t softap_show(struct kobject *kobj, struct kobj_attribute *attr,
++			   char *buf)
++{
++	ssize_t len;
++
++	mutex_lock(&sec_info_lock);
++	len = sysfs_emit(buf, "%s", softap_info);
++	mutex_unlock(&sec_info_lock);
++	return len;
++}
++
++static ssize_t qcwlanstate_show(struct kobject *kobj,
++				struct kobj_attribute *attr, char *buf)
++{
++	return sysfs_emit(buf, "%s",
++			  current_driver_status == DRIVER_MODULES_ENABLED ?
++			  "ON" : "OFF");
++}
++
++static ssize_t pm_store(struct kobject *kobj, struct kobj_attribute *attr,
++			const char *buf, size_t count)
++{
++	int val;
++
++	if (kstrtoint(buf, 10, &val))
++		return -EINVAL;
++	/* 5.4 semantics: the file holds "power save enabled", we keep "off" */
++	pm_from_macloader = !val;
++	icnss_pr_info("pm_from_macloader %d\n", pm_from_macloader);
++	return count;
++}
++
++static ssize_t ant_store(struct kobject *kobj, struct kobj_attribute *attr,
++			 const char *buf, size_t count)
++{
++	int val;
++
++	if (kstrtoint(buf, 10, &val))
++		return -EINVAL;
++	ant_from_macloader = val;
++	icnss_pr_info("ant_from_macloader %d\n", ant_from_macloader);
++	return count;
++}
++
++/*
++ * RF test cable detection. The A52s device tree has no "samsung,rome_cable"
++ * node, so this reads as empty there, as on 5.4.
++ */
++static ssize_t wificable_show(struct kobject *kobj,
++			      struct kobj_attribute *attr, char *buf)
++{
++	struct device_node *np;
++	struct gpio_desc *c1, *c2;
++	ssize_t len = 0;
++
++	np = of_find_compatible_node(NULL, NULL, "samsung,rome_cable");
++	if (!np)
++		return 0;
++
++	c1 = fwnode_gpiod_get_index(of_fwnode_handle(np), "wlan_cable_wifi_1",
++				    0, GPIOD_IN, "wlan_cable_wifi_1");
++	c2 = fwnode_gpiod_get_index(of_fwnode_handle(np), "wlan_cable_wifi_2",
++				    0, GPIOD_IN, "wlan_cable_wifi_2");
++	if (!IS_ERR(c1) && !IS_ERR(c2)) {
++		msleep(100);
++		len = sysfs_emit(buf, "%c%c\n",
++				 gpiod_get_raw_value_cansleep(c1) > 0 ? 'D' : 'E',
++				 gpiod_get_raw_value_cansleep(c2) > 0 ? 'D' : 'E');
++	} else {
++		icnss_pr_err("can't get the wlan_cable_wifi GPIOs\n");
++	}
++	if (!IS_ERR(c1))
++		gpiod_put(c1);
++	if (!IS_ERR(c2))
++		gpiod_put(c2);
++	of_node_put(np);
++	return len;
++}
++
++static ssize_t memdump_store(struct kobject *kobj, struct kobj_attribute *attr,
++			     const char *buf, size_t count)
++{
++	return count;
++}
++
++/* modes as on 5.4 (init chowns them: wifi_sec.rc) */
++static struct kobj_attribute sec_mac_addr_attr = __ATTR(mac_addr, 0220, NULL, mac_addr_store);
++static struct kobj_attribute sec_wifiver_attr = __ATTR(wifiver, 0440, wifiver_show, NULL);
++static struct kobj_attribute sec_softap_attr = __ATTR(softap, 0440, softap_show, NULL);
++static struct kobj_attribute sec_qcwlanstate_attr = __ATTR(qcwlanstate, 0440, qcwlanstate_show, NULL);
++static struct kobj_attribute sec_pm_attr = __ATTR(pm, 0220, NULL, pm_store);
++static struct kobj_attribute sec_ant_attr = __ATTR(ant, 0220, NULL, ant_store);
++static struct kobj_attribute sec_wificable_attr = __ATTR(wificable, 0440, wificable_show, NULL);
++static struct kobj_attribute sec_memdump_attr = __ATTR(memdump, 0220, NULL, memdump_store);
++
++static struct attribute *sec_sysfs_attrs[] = {
++	&sec_mac_addr_attr.attr,
++	&sec_wifiver_attr.attr,
++	&sec_softap_attr.attr,
++	&sec_qcwlanstate_attr.attr,
++	&sec_pm_attr.attr,
++	&sec_ant_attr.attr,
++	&sec_wificable_attr.attr,
++	&sec_memdump_attr.attr,
++	NULL
++};
++
++static const struct attribute_group sec_sysfs_attr_group = {
++	.attrs = sec_sysfs_attrs,
++};
++
++int sec_create_wifi_sysfs(struct icnss_priv *priv)
++{
++	int ret;
++
++	priv->wifi_kobj = kobject_create_and_add("wifi", NULL);
++	if (!priv->wifi_kobj) {
++		icnss_pr_err("Failed to create the wifi kernel object\n");
++		return -ENOMEM;
++	}
++
++	ret = sysfs_create_group(priv->wifi_kobj, &sec_sysfs_attr_group);
++	if (ret) {
++		icnss_pr_err("could not create the wifi group %d\n", ret);
++		kobject_put(priv->wifi_kobj);
++		priv->wifi_kobj = NULL;
++	}
++	return ret;
++}
++
++void sec_remove_wifi_sysfs(struct icnss_priv *priv)
++{
++	complete_all(&macloader_done);
++	if (priv->wifi_kobj) {
++		sysfs_remove_group(priv->wifi_kobj, &sec_sysfs_attr_group);
++		kobject_put(priv->wifi_kobj);
++		priv->wifi_kobj = NULL;
++	}
++}
+--- a/icnss2/sec_wifi_sysfs.h
++++ b/icnss2/sec_wifi_sysfs.h
+@@ -0,0 +1,20 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/* Samsung /sys/wifi interface for macloader (from the SM-A528B 5.4 icnss2). */
++#ifndef _ICNSS_SEC_WIFI_SYSFS_H
++#define _ICNSS_SEC_WIFI_SYSFS_H
++
++struct icnss_priv;
++
++#ifdef CONFIG_SEC_SS_CNSS_FEATURE_SYSFS
++int sec_create_wifi_sysfs(struct icnss_priv *priv);
++void sec_remove_wifi_sysfs(struct icnss_priv *priv);
++void sec_wifi_wait_macloader(void);
++int sec_wifi_ant_info(void);
++#else
++static inline int sec_create_wifi_sysfs(struct icnss_priv *priv) { return 0; }
++static inline void sec_remove_wifi_sysfs(struct icnss_priv *priv) { }
++static inline void sec_wifi_wait_macloader(void) { }
++static inline int sec_wifi_ant_info(void) { return 0; }
++#endif
++
++#endif

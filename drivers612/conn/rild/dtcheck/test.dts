@@ -1,0 +1,5 @@
+/dts-v1/;
+#include "yupik.dtsi"
+#include "yupik-idp.dtsi"
+/ { model = "a52sxq conn fragment compile check"; compatible = "qcom,yupik"; qcom,board-id = <0 0>; };
+#include "a52sxq-conn.dtsi"

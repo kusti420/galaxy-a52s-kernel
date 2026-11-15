@@ -1,0 +1,75 @@
+--- a/qseecom/qseecom.c
++++ b/qseecom/qseecom.c
+@@ -8035,6 +8035,14 @@
+ 	}
+ }
+ 
++/* a52sxq: 5.4 UAPI numbers that are gone from the 6.12 header, see qseecom_ioctl() */
++#define QSEECOM_IOCTL_PERF_ENABLE_REQ_LEGACY		_IO(QSEECOM_IOC_MAGIC, 11)
++#define QSEECOM_IOCTL_PERF_DISABLE_REQ_LEGACY		_IO(QSEECOM_IOC_MAGIC, 12)
++#define QSEECOM_IOCTL_SET_BUS_SCALING_REQ_LEGACY	_IOWR(QSEECOM_IOC_MAGIC, 23, int)
++static_assert(QSEECOM_IOCTL_PERF_ENABLE_REQ_LEGACY == 0x970b);
++static_assert(QSEECOM_IOCTL_PERF_DISABLE_REQ_LEGACY == 0x970c);
++static_assert(QSEECOM_IOCTL_SET_BUS_SCALING_REQ_LEGACY == 0xc0049717);
++
+ long qseecom_ioctl(struct file *file,
+ 			unsigned int cmd, unsigned long arg)
+ {
+@@ -8724,6 +8732,40 @@
+ 		pr_err("QSEECOM_IOCTL_FBE_CLEAR_KEY IOCTL is deprecated\n");
+ 		return -EINVAL;
+ 	}
++	/*
++	 * a52sxq: three ioctls of the 5.4 UAPI that the 6.12 driver dropped together with its
++	 * HLOS crypto clock and bus voting. libQSEEComAPI of the 5.4 vendor still issues them
++	 * (QSEECom_set_bandwidth). The phone's DT has qcom,no-clock-support and no
++	 * qcom,support-bus-scaling, where the 5.4 driver did nothing and returned 0 after
++	 * checking the handle; keep exactly that.
++	 */
++	case QSEECOM_IOCTL_PERF_ENABLE_REQ_LEGACY:
++		if ((data->type != QSEECOM_GENERIC) &&
++			(data->type != QSEECOM_CLIENT_APP)) {
++			pr_err("perf enable req: invalid handle (%d)\n", data->type);
++			return -EINVAL;
++		}
++		if ((data->type == QSEECOM_CLIENT_APP) && (data->client.app_id == 0)) {
++			pr_err("perf enable req: invalid handle (%d) appid(%d)\n",
++					data->type, data->client.app_id);
++			return -EINVAL;
++		}
++		break;
++	case QSEECOM_IOCTL_PERF_DISABLE_REQ_LEGACY:
++		if ((data->type != QSEECOM_SECURE_SERVICE) &&
++			(data->type != QSEECOM_CLIENT_APP)) {
++			pr_err("perf disable req: invalid handle (%d)\n", data->type);
++			return -EINVAL;
++		}
++		if ((data->type == QSEECOM_CLIENT_APP) && (data->client.app_id == 0)) {
++			pr_err("perf disable req: invalid handle (%d) appid(%d)\n",
++					data->type, data->client.app_id);
++			return -EINVAL;
++		}
++		break;
++	case QSEECOM_IOCTL_SET_BUS_SCALING_REQ_LEGACY:
++		/* 5.4: "crypto clock is not handled by HLOS" => success, nothing to do */
++		break;
+ 	default:
+ 		pr_err("Invalid IOCTL: 0x%x\n", cmd);
+ 		return -ENOIOCTLCMD;
+--- a/qseecom/qseecom_32bit_impl.c
++++ b/qseecom/qseecom_32bit_impl.c
+@@ -970,6 +970,14 @@
+ 		return ret;
+ 	}
+ 	break;
++	/*
++	 * a52sxq: the three 5.4 ioctls the 6.12 driver dropped (same numbers for 32-bit and
++	 * 64-bit callers, no pointers in the argument); handled in qseecom_ioctl().
++	 */
++	case _IO(QSEECOM_IOC_MAGIC, 11):	/* PERF_ENABLE_REQ */
++	case _IO(QSEECOM_IOC_MAGIC, 12):	/* PERF_DISABLE_REQ */
++	case _IOWR(QSEECOM_IOC_MAGIC, 23, int):	/* SET_BUS_SCALING_REQ */
++		return qseecom_ioctl(file, cmd, 0);
+ 	default:
+ 		return -ENOIOCTLCMD;
+ 	break;

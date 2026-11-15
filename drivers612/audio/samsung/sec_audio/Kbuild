@@ -1,0 +1,3 @@
+# Samsung sec_audio_sysfs (5.4 sound/soc/samsung/sec_audio_sysfs.c, CONFIG_SND_SOC_SAMSUNG_AUDIO=m)
+ccflags-y += -I$(src)/include -DCONFIG_SND_SOC_SAMSUNG_AUDIO=1
+obj-m += sec_audio_sysfs.o

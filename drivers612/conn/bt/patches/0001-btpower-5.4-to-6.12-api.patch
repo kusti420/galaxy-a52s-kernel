@@ -1,0 +1,56 @@
+--- a/btpower.c
++++ b/btpower.c
+@@ -21,7 +21,7 @@
+ #include <linux/regulator/consumer.h>
+ #include <linux/clk.h>
+ #include <linux/uaccess.h>
+-#include <linux/btpower.h>
++#include "btpower.h"
+ #include <linux/of_device.h>
+ #include <soc/qcom/cmd-db.h>
+ 
+@@ -328,7 +328,7 @@
+ 		return -EINVAL;
+ 	/* Get the clock handle for vreg */
+ 	if (clk->is_enabled) {
+-		pr_warning("%s: node: %p, clk->is_enabled:%d\n",
++		pr_warn("%s: node: %p, clk->is_enabled:%d\n",
+ 			   __func__, clk->clk, clk->is_enabled);
+ 		return 0;
+ 	}
+@@ -354,7 +354,7 @@
+ 		return -EINVAL;
+ 	/* Get the clock handle for vreg */
+ 	if (!clk->is_enabled) {
+-		pr_warning("%s: node: %p, clk->is_enabled:%d\n",
++		pr_warn("%s: node: %p, clk->is_enabled:%d\n",
+ 			   __func__, clk->clk, clk->is_enabled);
+ 		return 0;
+ 	}
+@@ -1012,7 +1012,7 @@
+ 	return ret;
+ }
+ 
+-static int bt_power_remove(struct platform_device *pdev)
++static void bt_power_remove(struct platform_device *pdev)
+ {
+ 	dev_dbg(&pdev->dev, "%s\n", __func__);
+ 
+@@ -1020,8 +1020,6 @@
+ 	bt_power_vreg_put();
+ 
+ 	kfree(bt_power_pdata);
+-
+-	return 0;
+ }
+ 
+ int btpower_register_slimdev(struct device *dev)
+@@ -1231,7 +1229,7 @@
+ 		goto chrdev_err;
+ 	}
+ 
+-	bt_class = class_create(THIS_MODULE, "bt-dev");
++	bt_class = class_create("bt-dev");
+ 	if (IS_ERR(bt_class)) {
+ 		pr_err("%s: coudn't create class\n", __func__);
+ 		ret = -1;

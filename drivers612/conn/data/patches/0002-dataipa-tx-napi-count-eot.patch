@@ -1,0 +1,20 @@
+diff --git a/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c b/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c
+index 4136b92..cb39ed9 100644
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c
+@@ -6568,6 +6568,15 @@ static void ipa_gsi_irq_tx_notify_cb(struct gsi_chan_xfer_notify *notify)
+ 				napi_schedule(&tx_pkt->sys->napi_tx);
+ 			}
+ 		} else if (ipa_net_initialized && sys->napi_tx_enable) {
++			/*
++			 * a52sxq: the NAPI poll (ipa3_aux_napi_tx_complete ->
++			 * ipa3_napi_tx_complete) only completes packets while
++			 * xmit_eot_cnt > 0, but r30 increments it only on the
++			 * tasklet path. With qcom,tx-napi and no qcom,tx-poll
++			 * (every 5.4 yupik tree) no WAN_PROD/LAN_PROD skb was
++			 * ever completed. Count the EOT as 5.4 did.
++			 */
++			atomic_inc(&tx_pkt->sys->xmit_eot_cnt);
+ 			if(!atomic_cmpxchg(&tx_pkt->sys->in_napi_context, 0, 1))
+ 				napi_schedule(&tx_pkt->sys->napi_tx);
+ 		} else {

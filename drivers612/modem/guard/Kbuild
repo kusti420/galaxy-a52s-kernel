@@ -1,0 +1,2 @@
+# a52_modem_guard: test-only modem SSR safety net (see the header of the .c file)
+obj-m += a52_modem_guard.o

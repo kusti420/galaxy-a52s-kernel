@@ -1,0 +1,104 @@
+ONE-SIDE msm/msm_atomic.c:31 (before)
+    s23: #include <drm/drm_atomic_uapi.h>
+    our: #endif
+ONE-SIDE msm/msm_atomic.c:273 (after)
+    s23: drm_bridge_chain_post_disable(bridge);
+    our: DRM_ATOMIC_BRIDGE_CHAIN_POST_DISABLE(bridge, old_state);
+ONE-SIDE msm/msm_drv.c:102 (after)
+    s23: static void msm_fb_output_poll_changed(struct drm_device *dev)
+    our: #if (KERNEL_VERSION(6, 12, 0) > LINUX_VERSION_CODE)
+ONE-SIDE msm/msm_drv.h:23 (after)
+    s23: #if IS_ENABLED(CONFIG_DRM_MSM_DP_KUNIT) && IS_ENABLED(CONFIG_UML)
+    our: #include <linux/kernel.h>
+ONE-SIDE msm/msm_drv.h:259 (after)
+    s23: CONNECTOR_PROP_COUNT
+    our: CONNECTOR_PROP_WB_ROT_TYPE,
+REVIEW msm/msm_drv.h:1391
+    s23 before: void msm_fbdev_free(struct drm_device *dev);
+    our before: }
+    s23 after : struct hdmi;
+    our after : static inline void __init msm_hdmi_register(void)
+ABSENT-OR-EDITED msm/msm_smmu.c (s23 line 502): ss_smmu_debug_log();
+ONE-SIDE msm/msm_smmu.c:626 (before)
+    s23: pr_err("component add failed\n");
+    our: }
+ABSENT-OR-EDITED msm/sde_dbg.c (s23 line 1482): if (!sec_debug_is_enabled())
+ABSENT-OR-EDITED msm/sde_dbg.c (s23 line 1567): void ss_sde_dbg_debugfs_open(void)
+ONE-SIDE msm/sde_io_util.c:772 (before)
+    s23: EXPORT_SYMBOL(msm_dss_clk_set_rate);
+    our: EXPORT_SYMBOL_GPL(msm_dss_clk_set_rate);
+ABSENT-OR-EDITED msm/dsi/dsi_ctrl.c (s23 line 33): /* To Support 10Hz(KICKOFF_TIMEOUT 200ms) */
+REVIEW msm/dsi/dsi_ctrl.c:2227
+    s23 before: DSI_CTRL_INFO(dsi_ctrl, "Probe successful\n");
+    our before: platform_set_drvdata(pdev, dsi_ctrl);
+    s23 after : return 0;
+    our after : uio_init(pdev);
+ONE-SIDE msm/dsi/dsi_ctrl.c:2808 (after)
+    s23: cb_info = dsi_ctrl->irq_info.irq_err_cb;
+    our: struct dsi_display *display;
+ONE-SIDE msm/dsi/dsi_defs.h:379 (after)
+    s23: };
+    our: ktime_t ts;
+ONE-SIDE msm/dsi/dsi_defs.h:473 (before)
+    s23: u32 qsync_min_fps;
+    our: u32 avr_step_fps;
+ONE-SIDE msm/dsi/dsi_display.c:9104 (after)
+    s23: mode = display->panel->cur_mode;
+    our: if (display->misr_enable)
+ONE-SIDE msm/dsi/dsi_display.c:9407 (before)
+    s23: SDE_EVT32_PICK(SDE_EVTLOG_FUNC_EXIT);
+    our: SDE_EVT32(SDE_EVTLOG_FUNC_EXIT);
+ONE-SIDE msm/dsi/dsi_display.c:9612 (before)
+    s23: SDE_EVT32_PICK(SDE_EVTLOG_FUNC_EXIT);
+    our: SDE_EVT32(SDE_EVTLOG_FUNC_EXIT);
+ONE-SIDE msm/dsi/dsi_display.h:848 (after)
+    s23: #endif /* _DSI_DISPLAY_H_ */
+    our: int dsi_display_get_panel_scan_line(void *display, u16 *scan_line, ktime_t *scan_line_ts);
+ABSENT-OR-EDITED msm/dsi/dsi_drm.c (s23 line 143): snprintf(drm_mode->name, DRM_DISPLAY_MODE_LEN, "%dx%dx%dx%s%s",
+ONE-SIDE msm/dsi/dsi_panel.c:5580 (before)
+    s23: DSI_INFO("ctrl:%d qsync on\n", ctrl_idx);
+    our: DSI_DEBUG("ctrl:%d qsync on\n", ctrl_idx);
+ONE-SIDE msm/dsi/dsi_panel.c:5623 (before)
+    s23: DSI_INFO("ctrl:%d qsync off\n", ctrl_idx);
+    our: DSI_DEBUG("ctrl:%d qsync off\n", ctrl_idx);
+ONE-SIDE msm/dsi/dsi_phy_hw_v4_0.c:240 (after)
+    s23: static inline u32 dsi_phy_hw_calc_cmn_lane_ctrl0(struct dsi_phy_cfg *cfg)
+    our: static void dsi_phy_hw_cphy_enable(struct dsi_phy_hw *phy,
+ONE-SIDE msm/dsi/dsi_phy_hw_v4_0.c:539 (before)
+    s23: u32 cmn_lane_ctrl0 = 0;
+    our: u32 lanes_per_sublink;
+ONE-SIDE msm/dsi/dsi_phy_hw_v5_0.c:235 (after)
+    s23: static inline u32 dsi_phy_hw_calc_cmn_lane_ctrl0(struct dsi_phy_cfg *cfg)
+    our: static void dsi_phy_hw_cphy_enable(struct dsi_phy_hw *phy, struct dsi_phy_cfg *cfg)
+ONE-SIDE msm/dsi/dsi_phy_hw_v5_0.c:499 (before)
+    s23: u32 cmn_lane_ctrl0 = 0;
+    our: u32 lanes_per_sublink;
+ABSENT-OR-EDITED msm/sde/sde_connector.c (s23 line 165): /*************************************************
+ABSENT-OR-EDITED msm/sde/sde_connector.c (s23 line 823): static int _sde_connector_update_bl_scale(struct sde_connector *c_conn
+ABSENT-OR-EDITED msm/sde/sde_connector.c (s23 line 1076): if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI) {
+ONE-SIDE msm/sde/sde_connector.c:1240 (before)
+    s23: struct drm_crtc *crtc;
+    our: struct sde_kms *sde_kms;
+ABSENT-OR-EDITED msm/sde/sde_connector.c (s23 line 3332): /* SAMSUNG_FINGERPRINT */
+ONE-SIDE msm/sde/sde_crtc.c:3066 (after)
+    s23: SDE_EVT32_VERBOSE(DRMID(crtc), ktime_to_us(ts));
+    our: SDE_EVT32(DRMID(crtc), ktime_to_us(ts));
+ONE-SIDE msm/sde/sde_encoder_phys_cmd.c:60 (before)
+    s23: #define AUTOREFRESH_SEQ2_POLL_TIMEOUT	1000000
+    our: #define TEAR_DETECT_CTRL	0x14
+ONE-SIDE msm/sde/sde_encoder_phys_cmd.c:632 (before)
+    s23: sde_rsc_log_vsync_info(phys_enc->parent);
+    our: _sde_encoder_phys_cmd_process_sim_qsync_event(phys_enc, SDE_SIM_QSYNC_EVENT_TE_TRIGGER);
+ABSENT-OR-EDITED msm/sde/sde_encoder_phys_cmd.c (s23 line 1228): SDE_DEBUG_CMDENC(cmd_enc,
+ABSENT-OR-EDITED msm/sde/sde_encoder_phys_cmd.c (s23 line 1363): /* 9 * 16.6ms based on mode->vtotal (To cover 10Hz, Set 150ms)
+ABSENT-OR-EDITED msm/sde/sde_kms.c (s23 line 4153): SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc-
+ABSENT-OR-EDITED msm/sde/sde_kms.c (s23 line 4167): SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc-
+ABSENT-OR-EDITED msm/sde/sde_kms.c (s23 line 4171): SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc-
+ABSENT-OR-EDITED msm/sde/sde_kms.c (s23 line 4176): SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc-
+ABSENT-OR-EDITED msm/sde/sde_kms.c (s23 line 4181): SS_XLOG_VSYNC(__LINE__, atomic_read(&dev->power.usage_count), sde_enc-
+blocks: same neighbours both sides 359, one side differs 24, both differ 2, absent/edited 16
+FUNCTION DIFFERS msm/msm_drv.c:102  s23: <file scope>  ours: msm_ioctl_rmfb2   [static BLOCKING_NOTIFIER_HEAD(msm_drm_notifier_list);]
+FUNCTION DIFFERS msm/sde/sde_connector.c:2908  s23: _sde_connector_report_panel_dead  ours: sde_connector_report_panel_dead   [{]
+FUNCTION DIFFERS msm/sde/sde_crtc.c:3066  s23: sde_crtc_vblank_cb  ours: sde_crtc_vblank_notify   [SS_XLOG_VSYNC(DRMID(crtc), ktime_to_us(ts));]
+FUNCTION DIFFERS msm/sde/sde_encoder_phys_cmd.c:60  s23: <file scope>  ours: _get_tearcheck_cfg   [static struct samsung_display_driver_data *ss_get_vdd_from_p]
+356 blocks compared, 4 in a different function

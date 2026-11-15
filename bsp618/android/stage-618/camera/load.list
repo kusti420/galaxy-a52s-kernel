@@ -1,0 +1,41 @@
+# camera (drivers612/camera README load order); BSP deps first (already-loaded ones just fail with EEXIST)
+qcom-scm.ko
+qcom_iommu_util.ko
+debug_symbol.ko
+secure_buffer.ko
+gh_arm_drv.ko
+gh_dbl.ko
+gh_msgq.ko
+gh_rm_drv.ko
+gh_mem_notifier.ko
+mem_buf_dev.ko
+msm_dma_iommu_mapping.ko
+deferred-free-helper.ko
+qcom_dma_heaps.ko
+smem.ko
+minidump.ko
+qcom_ipc_logging.ko
+qcom_glink.ko
+qcom_glink_smem.ko
+qcom_smd.ko
+rproc_qcom_common.ko
+qmi_helpers.ko
+qcom_pdr_msg.ko
+pdr_interface.ko
+qti_pmic_glink.ko
+panel_event_notifier.ko
+qti-battery-charger.ko
+leds-qti-flash.ko
+proxy-consumer.ko
+debug-regulator.ko
+gdsc-regulator.ko
+crm-v2.ko
+icc-clk.ko
+clk-qcom.ko
+camcc-sc7280.ko
+# real SM5714 flash LED (drivers612/power/src/leds54, MFD cell of mfd_sm5714; was
+# sm5714_fled_stub until 2026-11-14). Needs mfd_sm5714, sm5714-charger, muic_sm5714 AND
+# pdic_sm5714 loaded: stage powerpd must come before camera in a52.mods (stage power alone
+# lacks pdic_sm5714 -> unknown symbols here -> camera.ko cannot load either).
+leds-sm5714-fled.ko
+camera.ko

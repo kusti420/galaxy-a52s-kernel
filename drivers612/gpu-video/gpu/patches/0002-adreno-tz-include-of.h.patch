@@ -1,0 +1,10 @@
+--- a/governor_msm_adreno_tz.c	2026-11-11 18:29:18.265669064 +0200
++++ b/governor_msm_adreno_tz.c	2026-11-11 20:40:07.604574779 +0200
+@@ -4,6 +4,7 @@
+  * Copyright (c) 2022-2025, Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ #include <linux/errno.h>
++#include <linux/of.h>
+ #include <linux/devfreq.h>
+ #include <linux/dma-mapping.h>
+ #include <linux/math64.h>

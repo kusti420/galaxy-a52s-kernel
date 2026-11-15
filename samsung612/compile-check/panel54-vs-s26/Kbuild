@@ -1,0 +1,16 @@
+# Syntax-level check: the unmodified A52s 5.4 panel file against the Galaxy S26 6.12 Samsung
+# display framework headers. Not a module anyone loads.
+S26D := ./donors/samsung-s26-6.12/Kernel/vendor/qcom/opensource/display-drivers
+S26V := ./donors/samsung-s26-6.12/Kernel/vendor/qcom/opensource
+S26S := ./donors/samsung-s26-6.12/Kernel/kernel_platform/soc-repo
+ccflags-y += -I$(S26S)/include -I$(S26S)/include/uapi \
+	-I$(S26D) -I$(S26D)/include -I$(S26D)/include/linux -I$(S26D)/rotator -I$(S26D)/msm \
+	-I$(S26D)/msm/dp -I$(S26D)/msm/hdmi -I$(S26D)/msm/dsi -I$(S26D)/msm/hfi -I$(S26D)/msm/sde/hfi \
+	-I$(S26D)/msm/dsi/hfi -I$(S26D)/msm/sde -I$(S26V)/mm-drivers/hw_fence/include \
+	-I$(S26V)/mm-drivers/hfi_core/inc -I$(S26V)/mm-drivers/msm_ext_display/include \
+	-I$(S26V)/mm-drivers/sync_fence/include -I./donors/mm-drivers/sync_fence/include -I./donors/mm-drivers/msm_ext_display/include -I$(S26D)/include/uapi/display -I$(S26V)/synx-kernel/msm/synx -I$(S26V)/synx-kernel/include/uapi/synx/media -I$(S26V)/securemsm-kernel/include/linux -I$(S26V)/securemsm-kernel/include -I$(S26V)/mmrm-driver/driver/src \
+	-I$(S26D)/msm/samsung -I$(S26D)/msm/samsung/SELF_DISPLAY -I$(S26D)/msm/samsung/MAFPC \
+	-include $(S26D)/config/gki_canoedispconf.h -include $(S26D)/msm/samsung/panel_common_conf.h \
+	-DCONFIG_OPCODE_PARSER=1 -DCONFIG_PANEL_S6E3FC3_AMS646YD01_LO_FHD=1 \
+	-ferror-limit=0 -Wno-error
+obj-m := ss_dsi_panel_S6E3FC3_AMS646YD01_LO.o

@@ -1,0 +1,99 @@
+#!/bin/busybox sh
+# Minimal bring-up init for the a52sxq test kernels (project a52sxq-mainline).
+# USB gadget (NCM network 172.16.42.1 + ACM serial), telnet shell, pstore, and a dead-man
+# timer that reboots into Download mode by itself so a test never needs key presses:
+# a round trip through Download mode is what clears the bootloader's sticky recovery flag.
+# Cmdline: a52.net=<n> (USB network 172.16.<n>.1, default 42; a second phone uses 43),
+# a52.wdt=<seconds> (hypervisor watchdog, default 30; 0 = off),
+# a52.deadman=<seconds> (default 300; 0 = never). `touch /tmp/keep` cancels it.
+B=/bin/busybox
+$B mkdir -p /proc /sys /dev /tmp /config /run
+$B mount -t proc proc /proc
+$B mount -t sysfs sysfs /sys
+$B mount -t devtmpfs devtmpfs /dev
+$B mkdir -p /dev/pts
+$B mount -t devpts devpts /dev/pts
+$B mount -t tmpfs tmpfs /tmp
+$B mount -t configfs configfs /config
+$B mount -t pstore pstore /sys/fs/pstore 2>/dev/null
+$B mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null
+for a in sh ls cat echo dmesg mount umount ifconfig ip sleep ps kill grep sed head tail cut tr wc dd hexdump find mkdir rm ln cp mv sync reboot poweroff vi top free df lsmod insmod modprobe uname date printf seq test true false stat touch chmod devmem setsid watchdog killall pkill; do
+	[ -e /bin/$a ] || $B ln -s busybox /bin/$a
+done
+export PATH=/bin:/sbin:/usr/bin
+log() { echo "a52sxq-init: $*" > /dev/kmsg; }
+# Crash guard. The previous boot's kernel log survives in ramoops. If it was one of our test
+# boots and did not end with "clean exit", it hung (watchdog bite) or panicked: keep that log
+# for the PC and leave quickly instead of repeating whatever killed it.
+CRASHED=0
+PREV=/sys/fs/pstore/console-ramoops-0
+if [ -e $PREV ]; then
+	cp $PREV /tmp/prev-console.txt
+	if grep -q "a52sxq-init: start" $PREV && ! grep -q "a52sxq-init: clean exit" $PREV; then
+		CRASHED=1; touch /tmp/crashed
+	fi
+	# consume the record, so a later boot does not judge this old log again
+	rm -f $PREV
+fi
+log "start (previous test boot crashed: $CRASHED)"
+DEADMAN=300
+WDT=0
+NET=42
+for w in $(cat /proc/cmdline); do case "$w" in a52.deadman=*) DEADMAN=${w#a52.deadman=};; a52.wdt=*) WDT=${w#a52.wdt=};; a52.net=*) NET=${w#a52.net=};; esac; done
+[ $CRASHED = 1 ] && DEADMAN=90
+
+# Hypervisor watchdog (modules/hhwdt): a hung kernel is reset after $WDT s without a pet.
+# Safe mode after a crashed boot: arm nothing, so a fault in the watchdog itself cannot loop.
+[ $CRASHED = 1 ] && WDT=0
+if [ "$WDT" != 0 ] && insmod /hhwdt.ko 2>/dev/null && [ -e /dev/watchdog0 ]; then
+	$B watchdog -T "$WDT" -t 5 /dev/watchdog0 && log "watchdog armed, ${WDT}s" || log "watchdog feeder failed"
+else
+	log "watchdog not armed"
+fi
+
+# USB gadget; the UDC can take a while to probe.
+G=/config/usb_gadget/g1
+mkdir -p $G/strings/0x409 $G/configs/c.1/strings/0x409 $G/functions/ncm.usb0 $G/functions/acm.usb0
+echo 0x1209 > $G/idVendor; echo 0xa528 > $G/idProduct
+echo a52sxq-ack > $G/strings/0x409/manufacturer
+echo "a52sxq test kernel $(uname -r)" > $G/strings/0x409/product
+echo a52sxqtest > $G/strings/0x409/serialnumber
+echo "ncm+acm" > $G/configs/c.1/strings/0x409/configuration
+ln -s $G/functions/ncm.usb0 $G/configs/c.1/
+ln -s $G/functions/acm.usb0 $G/configs/c.1/
+i=0
+while [ $i -lt 60 ]; do
+	UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+	[ -n "$UDC" ] && break
+	sleep 1; i=$((i + 1))
+done
+if [ -n "$UDC" ]; then
+	echo "$UDC" > $G/UDC && log "gadget on $UDC after ${i}s"
+	ifconfig usb0 172.16.$NET.1 netmask 255.255.255.0 up
+	/usr/bin/unudhcpd -i usb0 -s 172.16.$NET.1 -c 172.16.$NET.2 >/dev/null 2>&1 &
+	/bin/busybox-extras telnetd -b 172.16.$NET.1:23 -l /bin/sh
+	[ -e /dev/ttyGS0 ] && setsid sh -c 'while :; do sh </dev/ttyGS0 >/dev/ttyGS0 2>&1; sleep 1; done' &
+else
+	log "no UDC appeared"
+fi
+
+if [ "$DEADMAN" != 0 ]; then
+	( sleep "$DEADMAN"; [ -e /tmp/keep ] || { log "dead-man timer"; /leave; } ) &
+fi
+log "ready (deadman=${DEADMAN}s)"
+
+# The Samsung bootloader rewrites console= to ttynull, so nothing reaches the screen by itself.
+# fbcon is still bound to the bootloader framebuffer: write a banner and the log tail to it.
+if [ -e /dev/tty0 ]; then
+	{
+		printf '\033[2J\033[H\n\n\n'
+		echo "   a52sxq test kernel $(uname -r)"
+		echo "   $(cat /proc/device-tree/model)"
+		echo "   CPUs: $(grep -c processor /proc/cpuinfo)   RAM: $(grep MemTotal /proc/meminfo | tr -s ' ' | cut -d' ' -f2) kB"
+		echo "   UFS partitions: $(grep -c 'sd[a-f][0-9]' /proc/partitions)"
+		echo "   USB shell: telnet 172.16.$NET.1   self-reboot in ${DEADMAN}s"
+		echo
+		dmesg | tail -25 | cut -c1-110
+	} > /dev/tty0 2>/dev/null
+fi
+while :; do sleep 3600; done

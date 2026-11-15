@@ -1,0 +1,102 @@
+--- a/kgsl.h	2026-11-11 18:29:18.266700647 +0200
++++ b/kgsl.h	2026-11-11 20:40:07.604874261 +0200
+@@ -533,4 +533,32 @@
+  * @kref: Pointer to context refcount
+  */
+ void kgsl_context_destroy_deferred(struct kref *kref);
++/**
++ * kgsl_copy_from_user_compat54 - copy a variable-size user struct the way the 5.4 driver did
++ * @dest: kernel struct (zero-filled first)
++ * @ksize: sizeof the kernel struct
++ * @src: user pointer
++ * @usize: size the caller says its struct has
++ *
++ * a52sxq: the closed 5.4-era Adreno userspace was written against kgsl_copy_from_user() of the
++ * 5.4 driver: copy min(ksize, usize) bytes and ignore whatever follows. The 6.x driver uses
++ * copy_struct_from_user(), which fails with -E2BIG when usize > ksize and the bytes after ksize
++ * are not zero. Old libgsl is known to pass the size of the whole list as the entry size for
++ * cmdlist/memlist/synclist (the "extra" bytes are the next entry), so every multi-entry
++ * IOCTL_KGSL_GPU_COMMAND would fail. Keep the 5.4 contract for every call site that used
++ * kgsl_copy_from_user() in 5.4. As in 5.4, a zero size is -EINVAL.
++ */
++static inline int kgsl_copy_from_user_compat54(void *dest, size_t ksize,
++		const void __user *src, size_t usize)
++{
++	size_t copy = min(ksize, usize);
++
++	if (!copy)
++		return -EINVAL;
++
++	memset(dest, 0, ksize);
++
++	return copy_from_user(dest, src, copy) ? -EFAULT : 0;
++}
++
+ #endif /* __KGSL_H */
+--- a/kgsl.c	2026-11-11 18:29:18.266700647 +0200
++++ b/kgsl.c	2026-11-11 20:40:07.608036619 +0200
+@@ -2791,7 +2791,7 @@
+ 	struct kgsl_context *context;
+ 	long ret;
+ 
+-	if (copy_struct_from_user(&event, sizeof(event),
++	if (kgsl_copy_from_user_compat54(&event, sizeof(event),
+ 		u64_to_user_ptr(param->priv), param->len))
+ 		return -EFAULT;
+ 
+@@ -2833,7 +2833,7 @@
+ 	if (!kgsl_mem_entry_set_pend(entry))
+ 		return -EBUSY;
+ 
+-	if (copy_struct_from_user(&event, sizeof(event),
++	if (kgsl_copy_from_user_compat54(&event, sizeof(event),
+ 		u64_to_user_ptr(param->priv), param->len)) {
+ 		kgsl_mem_entry_unset_pend(entry);
+ 		return -EFAULT;
+@@ -3187,7 +3187,7 @@
+ 		SET_FLAG(KGSL_MEMDESC_SECURE, &entry->memdesc.priv);
+ 	}
+ 
+-	if (copy_struct_from_user(&buf, sizeof(buf),
++	if (kgsl_copy_from_user_compat54(&buf, sizeof(buf),
+ 		u64_to_user_ptr(param->priv), param->priv_len))
+ 		return -EFAULT;
+ 
+@@ -3904,7 +3904,7 @@
+ 	ptr = u64_to_user_ptr(param->objs);
+ 
+ 	for (i = 0; i < param->count; i++) {
+-		ret = copy_struct_from_user(&objs[i], sizeof(*objs), ptr,
++		ret = kgsl_copy_from_user_compat54(&objs[i], sizeof(*objs), ptr,
+ 			param->obj_len);
+ 		if (ret)
+ 			goto out;
+--- a/kgsl_drawobj.c	2026-11-11 18:29:18.266700647 +0200
++++ b/kgsl_drawobj.c	2026-11-11 20:40:07.605580424 +0200
+@@ -1482,7 +1482,7 @@
+ 		return ret;
+ 
+ 	for (i = 0; i < count; i++) {
+-		if (copy_struct_from_user(&obj, sizeof(obj), ptr, size))
++		if (kgsl_copy_from_user_compat54(&obj, sizeof(obj), ptr, size))
+ 			return -EFAULT;
+ 
+ 		/* Sanity check the flags */
+@@ -1521,7 +1521,7 @@
+ 		return ret;
+ 
+ 	for (i = 0; i < count; i++) {
+-		if (copy_struct_from_user(&obj, sizeof(obj), ptr, size))
++		if (kgsl_copy_from_user_compat54(&obj, sizeof(obj), ptr, size))
+ 			return -EFAULT;
+ 
+ 		if (!(obj.flags & KGSL_OBJLIST_MEMOBJ)) {
+@@ -1599,7 +1599,7 @@
+ 		return -ENOMEM;
+ 
+ 	for (i = 0; i < count; i++) {
+-		if (copy_struct_from_user(&syncpoint, sizeof(syncpoint), ptr, size))
++		if (kgsl_copy_from_user_compat54(&syncpoint, sizeof(syncpoint), ptr, size))
+ 			return -EFAULT;
+ 
+ 		sync.type = syncpoint.type;

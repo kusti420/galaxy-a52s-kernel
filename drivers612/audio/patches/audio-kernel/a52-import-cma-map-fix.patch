@@ -1,0 +1,56 @@
+--- a/dsp/msm_audio_ion.c	2026-11-13 18:07:48.108051458 +0200
++++ b/dsp/msm_audio_ion.c	2026-11-13 18:14:58.516626142 +0200
+@@ -201,7 +201,7 @@
+ 	return rc;
+ }
+ 
+-static int msm_audio_ion_unmap_kernel(void *vaddr, void *handle, bool cma_mem)
++static int __maybe_unused msm_audio_ion_unmap_kernel(void *vaddr, void *handle, bool cma_mem)
+ {
+ 	int rc = 0;
+ 	struct device *cb_dev;
+@@ -255,9 +255,21 @@
+ 		alloc_data = list_entry(ptr, struct msm_audio_alloc_data, list);
+ 		if (alloc_data->type == MSM_AUDIO_MEM_TYPE_ION) {
+ 			if (alloc_data->handle == handle) {
+-				rc = msm_audio_ion_unmap_kernel(
+-							alloc_data->vaddr,
+-							handle, cma_mem);
++				/*
++				 * a52sxq: msm_audio_ion_map_kernel() records the kernel mapping in
++				 * alloc_data->vmap (an iosys_map), never in ->vaddr, so the old call
++				 * here always failed (leak) or, once skipped, released a still-mapped
++				 * dma_buf (BUG at dma-buf.c:179, A52s 2026-11-13). Undo the real
++				 * mapping; imported CMA buffers have none.
++				 */
++				rc = 0;
++				if (alloc_data->vmap) {
++					dma_buf_vunmap((struct dma_buf *)handle, alloc_data->vmap);
++					rc = dma_buf_end_cpu_access((struct dma_buf *)handle,
++								    DMA_BIDIRECTIONAL);
++					kfree(alloc_data->vmap);
++					alloc_data->vmap = NULL;
++				}
+ 			if (rc) {
+ 				pr_err("%s: Unable to unmap ion mem rc: %d\n",
+ 				       __func__, rc);
+@@ -729,7 +741,18 @@
+ 		}
+ 	}
+ 
+-	msm_audio_dma_buf_map(*handle, paddr, (dma_addr_t *) plen, &bufsz);
++	/*
++	 * a52sxq: attach + map the imported dma_buf like 5.4 did (msm_audio_dma_buf_map there is
++	 * msm_audio_ion_dma_buf_map here). The call that was here registered the user's buffer
++	 * as a kernel DMA allocation with shifted arguments: paddr was never filled, and on
++	 * free (audio_cal_release) dma_free_coherent() was called on memory the kernel never
++	 * allocated -> oops in __free_pages (seen on the A52s 2026-11-13 when the audio HAL exited).
++	 */
++	rc = msm_audio_ion_dma_buf_map((struct dma_buf *)*handle, paddr, plen, true);
++	if (rc) {
++		pr_err("%s: dma_buf map failed: %d\n", __func__, rc);
++		goto err_ion_flag;
++	}
+ 
+ 	return 0;
+ 

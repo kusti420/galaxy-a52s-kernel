@@ -1,0 +1,37 @@
+msm-vidc: keep V4L2_FL_USES_V4L2_FH (6.18 v4l2_open() rejects opens without it)
+
+What: drop the 5.4 clear_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags) from msm_v4l2_open().
+Applies after 0024 (same hunk area as its v4l2_fh_add(fh, filp)).
+
+Why / evidence:
+- 6.18 ack/drivers/media/v4l2-core/v4l2-dev.c:437-441 (v4l2_open): after fops->open()
+  succeeds, `if (WARN_ON(!test_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags)))` calls
+  fops->release() and returns -ENODEV. "All drivers must use v4l2_fh." 6.12 has no such check.
+- msm_v4l2_vidc.c:257 cleared the (per-vdev) flag right after msm_vidc_open() ->
+  setup_event_queue() -> v4l2_fh_init() set it, so on 6.18 every open of the decoder and
+  encoder nodes would WARN, tear the instance down again and fail: no HW codec at all.
+- The clear only mattered on 6.12, where the core looked at the flag to decide whether
+  file->private_data is a v4l2_fh (6.12 v4l2-ioctl.c:2289ff, 3071). 6.18 ignores the flag
+  there: file_to_v4l2_fh() (include/media/v4l2-fh.h:68) is used unconditionally in
+  v4l2-ioctl.c:2298-2458, 3071. So keeping the flag changes nothing else on 6.18:
+  vfh->ctrl_handler = vdev->ctrl_handler = NULL (vidc never sets vdev/v4l2_dev ctrl_handler;
+  its handler is inst->ctrl_handler), so control ioctls still reach the ext-ctrl ops of 0024;
+  priority checks (INFO_FL_PRIO) run against the fh's V4L2_PRIORITY_DEFAULT from
+  v4l2_fh_add() -> v4l2_prio_open(), which passes unless someone takes RECORD priority.
+
+--- a/drivers612/gpu-video/video/msm/vidc/msm_v4l2_vidc.c
++++ b/drivers612/gpu-video/video/msm/vidc/msm_v4l2_vidc.c
+@@ -254,7 +254,12 @@
+ 		}
+ 	}
+ #endif
+-	clear_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags);
++	/*
++	 * bsp618/port: the 5.4 driver cleared V4L2_FL_USES_V4L2_FH here so that the 6.12 core
++	 * ignored its fh (no priority checks, own control ops). 6.18 v4l2_open() rejects an open
++	 * without the flag (WARN, ->release(), -ENODEV) and takes file->private_data as the fh
++	 * whatever the flag says, so the flag stays as v4l2_fh_init() set it.
++	 */
+ 	/* bsp618/port: 6.18 v4l2_fh_add(fh, filp) also sets filp->private_data = fh */
+ 	v4l2_fh_add(&vidc_inst->event_handler, filp);
+ 	trace_msm_v4l2_vidc_open_end("msm v4l2_open end");

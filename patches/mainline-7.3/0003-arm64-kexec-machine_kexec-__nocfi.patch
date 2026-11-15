@@ -1,0 +1,33 @@
+From 10eec6a4ba13ce8392403c3c91bf87ddabffd382 Mon Sep 17 00:00:00 2001
+From: owner <owner@example.invalid>
+Date: Sun, 15 Nov 2026 17:39:56 +0200
+Subject: [PATCH 3/5] arm64: kexec: machine_kexec() __nocfi
+
+Both jumps in machine_kexec() are indirect calls to physical addresses;
+with kCFI the type-hash load in front of the target faults in the
+trampoline mapping. Found on the A52s with ACK 6.18 (CONFIG_CFI=y). No
+effect on builds without CFI.
+---
+ arch/arm64/kernel/machine_kexec.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/kernel/machine_kexec.c b/arch/arm64/kernel/machine_kexec.c
+index 8f9bc2327..e953905ca 100644
+--- a/arch/arm64/kernel/machine_kexec.c
++++ b/arch/arm64/kernel/machine_kexec.c
+@@ -160,7 +160,14 @@ int machine_kexec_post_load(struct kimage *kimage)
+  *
+  * Called from the core kexec code for a sys_reboot with LINUX_REBOOT_CMD_KEXEC.
+  */
+-void machine_kexec(struct kimage *kimage)
++/*
++ * __nocfi: both jumps below are indirect calls to PHYSICAL addresses (the idmap copy of
++ * cpu_soft_restart, the relocation trampoline copied to kimage->arch.kern_reloc). With kCFI
++ * the compiler reads the type hash from the word in front of the target; that word is not
++ * mapped in the trampoline page tables, so the check itself faults ("Unable to handle kernel
++ * paging request at ...ffc" right after "Bye!", seen on the A52s 2026-11-12 with ACK).
++ */
++__nocfi void machine_kexec(struct kimage *kimage)
+ {
+ 	bool in_kexec_crash = (kimage == kexec_crash_image);
+ 	bool stuck_cpus = cpus_are_stuck_in_kernel();

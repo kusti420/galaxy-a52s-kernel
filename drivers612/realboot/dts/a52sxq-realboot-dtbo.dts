@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * dtbo partition entry for the REAL boot of the A52s on the Qualcomm 6.12 kernel
+ * (drivers612/realboot). The whole board description is already merged into the base dtb in
+ * vendor_boot (boarddt merged-r02 + the GPU/video/audio/FastRPC/camera/fingerprint/vibrator/
+ * NFC fragments, built offline with fdtoverlay exactly as for the tested kexec runs), so this
+ * overlay only has to satisfy the Samsung ABL:
+ *  - it always applies one dtbo entry and picks it by qcom,msm-id + qcom,board-id = <0x22 N>
+ *    with N <= the hardware revision (research/bootloader-acceptance.md). N = 2 matches the
+ *    revisions 2 and up (both test phones are rev 3/4); older boards are rejected, which is
+ *    the safe failure (Download mode) instead of booting the r02 tree on r00/r01 hardware;
+ *  - its libufdt needs /__fixups__ in the overlay: one fragment with a label target.
+ * Root properties copied from the stock r02 entry (boarddt/out/build/r02.dtbo).
+ * The marker string is replaced by build-realboot.sh with the build name.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	model = "Samsung A52SXQ PROJECT (board-id,02)";
+	compatible = "qcom,yupik-idp", "qcom,yupik", "qcom,idp";
+	qcom,msm-id = <0x1db 0x10000 0x203 0x10000>;
+	qcom,board-id = <0x22 0x02>;
+	dtbo-version = <0x00>;
+	dtbo-hw_rev = <0x02>;
+	dtbo-hw_rev_end = <0x20>;
+};
+
+&soc {
+	a52sxq,realboot = "@MARKER@";
+};

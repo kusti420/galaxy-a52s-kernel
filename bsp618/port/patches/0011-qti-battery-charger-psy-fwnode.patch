@@ -1,0 +1,13 @@
+qti-battery-charger: power_supply_config.of_node is gone in 6.18, pass the fwnode
+
+--- a/bsp612/soc-repo/drivers/power/supply/qti_battery_charger.c
++++ b/bsp612/soc-repo/drivers/power/supply/qti_battery_charger.c
+@@ -1790,7 +1790,7 @@
+ 	int rc;
+ 
+ 	psy_cfg.drv_data = bcdev;
+-	psy_cfg.of_node = bcdev->dev->of_node;
++	psy_cfg.fwnode = dev_fwnode(bcdev->dev);
+ 	if (bcdev->micro_usb) {
+ 		usb_psy_desc[USB_1_PORT_ID].properties = uusb_props;
+ 		usb_psy_desc[USB_1_PORT_ID].num_properties = ARRAY_SIZE(uusb_props);

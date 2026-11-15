@@ -1,0 +1,9 @@
+00-sec_core.ko clear_on_load=0
+03-sec_tsp_log.ko
+04-sec_input_notifier.ko
+05-sec_cmd.ko
+06-sec_secure_touch.ko
+07-sec_common_fn.ko lcd_id=80000A
+08-sec_tclm_v2.ko
+09-sec_tsp_dumpkey.ko
+10-stm_ts.ko

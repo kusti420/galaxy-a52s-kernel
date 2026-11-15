@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0-only
+obj-m += ioncompat.o
+# Our 5.4 ION headers first (soc-repo has its own, different linux/msm_ion.h),
+# then the soc-repo headers (mem-buf.h, secure_buffer.h), then ACK's.
+LINUXINCLUDE := -I$(src)/include -I$(src)/include/uapi $(SOCINCLUDE) $(LINUXINCLUDE)

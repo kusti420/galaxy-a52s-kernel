@@ -1,0 +1,77 @@
+    192 ss_dsi_mdnie_S6E3FC3_AMS646YD01_LO.h: incompatible pointer to integer conversion initializing 'u32' (aka 'unsigned int') with expr
+     16 ss_dsi_mdnie_S6E3FC3_AMS646YD01_LO.h: initializer element is not a compile-time constant
+      9 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'br_func' in 'struct panel_func'
+      7 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: call to undeclared function 'ss_add_brightness_packet'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+      6 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'lpm_bl_level' in 'struct lpm_info'
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'MAX_CELL_ID'; did you mean 'RX_CELL_ID'?
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_VRR'
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_MAFPC_SCALE'
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HMT_GAMMA'
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_GAMMA'
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ACL_ON'
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ACL_OFF'
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'cd_idx' in 'struct brightness_info'; did you mean 'bl_idx'?
+      3 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: call to undeclared function 'ss_panel_data_read'; ISO C99 and later do not support implicit function declarations [-Wimplicit-function-declaration]
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_LPM_BL_CMD'; did you mean 'TX_LPM_ON_AOR'?
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_LPM_60NIT_CMD'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_LPM_30NIT_CMD'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_LPM_2NIT_CMD'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_LPM_10NIT_CMD'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_ACL_ON'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_60NIT'; did you mean 'LTM_INIT'?
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_30NIT'; did you mean 'LTM_INIT'?
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_2NIT'; did you mean 'LTM_INIT'?
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_10NIT'; did you mean 'LTM_INIT'?
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_VINT'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_VRR'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_GAMMA'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_ACL_ON'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_ACL_OFF'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ACL_PERCENT_PRE'
+      2 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ACL_PERCENT'
+      2   159 | #define LCD_ERR(V, X, ...) pr_err("[SDE_%d] %s : error: "X, V ? V->ndx : 0, __func__, ## __VA_ARGS__)
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_VRR'; did you mean 'TX_IRC'?
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_GAMMA_MODE2_NORMAL'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_GAMMA_MODE2_HMT'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_GAMMA_MODE2_HBM'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_DYNAMIC_FFC_SET'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'TX_ACL_OFF'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'MAX_OCTA_ID'; did you mean 'RX_OCTA_ID'?
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_60NIT'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_30NIT'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_2NIT'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'LPM_10NIT'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_TFT_PWM'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_LTPS'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_IRC'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HMT_VRR'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HMT_VINT'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HMT_ELVSS'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HMT_AID'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_VINT'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_OFF'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_LTPS'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_IRC'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_HBM_ETC'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_GAMMA_COMP'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ETC'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ELVSS_TEMP2'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ELVSS_TEMP1'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ELVSS_PRE'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_ELVSS'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_DBV'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_CAPS_PRE'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_CAPS'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_AID'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: use of undeclared identifier 'BR_FUNC_1'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: static declaration of 'ss_octa_id_read' follows non-static declaration
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: static declaration of 'ss_ddi_id_read' follows non-static declaration
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'smart_dimming_loaded_dsi' in 'struct ss_brightness_info'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'smart_dimming_hmt_loaded_dsi' in 'struct ss_brightness_info'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'set_ffc' in 'struct panel_func'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'samsung_update_lpm_ctrl_cmd' in 'struct panel_func'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'samsung_set_lpm_brightness' in 'struct panel_func'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'samsung_brightness_tot_level' in 'struct panel_func'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'panel_hbm_entry_after_te' in 'struct samsung_display_driver_data'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'make_brightness_packet' in 'struct panel_func'
+      1 ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c: no member named 'brr_lock' in 'struct vrr_info'; did you mean 'vrr_lock'?

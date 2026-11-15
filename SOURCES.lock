@@ -1,0 +1,36 @@
+# SOURCES.lock: upstream trees this project builds against or reads from.
+# They are NOT shipped here; tools/fetch-sources.sh clones them at these commits.
+# path<TAB>url<TAB>commit<TAB>note
+bsp612/kernel	https://android.googlesource.com/kernel/common	8a69376da734aa00bb02cd1155489c74454e4487	build: ACK android16-6.12, base kernel of the 6.12 BSP (bsp612/assemble.sh)
+bsp618/src/ack	https://android.googlesource.com/kernel/common	00c8666046c244b6b8efdf905f8d438ee248f875	build: ACK android17-6.18, base kernel of the 6.18 port
+ack	https://android.googlesource.com/kernel/common	00c8666046c244b6b8efdf905f8d438ee248f875	reference: ACK android17-6.18 (early experiments)
+linux	https://github.com/sc7280-mainline/linux.git	5b6560b07301afb9b6e9fb80eb9af57fe060a3a6	reference: sc7280-mainline (first mainline experiments)
+linux-7.3	https://github.com/sc7280-mainline/linux.git	1cd0a2a93ac57c8749cae6fcf894f76a2dd09dfa	build: sc7280-mainline sc7280-7.3.y base (then git am patches/mainline-7.3/*.patch)
+pmos-kodiak	https://github.com/woa-a52s/pmos-kodiak.git	302d051012de58e0c2b46a084889f7d9a536a925	build: woa-a52s postmarketOS packaging (busybox/musl/unudhcpd for the test ramdisks)
+guides	https://github.com/woa-a52s/Samsung-A52s-5G-Guides.git	2cadb9ce79a097db2d5395ab1361357ab1c4fd54	reference: woa-a52s A52s guides (UEFI, partitions, EDL)
+donors/abl-edk2	https://git.codelinaro.org/clo/la/abl/tianocore/edk2.git	eb19bec9e97527470e5f52cb27b2bc5523b1f675	reference
+donors/audio-kernel	https://git.codelinaro.org/clo/la/platform/vendor/opensource/audio-kernel.git	5a1060e1fb07851741a1c522f62fce089db62baf	build: upstream of drivers612/audio/audio-kernel
+donors/camera-kernel	https://git.codelinaro.org/clo/la/platform/vendor/opensource/camera-kernel.git	fe903075e4ff8f3cb41ec1b03cdcc29c144b415e	build: upstream of drivers612/camera/work
+donors/clo-devicetree-6.12	https://git.codelinaro.org/clo/la/platform/vendor/qcom-opensource/devicetree.git	d6e4067ef0794f213ddbb39682048171111d8b89	build: Qualcomm devicetree (bsp612/assemble.sh)
+donors/clo-kernel-6.12	https://git.codelinaro.org/clo/la/kernel/qcom.git	46f13428ae2d6e32ddfe2f3e5cb5046428ae73b4	build: Qualcomm soc-repo (bsp612/assemble.sh)
+donors/dataipa	https://git.codelinaro.org/clo/la/platform/vendor/opensource/dataipa.git	392a1090bab90f85356d709e475b17ae9ad6e14d	build: upstream of drivers612/conn/data/src/dataipa
+donors/datarmnet	https://git.codelinaro.org/clo/la/platform/vendor/qcom/opensource/datarmnet.git	e9edf2a3cdbd0635085cdc97f610b411d6604005	build: upstream of drivers612/conn/data/src/datarmnet
+donors/datarmnet-ext	https://git.codelinaro.org/clo/la/platform/vendor/qcom/opensource/datarmnet-ext.git	3c4c40e6dfa50e50ddcac245836766e0da2ef93f	build: upstream of drivers612/conn/data/src/datarmnet-ext
+donors/display-drivers	https://git.codelinaro.org/clo/la/platform/vendor/opensource/display-drivers.git	fe85946f41f972a6df13ed5a9624946d4d22f445	build: upstream of drivers612/display/techpack/display-drivers
+donors/graphics-kernel	https://git.codelinaro.org/clo/la/platform/vendor/qcom/opensource/graphics-kernel.git	1418e583ed185d59ede8144913adea0031584c81	build: upstream of drivers612/gpu-video/gpu/src
+donors/gunyah-hyp	https://github.com/quic/gunyah-hypervisor	254727746fce809aba0e629a13711a954b246968	reference
+donors/gunyah-rm	https://github.com/quic/gunyah-resource-manager	7e9344582eda391f45eb3d54261f45e069713f88	reference
+donors/mm-drivers	https://git.codelinaro.org/clo/la/platform/vendor/opensource/mm-drivers.git	c025ff4edcdfe2cc96adc9ae2e03bcddb31d4026	build: upstream of drivers612/display/techpack/mm-drivers
+donors/qcom-linux-6.18	https://github.com/qualcomm-linux/kernel	78fc86c796822e6668f11c7134fde7f7a19b5284	reference
+donors/redwood-6.12	https://github.com/suvojeet-sengupta/redwood-6.12	bfa629742bb3c9ab9251ba04f528c7c80208a4a0	reference
+donors/samsung-s26-6.12	https://github.com/polygraphene/SM-S942U_NA_16_Opensource	a571d15c116599dc413f009b79c940d92ca54bb4	reference
+donors/securemsm-kernel	https://git.codelinaro.org/clo/la/platform/vendor/qcom/opensource/securemsm-kernel.git	b1c5edcf3345a99866405dd5e1358ae8657c2750	build: upstream of drivers612/secure/securemsm/src
+samsung612/donors/crdroid-sm8550	https://github.com/crdroidandroid/android_kernel_samsung_sm8550	c4f523a57784d139f55b29eda6c0bc09b99481aa	reference
+samsung612/donors/physwizz-a24	https://github.com/physwizz/A24-A15-A16	d5a619eb212889fb800d30700dbe53232eab5112	reference
+samsung612/donors/sm8550-modules	https://github.com/LineageOS/android_kernel_samsung_sm8550-modules	a1fdd086620bc0e2f767323c2853bcc9424e3087	reference
+samsung612/donors/sm8650-modules	https://github.com/samsung-sm8650/android_kernel_samsung_sm8650-modules	487d9a6be2528da01a00ce693a3be09d3287906f	reference
+drivers612/conn/bt/donors/bt-kernel	https://git.codelinaro.org/clo/la/platform/vendor/qcom-opensource/bt-kernel.git	d192c9d58be727b7befe987902b1ec0edf304e02	build: conn/bt/donors/bt-kernel
+drivers612/conn/wlan/donors/fw-api	https://git.codelinaro.org/clo/la/platform/vendor/qcom-opensource/wlan/fw-api.git	01a175100b2c640abd27cd4c79b08913bc8d1863	build: upstream of drivers612/conn/wlan/work/fw-api
+drivers612/conn/wlan/donors/platform	https://git.codelinaro.org/clo/la/platform/vendor/qcom-opensource/wlan/platform.git	f99ee306a72535292776f94c56bd4a580058509f	build: upstream of drivers612/conn/wlan/work/platform
+drivers612/conn/wlan/donors/qcacld-3.0	https://git.codelinaro.org/clo/la/platform/vendor/qcom-opensource/wlan/qcacld-3.0.git	0798a38ce6c4d87f6b520a86472310ff098b2634	build: upstream of drivers612/conn/wlan/work/qcacld-3.0
+drivers612/conn/wlan/donors/qca-wifi-host-cmn	https://git.codelinaro.org/clo/la/platform/vendor/qcom-opensource/wlan/qca-wifi-host-cmn.git	d345f3d88f788fbcdb8767a680712f3194d0ec9d	build: upstream of drivers612/conn/wlan/work/qca-wifi-host-cmn

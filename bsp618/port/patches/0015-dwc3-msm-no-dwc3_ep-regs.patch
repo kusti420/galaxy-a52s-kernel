@@ -1,0 +1,66 @@
+dwc3-msm (soc-repo fork): struct dwc3_ep.regs is gone in 6.18
+
+The fork stays: the vendor DT's controller is "qcom,dwc-usb3-msm" with legacy usb-phy
+phandles to the vendor PHY drivers (upstream dwc3-qcom matches "qcom,snps-dwc3" and generic
+PHYs), and usb_f_gsi, usb_f_qdss, msm_drm and snd-usb-audio-qmi import dwc3-msm.
+
+The 6.18 DWC3_DEPCMD*(n) macros take the endpoint number and are offsets from dwc->regs (as
+dwc3_readl()/dwc3_writel() use them); the 6.12 ones were offsets from dep->regs =
+dwc->regs + DWC3_DEP_BASE(n). Same addresses.
+
+--- a/bsp612/soc-repo/drivers/usb/dwc3/dwc3-msm-core.c
++++ b/bsp612/soc-repo/drivers/usb/dwc3/dwc3-msm-core.c
+@@ -753,6 +753,10 @@
+ 	return phy->flags;
+ }
+ 
++/*
++ * bsp618/port: struct dwc3_ep.regs is gone in 6.18; the DEPCMD* macros take the endpoint
++ * number and are offsets from dwc->regs, so callers pass dep->dwc->regs, DWC3_DEPCMD(n).
++ */
+ static inline void dwc3_msm_ep_writel(void __iomem *base, u32 offset, u32 value)
+ {
+ 	writel_relaxed(value, base + offset - DWC3_GLOBALS_REGS_START);
+@@ -1284,9 +1288,9 @@
+ 			dwc3_msm_write_reg(mdwc->base, DWC3_GUSB2PHYCFG(0), reg);
+ 	}
+ 
+-	dwc3_msm_ep_writel(dep->regs, DWC3_DEPCMDPAR0, params->param0);
+-	dwc3_msm_ep_writel(dep->regs, DWC3_DEPCMDPAR1, params->param1);
+-	dwc3_msm_ep_writel(dep->regs, DWC3_DEPCMDPAR2, params->param2);
++	dwc3_msm_ep_writel(dep->dwc->regs, DWC3_DEPCMDPAR0(dep->number), params->param0);
++	dwc3_msm_ep_writel(dep->dwc->regs, DWC3_DEPCMDPAR1(dep->number), params->param1);
++	dwc3_msm_ep_writel(dep->dwc->regs, DWC3_DEPCMDPAR2(dep->number), params->param2);
+ 
+ 	/*
+ 	 * Synopsys Databook 2.60a states in section 6.3.2.5.6 of that if we're
+@@ -1309,9 +1313,9 @@
+ 	else
+ 		cmd |= DWC3_DEPCMD_CMDACT;
+ 
+-	dwc3_msm_ep_writel(dep->regs, DWC3_DEPCMD, cmd);
++	dwc3_msm_ep_writel(dep->dwc->regs, DWC3_DEPCMD(dep->number), cmd);
+ 	do {
+-		reg = dwc3_msm_ep_readl(dep->regs, DWC3_DEPCMD);
++		reg = dwc3_msm_ep_readl(dep->dwc->regs, DWC3_DEPCMD(dep->number));
+ 		if (!(reg & DWC3_DEPCMD_CMDACT)) {
+ 			cmd_status = DWC3_DEPCMD_STATUS(reg);
+ 
+@@ -1363,7 +1367,7 @@
+ 		if (ret != -ETIMEDOUT) {
+ 			u32 res_id;
+ 
+-			res_id = dwc3_msm_ep_readl(dep->regs, DWC3_DEPCMD);
++			res_id = dwc3_msm_ep_readl(dep->dwc->regs, DWC3_DEPCMD(dep->number));
+ 			dep->resource_index = DWC3_DEPCMD_GET_RSC_IDX(res_id);
+ 		}
+ 	}
+@@ -2096,7 +2100,7 @@
+ 
+ 	/* Provide physical USB addresses for DEPCMD and GEVENTCNT registers */
+ 	ch_info->depcmd_low_addr = (u32)(mdwc->reg_phys +
+-				DWC3_DEP_BASE(dep->number) + DWC3_DEPCMD);
++				DWC3_DEPCMD(dep->number));
+ 
+ 	ch_info->depcmd_hi_addr = 0;
+ 

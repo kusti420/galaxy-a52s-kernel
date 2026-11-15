@@ -1,0 +1,152 @@
+
+## msm_common_dai_links  
+  0 | MultiMedia1 | MultiMedia1 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA1 | multimedia1 | 
+  1 | MultiMedia2 | MultiMedia2 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA2 | multimedia2 | 
+  2 | VoiceMMode1 | VoiceMMode1 | FE | id=MSM_FRONTEND_DAI_VOICEMMODE1 | voicemmode1 | 
+  3 | MSM VoIP | VoIP | FE | id=MSM_FRONTEND_DAI_VOIP | msmvoip | 
+  4 | MultiMedia3 | MultiMedia3 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA3 | multimedia3 | 
+  5 | MSM AFE-PCM RX | AFE-PROXY RX | FE | id= | afepcm_rx | 
+  6 | MSM AFE-PCM TX | AFE-PROXY TX | FE | id= | afepcm_tx | 
+  7 | Compress1 | Compress1 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA4 | multimedia4 | 
+  8 | AUXPCM Hostless | AUXPCM Hostless | FE | id= | auxpcm_hostless | 
+  9 | MultiMedia5 | MultiMedia5 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA5 | multimedia5 | 
+ 10 | Listen 1 Audio Service | Listen 1 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM1 | listen1 | 
+ 11 | Compress2 | Compress2 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA7 | multimedia7 | 
+ 12 | MultiMedia10 | MultiMedia10 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA10 | multimedia10 | 
+ 13 | MM_NOIRQ | MM_NOIRQ | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA8 | multimedia8 | 
+ 14 | HDMI_RX_HOSTLESS | HDMI_RX_HOSTLESS | FE | id= | hdmi_rx_hostless | 
+ 15 | VoiceMMode2 | VoiceMMode2 | FE | id=MSM_FRONTEND_DAI_VOICEMMODE2 | voicemmode2 | 
+ 16 | Listen 2 Audio Service | Listen 2 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM2 | listen2 | 
+ 17 | Listen 3 Audio Service | Listen 3 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM3 | listen3 | 
+ 18 | Listen 4 Audio Service | Listen 4 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM4 | listen4 | 
+ 19 | Listen 5 Audio Service | Listen 5 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM5 | listen5 | 
+ 20 | Listen 6 Audio Service | Listen 6 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM6 | listen6 | 
+ 21 | Listen 7 Audio Service | Listen 7 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM7 | listen7 | 
+ 22 | Listen 8 Audio Service | Listen 8 Audio Service | FE | id=MSM_FRONTEND_DAI_LSM8 | listen8 | 
+ 23 | MultiMedia9 | MultiMedia9 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA9 | multimedia9 | 
+ 24 | Compress4 | Compress4 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA11 | multimedia11 | 
+ 25 | Compress5 | Compress5 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA12 | multimedia12 | 
+ 26 | Compress6 | Compress6 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA13 | multimedia13 | 
+ 27 | Compress7 | Compress7 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA14 | multimedia14 | 
+ 28 | Compress8 | Compress8 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA15 | multimedia15 | 
+ 29 | MM_NOIRQ_2 | MM_NOIRQ_2 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA16 | multimedia16 | 
+ 30 | CDC_DMA Hostless | CDC_DMA Hostless | FE | id= | cdcdma_hostless | 
+ 31 | TX3_CDC_DMA Hostless | TX3_CDC_DMA Hostless | FE | id= | tx3_cdcdma_hostless | 
+ 32 | Tertiary MI2S TX_Hostless | Tertiary MI2S_TX Hostless Capture | FE | id= | tert_mi2s_tx_hostless | 
+
+## msm_bolero_fe_dai_links  
+  0 | LPASS_BE_WSA_CDC_DMA_TX_0 | WSA CDC DMA0 Capture | FE | id=MSM_BACKEND_DAI_WSA_CDC_DMA_TX_0 | wsa_cdcdma0_capture | 
+
+## msm_bolero_fe_stub_dai_links  
+  0 | LPASS_BE_WSA_CDC_DMA_TX_0 | WSA CDC DMA0 Capture | FE | id=MSM_BACKEND_DAI_WSA_CDC_DMA_TX_0 | wsa_cdcdma0_capture_stub | 
+
+## msm_common_misc_fe_dai_links  
+  0 | MultiMedia6 | MultiMedia6 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA6 | multimedia6 | 
+  1 | USB Audio Hostless | USB Audio Hostless | FE | id= | usbaudio_hostless | 
+  2 | SLIMBUS_7 Hostless | SLIMBUS_7 Hostless | FE | id= | slimbus7_hostless | 
+  3 | Compress9 | Compress9 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA17 | multimedia17 | 
+  4 | SLIMBUS_8 Hostless | SLIMBUS_8 Hostless | FE | id= | slimbus8_hostless | 
+  5 | LPASS_BE_TX_CDC_DMA_TX_5 | TX CDC DMA5 Capture | FE | id=MSM_BACKEND_DAI_TX_CDC_DMA_TX_5 | tx_cdcdma5_tx | 
+  6 | MultiMedia31 | MultiMedia31 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA31 | multimedia31 | 
+  7 | MultiMedia32 | MultiMedia32 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA32 | multimedia32 | 
+  8 | MSM AFE-PCM TX1 | AFE-PROXY TX1 | FE | id= | afepcm_tx1 | 
+  9 | Compress3 | Compress3 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA20 | multimedia20 | 
+ 10 | Secondary MI2S_TX Hostless | Secondary MI2S_TX Hostless Capture | FE | id= | sec_mi2s_tx_hostless | 
+ 11 | DISPLAY_PORT_RX_HOSTLESS | DISPLAY_PORT_RX_HOSTLESS | FE | id= | display_port_hostless | 
+
+## msm_common_be_dai_links  
+  0 | LPASS_BE_AFE_PCM_RX | AFE Playback | BE | id=MSM_BACKEND_DAI_AFE_PCM_RX | afe_pcm_rx | 
+  1 | LPASS_BE_AFE_PCM_TX | AFE Capture | BE | id=MSM_BACKEND_DAI_AFE_PCM_TX | afe_pcm_tx | 
+  2 | LPASS_BE_INCALL_RECORD_TX | Voice Uplink Capture | BE | id=MSM_BACKEND_DAI_INCALL_RECORD_TX | incall_record_tx | 
+  3 | LPASS_BE_INCALL_RECORD_RX | Voice Downlink Capture | BE | id=MSM_BACKEND_DAI_INCALL_RECORD_RX | incall_record_rx | 
+  4 | LPASS_BE_VOICE_PLAYBACK_TX | Voice Farend Playback | BE | id=MSM_BACKEND_DAI_VOICE_PLAYBACK_TX | voice_playback_tx | 
+  5 | LPASS_BE_VOICE2_PLAYBACK_TX | Voice2 Farend Playback | BE | id=MSM_BACKEND_DAI_VOICE2_PLAYBACK_TX | voice2_playback_tx | 
+  6 | LPASS_BE_PROXY_TX | Proxy Capture | BE | id=MSM_BACKEND_DAI_PROXY_TX | proxy_tx | 
+  7 | LPASS_BE_PROXY_RX | Proxy Playback | BE | id=MSM_BACKEND_DAI_PROXY_RX | proxy_rx | 
+  8 | LPASS_BE_USB_AUDIO_RX | USB Audio Playback | BE | id=MSM_BACKEND_DAI_USB_RX | usb_audio_rx | 
+  9 | LPASS_BE_USB_AUDIO_TX | USB Audio Capture | BE | id=MSM_BACKEND_DAI_USB_TX | usb_audio_tx | 
+ 10 | LPASS_BE_PRI_TDM_RX_0 | Primary TDM0 Playback | BE | id=MSM_BACKEND_DAI_PRI_TDM_RX_0 | pri_tdm_rx_0 | 
+ 11 | LPASS_BE_PRI_TDM_TX_0 | Primary TDM0 Capture | BE | id=MSM_BACKEND_DAI_PRI_TDM_TX_0 | pri_tdm_tx_0 | 
+ 12 | LPASS_BE_SEC_TDM_RX_0 | Secondary TDM0 Playback | BE | id=MSM_BACKEND_DAI_SEC_TDM_RX_0 | sec_tdm_rx_0 | 
+ 13 | LPASS_BE_SEC_TDM_TX_0 | Secondary TDM0 Capture | BE | id=MSM_BACKEND_DAI_SEC_TDM_TX_0 | sec_tdm_tx_0 | 
+ 14 | LPASS_BE_TERT_TDM_RX_0 | Tertiary TDM0 Playback | BE | id=MSM_BACKEND_DAI_TERT_TDM_RX_0 | tert_tdm_rx_0 | 
+ 15 | LPASS_BE_TERT_TDM_TX_0 | Tertiary TDM0 Capture | BE | id=MSM_BACKEND_DAI_TERT_TDM_TX_0 | tert_tdm_tx_0 | 
+ 16 | LPASS_BE_QUAT_TDM_RX_0 | Quaternary TDM0 Playback | BE | id=MSM_BACKEND_DAI_QUAT_TDM_RX_0 | quat_tdm_rx_0 | 
+ 17 | LPASS_BE_QUAT_TDM_TX_0 | Quaternary TDM0 Capture | BE | id=MSM_BACKEND_DAI_QUAT_TDM_TX_0 | quat_tdm_tx_0 | 
+ 18 | LPASS_BE_QUIN_TDM_RX_0 | Quinary TDM0 Playback | BE | id=MSM_BACKEND_DAI_QUIN_TDM_RX_0 | quin_tdm_rx_0 | 
+ 19 | LPASS_BE_QUIN_TDM_TX_0 | Quinary TDM0 Capture | BE | id=MSM_BACKEND_DAI_QUIN_TDM_TX_0 | quin_tdm_tx_0 | 
+ 20 | LPASS_BE_SEN_TDM_RX_0 | Senary TDM0 Playback | BE | id=MSM_BACKEND_DAI_SEN_TDM_RX_0 | sen_tdm_rx_0 | 
+ 21 | LPASS_BE_SEN_TDM_TX_0 | Senary TDM0 Capture | BE | id=MSM_BACKEND_DAI_SEN_TDM_TX_0 | sen_tdm_tx_0 | 
+ 22 | LPASS_BE_AFE_PCM_RX1 | AFE Playback1 | BE | id=MSM_BACKEND_DAI_AFE_PCM_RX1 | afe_pcm_rx1 | 
+
+## msm_wcn_be_dai_links  #if 0
+  0 | LPASS_BE_SLIMBUS_7_RX | Slimbus7 Playback | BE | id=MSM_BACKEND_DAI_SLIMBUS_7_RX | slimbus_7_rx | #if 0
+  1 | LPASS_BE_SLIMBUS_7_TX | Slimbus7 Capture | BE | id=MSM_BACKEND_DAI_SLIMBUS_7_TX | slimbus_7_tx | #if 0
+
+## msm_wcn_btfm_be_dai_links  
+  0 | LPASS_BE_SLIMBUS_7_RX | Slimbus7 Playback | BE | id=MSM_BACKEND_DAI_SLIMBUS_7_RX | slimbus_7_rx | 
+  1 | LPASS_BE_SLIMBUS_7_TX | Slimbus7 Capture | BE | id=MSM_BACKEND_DAI_SLIMBUS_7_TX | slimbus_7_tx | 
+  2 | LPASS_BE_SLIMBUS_8_TX | Slimbus8 Capture | BE | id=MSM_BACKEND_DAI_SLIMBUS_8_TX | slimbus_8_tx | 
+
+## ext_disp_be_dai_link  
+  0 | LPASS_BE_DISPLAY_PORT | Display Port Playback | BE | id=MSM_BACKEND_DAI_DISPLAY_PORT_RX | display_port | 
+  1 | LPASS_BE_DISPLAY_PORT1 | Display Port1 Playback | BE | id=MSM_BACKEND_DAI_DISPLAY_PORT_RX_1 | display_port1 | 
+
+## msm_mi2s_be_dai_links  
+  0 | LPASS_BE_PRI_MI2S_RX | Primary MI2S Playback | BE | id=MSM_BACKEND_DAI_PRI_MI2S_RX | pri_mi2s_rx | 
+  1 | LPASS_BE_PRI_MI2S_TX | Primary MI2S Capture | BE | id=MSM_BACKEND_DAI_PRI_MI2S_TX | pri_mi2s_tx | 
+  2 | LPASS_BE_SEC_MI2S_RX | Secondary MI2S Playback | BE | id=MSM_BACKEND_DAI_SECONDARY_MI2S_RX | sec_mi2s_rx | 
+  3 | LPASS_BE_SEC_MI2S_TX | Secondary MI2S Capture | BE | id=MSM_BACKEND_DAI_SECONDARY_MI2S_TX | sec_mi2s_tx | 
+  4 | LPASS_BE_TERT_MI2S_RX | Tertiary MI2S Playback | BE | id=MSM_BACKEND_DAI_TERTIARY_MI2S_RX | tert_mi2s_rx | 
+  5 | LPASS_BE_TERT_MI2S_TX | Tertiary MI2S Capture | BE | id=MSM_BACKEND_DAI_TERTIARY_MI2S_TX | tert_mi2s_tx | 
+  6 | LPASS_BE_QUAT_MI2S_RX | Quaternary MI2S Playback | BE | id=MSM_BACKEND_DAI_QUATERNARY_MI2S_RX | quat_mi2s_rx | 
+  7 | LPASS_BE_QUAT_MI2S_TX | Quaternary MI2S Capture | BE | id=MSM_BACKEND_DAI_QUATERNARY_MI2S_TX | quat_mi2s_tx | 
+  8 | LPASS_BE_QUIN_MI2S_RX | Quinary MI2S Playback | BE | id=MSM_BACKEND_DAI_QUINARY_MI2S_RX | quin_mi2s_rx | 
+  9 | LPASS_BE_QUIN_MI2S_TX | Quinary MI2S Capture | BE | id=MSM_BACKEND_DAI_QUINARY_MI2S_TX | quin_mi2s_tx | 
+ 10 | LPASS_BE_SENARY_MI2S_RX | Senary MI2S Playback | BE | id=MSM_BACKEND_DAI_SENARY_MI2S_RX | sen_mi2s_rx | 
+ 11 | LPASS_BE_SENARY_MI2S_TX | Senary MI2S Capture | BE | id=MSM_BACKEND_DAI_SENARY_MI2S_TX | sen_mi2s_tx | 
+
+## msm_auxpcm_be_dai_links  #ifndef CONFIG_AUXPCM_DISABLE
+  0 | LPASS_BE_AUXPCM_RX | AUX PCM Playback | BE | id=MSM_BACKEND_DAI_AUXPCM_RX | auxpcm_rx | #ifndef CONFIG_AUXPCM_DISABLE
+  1 | LPASS_BE_AUXPCM_TX | AUX PCM Capture | BE | id=MSM_BACKEND_DAI_AUXPCM_TX | auxpcm_tx | #ifndef CONFIG_AUXPCM_DISABLE
+  2 | LPASS_BE_SEC_AUXPCM_RX | Sec AUX PCM Playback | BE | id=MSM_BACKEND_DAI_SEC_AUXPCM_RX | sec_auxpcm_rx | #ifndef CONFIG_AUXPCM_DISABLE
+  3 | LPASS_BE_SEC_AUXPCM_TX | Sec AUX PCM Capture | BE | id=MSM_BACKEND_DAI_SEC_AUXPCM_TX | sec_auxpcm_tx | #ifndef CONFIG_AUXPCM_DISABLE
+  4 | LPASS_BE_TERT_AUXPCM_RX | Tert AUX PCM Playback | BE | id=MSM_BACKEND_DAI_TERT_AUXPCM_RX | tert_auxpcm_rx | #ifndef CONFIG_AUXPCM_DISABLE
+  5 | LPASS_BE_TERT_AUXPCM_TX | Tert AUX PCM Capture | BE | id=MSM_BACKEND_DAI_TERT_AUXPCM_TX | tert_auxpcm_tx | #ifndef CONFIG_AUXPCM_DISABLE
+  6 | LPASS_BE_QUAT_AUXPCM_RX | Quat AUX PCM Playback | BE | id=MSM_BACKEND_DAI_QUAT_AUXPCM_RX | quat_auxpcm_rx | #ifndef CONFIG_AUXPCM_DISABLE
+  7 | LPASS_BE_QUAT_AUXPCM_TX | Quat AUX PCM Capture | BE | id=MSM_BACKEND_DAI_QUAT_AUXPCM_TX | quat_auxpcm_tx | #ifndef CONFIG_AUXPCM_DISABLE
+  8 | LPASS_BE_QUIN_AUXPCM_RX | Quin AUX PCM Playback | BE | id=MSM_BACKEND_DAI_QUIN_AUXPCM_RX | quin_auxpcm_rx | #ifndef CONFIG_AUXPCM_DISABLE
+  9 | LPASS_BE_QUIN_AUXPCM_TX | Quin AUX PCM Capture | BE | id=MSM_BACKEND_DAI_QUIN_AUXPCM_TX | quin_auxpcm_tx | #ifndef CONFIG_AUXPCM_DISABLE
+ 10 | LPASS_BE_SEN_AUXPCM_RX | Sen AUX PCM Playback | BE | id=MSM_BACKEND_DAI_SEN_AUXPCM_RX | sen_auxpcm_rx | #ifndef CONFIG_AUXPCM_DISABLE
+ 11 | LPASS_BE_SEN_AUXPCM_TX | Sen AUX PCM Capture | BE | id=MSM_BACKEND_DAI_SEN_AUXPCM_TX | sen_auxpcm_tx | #ifndef CONFIG_AUXPCM_DISABLE
+
+## msm_wsa_cdc_dma_be_dai_links  
+  0 | LPASS_BE_WSA_CDC_DMA_RX_0 | LPASS_BE_WSA_CDC_DMA_RX_0 | BE | id=MSM_BACKEND_DAI_WSA_CDC_DMA_RX_0 | wsa_dma_rx0 | 
+  1 | LPASS_BE_WSA_CDC_DMA_RX_1 | LPASS_BE_WSA_CDC_DMA_RX_1 | FE | id=MSM_BACKEND_DAI_WSA_CDC_DMA_RX_1 | wsa_dma_rx1 | 
+  2 | LPASS_BE_WSA_CDC_DMA_TX_1 | LPASS_BE_WSA_CDC_DMA_TX_1 | FE | id=MSM_BACKEND_DAI_WSA_CDC_DMA_TX_1 | wsa_dma_tx1 | 
+  3 | LPASS_BE_WSA_CDC_DMA_TX_0_VI | LPASS_BE_WSA_CDC_DMA_TX_0_VI | BE | id=MSM_BACKEND_DAI_WSA_CDC_DMA_TX_0 | wsa_dma_tx0_vi | 
+
+## msm_rx_tx_cdc_dma_be_dai_links  
+  0 | LPASS_BE_RX_CDC_DMA_RX_0 | LPASS_BE_RX_CDC_DMA_RX_0 | BE | id=MSM_BACKEND_DAI_RX_CDC_DMA_RX_0 | rx_dma_rx0 | 
+  1 | LPASS_BE_RX_CDC_DMA_RX_1 | LPASS_BE_RX_CDC_DMA_RX_1 | FE | id=MSM_BACKEND_DAI_RX_CDC_DMA_RX_1 | rx_dma_rx1 | 
+  2 | LPASS_BE_RX_CDC_DMA_RX_2 | LPASS_BE_RX_CDC_DMA_RX_2 | FE | id=MSM_BACKEND_DAI_RX_CDC_DMA_RX_2 | rx_dma_rx2 | 
+  3 | LPASS_BE_RX_CDC_DMA_RX_3 | LPASS_BE_RX_CDC_DMA_RX_3 | FE | id=MSM_BACKEND_DAI_RX_CDC_DMA_RX_3 | rx_dma_rx3 | 
+  4 | LPASS_BE_RX_CDC_DMA_RX_5 | LPASS_BE_RX_CDC_DMA_RX_5 | FE | id=MSM_BACKEND_DAI_RX_CDC_DMA_RX_5 | rx_dma_rx5 | 
+  5 | LPASS_BE_RX_CDC_DMA_RX_6 | LPASS_BE_RX_CDC_DMA_RX_6 | FE | id=MSM_BACKEND_DAI_RX_CDC_DMA_RX_6 | rx_dma_rx6 | 
+  6 | LPASS_BE_TX_CDC_DMA_TX_3 | LPASS_BE_TX_CDC_DMA_TX_3 | BE | id=MSM_BACKEND_DAI_TX_CDC_DMA_TX_3 | tx_dma_tx3 | 
+  7 | LPASS_BE_TX_CDC_DMA_TX_4 | TX CDC DMA4 Capture | BE | id=MSM_BACKEND_DAI_TX_CDC_DMA_TX_4 | tx_dma_tx4 | 
+
+## msm_va_cdc_dma_be_dai_links  
+  0 | LPASS_BE_VA_CDC_DMA_TX_0 | LPASS_BE_VA_CDC_DMA_TX_0 | BE | id=MSM_BACKEND_DAI_VA_CDC_DMA_TX_0 | va_dma_tx0 | 
+  1 | LPASS_BE_VA_CDC_DMA_TX_1 | LPASS_BE_VA_CDC_DMA_TX_1 | BE | id=MSM_BACKEND_DAI_VA_CDC_DMA_TX_1 | va_dma_tx1 | 
+  2 | LPASS_BE_VA_CDC_DMA_TX_2 | LPASS_BE_VA_CDC_DMA_TX_2 | BE | id=MSM_BACKEND_DAI_VA_CDC_DMA_TX_2 | va_dma_tx2 | 
+
+## msm_afe_rxtx_lb_be_dai_link  
+  0 | LPASS_BE_AFE_LOOPBACK_TX | AFE Loopback Capture | BE | id=MSM_BACKEND_DAI_AFE_LOOPBACK_TX | afe_loopback_tx | 
+
+## msm_stub_fe_dai_links  
+  0 | MSMSTUB Media1 | MultiMedia1 | FE | id=MSM_FRONTEND_DAI_MULTIMEDIA1 | multimedia1 | 
+
+## msm_stub_be_dai_links  
+  0 | LPASS_BE_AUXPCM_RX | AUX PCM Playback | BE | id=MSM_BACKEND_DAI_AUXPCM_RX | auxpcm_rx | 
+  1 | LPASS_BE_AUXPCM_TX | AUX PCM Capture | BE | id=MSM_BACKEND_DAI_AUXPCM_TX | auxpcm_tx | 

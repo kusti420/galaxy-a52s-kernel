@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# a52sxq / drivers612/conn: one external-module tree for the whole data path, so one
+# Module.symvers resolves gsim -> ipam -> rmnet_ctl -> rmnet_core -> rmnet_* in a single
+# `make M=` run. This replaces the bazel ddk_module graph of the three techpacks
+# (dataipa/define_modules.bzl, datarmnet/define_modules.bzl, datarmnet-ext/*/define_*.bzl).
+#
+# SOCINCLUDE: soc-repo headers must come before ACK's (as kleaf does with //soc-repo:all_headers).
+LINUXINCLUDE := $(SOCINCLUDE) $(LINUXINCLUDE)
+
+DATA_TOP := $(src)
+export DATA_TOP
+# what the datarmnet-ext Kbuilds expect from Android.mk
+RMNET_CORE_INC_DIR := $(DATA_TOP)/datarmnet/core
+export RMNET_CORE_INC_DIR
+# rmnet_mem.h (kernel API) and its uapi header, dataipa public headers: the ddk deps of
+# rmnet_core / ipam
+LINUXINCLUDE += -I$(DATA_TOP)/datarmnet-ext/mem -I$(DATA_TOP)/datarmnet-ext/mem/include/uapi/linux
+# "uapi/linux/rmnet_<x>.h" of each datarmnet-ext module (ddk_headers includes = ["include"])
+LINUXINCLUDE += $(foreach m,aps mem perf shs wlan,-I$(DATA_TOP)/datarmnet-ext/$(m)/include)
+# dataipa public headers for rmnet_ctl / rmnet_core (//vendor/qcom/opensource/dataipa:include_headers)
+LINUXINCLUDE += -I$(DATA_TOP)/dataipa/drivers/platform/msm/include -I$(DATA_TOP)/dataipa/drivers/platform/msm/include/linux -I$(DATA_TOP)/dataipa/drivers/platform/msm/include/uapi
+
+# datarmnet/core/Kconfig symbols (kleaf merges that Kconfig into the kernel config; a plain
+# M= build cannot): RMNET_LA_PLATFORM defaults to y on ARCH_YUPIK.
+LINUXINCLUDE += -DCONFIG_RMNET_LA_PLATFORM=1
+# dataipa's defconfig (config/dataipa_GKI.conf: CONFIG_IPA3=m), which kleaf hands to every
+# ddk_module that depends on //vendor/qcom/opensource/dataipa:<target>_ipam (rmnet_ctl,
+# rmnet_core). dataipa's own Kbuild only force-includes dataipa_vendor.h for its own objects,
+# so without this datarmnet saw IS_ENABLED(CONFIG_IPA3) == 0 and compiled the -EPERM stubs of
+# include/linux/ipa.h: rmnet_ctl_init logged "-1" and rmnet_core's init failed in
+# rmnet_ll_ipa_init (ipa_register_ipa_ready_cb stub) -> insmod FAIL, run kx-m1b 2026-11-14.
+LINUXINCLUDE += -DCONFIG_IPA3_MODULE=1
+# Trace headers: the donors hard-code ../../../../vendor/qcom/opensource/<techpack>/... relative
+# to the kernel's include/trace. Point them at "." and let the -I paths find the header
+# (ddk local_defines *_TRACE_INCLUDE_PATH do the same job in bazel).
+LINUXINCLUDE += -I$(DATA_TOP)/datarmnet/core
+LINUXINCLUDE += -DGSI_TRACE_INCLUDE_PATH=. -DIPA_TRACE_INCLUDE_PATH=. -DRNDIS_TRACE_INCLUDE_PATH=. -DNCM_TRACE_INCLUDE_PATH=. -DRMNET_TRACE_INCLUDE_PATH=.
+
+obj-m += datarmnet-ext/mem/
+obj-m += dataipa/
+obj-m += datarmnet/core/
+obj-m += datarmnet-ext/offload/
+obj-m += datarmnet-ext/shs/
+obj-m += datarmnet-ext/perf/
+obj-m += datarmnet-ext/perf_tether/
+obj-m += datarmnet-ext/sch/
+obj-m += datarmnet-ext/aps/
+obj-m += datarmnet-ext/wlan/

@@ -1,0 +1,437 @@
+--- redwood/adsprpc.c
++++ a52sxq/adsprpc.c
+@@ -38,7 +38,6 @@
+ #include <linux/sort.h>
+ #include <linux/cred.h>
+ #include <linux/msm_dma_iommu_mapping.h>
+-#include "adsprpc_compat.h"
+ #include "adsprpc_shared.h"
+ #include <soc/qcom/minidump.h>
+ #include <linux/delay.h>
+@@ -48,6 +47,8 @@
+ #include <linux/of_reserved_mem.h>
+ 
+ #define CREATE_TRACE_POINTS
++#include <linux/pm_qos.h>
++#include <linux/cpu.h>
+ #include "adsprpc_612.h"
+ #include "fastrpc_trace.h"
+ 
+@@ -232,6 +233,12 @@
+ 	USER_MSG = 0,
+ 	KERNEL_MSG_WITH_ZERO_PID,
+ 	KERNEL_MSG_WITH_NONZERO_PID,
++	/*
++	 * a52sxq: request from a 32-bit caller. A user request in every way,
++	 * except that inv->pra was already converted to the native layout
++	 * and is kernel memory (adsprpc_compat.c).
++	 */
++	COMPAT_MSG,
+ };
+ 
+ #define PERF_END (void)0
+@@ -515,7 +522,14 @@
+ 	struct hlist_head initmems;
+ };
+ 
++/* a52sxq: restored from the phone's 5.4 driver (qcom,qos-cores latency votes) */
++struct qos_cores {
++	int *coreno;
++	int corecount;
++};
++
+ struct fastrpc_apps {
++	struct qos_cores silvercores;
+ 	struct fastrpc_channel_ctx *channel;
+ 	struct cdev cdev;
+ 	struct class *class;
+@@ -623,6 +637,8 @@
+ 	int pd;
+ 	char *servloc_name;
+ 	int file_close;
++	struct dev_pm_qos_request *dev_pm_qos_req;
++	int qos_request;
+ 	int dsp_proc_init;
+ 	struct fastrpc_apps *apps;
+ 	struct dentry *debugfs_file;
+@@ -1454,7 +1470,7 @@
+ 			err = -EBADFD;
+ 			goto bail;
+ 		}
+-		err = dma_buf_get_flags(map->buf, &flags);
++		err = fastrpc_dma_buf_get_flags(map->buf, &flags);
+ 		if (err) {
+ 			ADSPRPC_ERR(
+ 				"dma_buf_get_flags failed for fd %d ret %d\n",
+@@ -1513,7 +1529,7 @@
+ 			err = -EBADFD;
+ 			goto bail;
+ 		}
+-		err = dma_buf_get_flags(map->buf, &flags);
++		err = fastrpc_dma_buf_get_flags(map->buf, &flags);
+ 		if (err) {
+ 			ADSPRPC_ERR(
+ 				"dma_buf_get_flags failed for fd %d ret %d\n",
+@@ -2016,6 +2032,11 @@
+ 	struct fastrpc_ioctl_invoke *invoke = &invokefd->inv;
+ 	struct fastrpc_channel_ctx *chan = NULL;
+ 	unsigned long irq_flags = 0;
++	/* COMPAT_MSG: only the pra array is kernel memory */
++	uint32_t pra_kernel = kernel;
++
++	if (kernel == COMPAT_MSG)
++		kernel = USER_MSG;
+ 
+ 	spin_lock(&fl->hlock);
+ 	if (fl->clst.num_active_ctxs > MAX_PENDING_CTX_PER_SESSION &&
+@@ -2049,7 +2070,7 @@
+ 	ctx->overs = (struct overlap *)(&ctx->attrs[bufs]);
+ 	ctx->overps = (struct overlap **)(&ctx->overs[bufs]);
+ 
+-	K_COPY_FROM_USER(err, kernel, (void *)ctx->lpra, invoke->pra,
++	K_COPY_FROM_USER(err, pra_kernel, (void *)ctx->lpra, invoke->pra,
+ 					bufs * sizeof(*ctx->lpra));
+ 	if (err) {
+ 		ADSPRPC_ERR(
+@@ -3346,6 +3367,11 @@
+ 	struct timespec64 invoket = {0};
+ 	uint64_t *perf_counter = NULL;
+ 	bool isasyncinvoke = false, isworkdone = false;
++	/* what context_alloc() gets; everything else treats COMPAT_MSG as user */
++	uint32_t msg_type = kernel;
++
++	if (kernel == COMPAT_MSG)
++		kernel = USER_MSG;
+ 
+ 	cid = fl->cid;
+ 	VERIFY(err, cid >= ADSP_DOMAIN_ID && cid < NUM_CHANNELS &&
+@@ -3392,7 +3418,7 @@
+ 		}
+ 	}
+ 
+-	VERIFY(err, 0 == (err = context_alloc(fl, kernel, inv, &ctx)));
++	VERIFY(err, 0 == (err = context_alloc(fl, msg_type, inv, &ctx)));
+ 	if (err)
+ 		goto bail;
+ 	isasyncinvoke = (ctx->asyncjob.isasyncjob ? true : false);
+@@ -5494,6 +5520,7 @@
+ 	kfree(fl->debug_buf);
+ 	kfree(fl->gidlist.gids);
+ 	if (!fl->sctx) {
++		kfree(fl->dev_pm_qos_req);
+ 		kfree(fl);
+ 		return 0;
+ 	}
+@@ -5534,6 +5561,7 @@
+ 	fastrpc_remote_buf_list_free(fl);
+ 	mutex_destroy(&fl->map_mutex);
+ 	mutex_destroy(&fl->internal_map_mutex);
++	kfree(fl->dev_pm_qos_req);
+ 	kfree(fl);
+ 	return 0;
+ }
+@@ -5541,10 +5569,19 @@
+ static int fastrpc_device_release(struct inode *inode, struct file *file)
+ {
+ 	struct fastrpc_file *fl = (struct fastrpc_file *)file->private_data;
++	struct fastrpc_apps *me = &gfa;
++	u32 ii;
+ 
+ 	if (!fl)
+ 		return 0;
+ 
++	if (fl->qos_request && fl->dev_pm_qos_req) {
++		for (ii = 0; ii < me->silvercores.corecount; ii++) {
++			if (!dev_pm_qos_request_active(&fl->dev_pm_qos_req[ii]))
++				continue;
++			dev_pm_qos_remove_request(&fl->dev_pm_qos_req[ii]);
++		}
++	}
+ #ifdef CONFIG_DEBUG_FS
+ 	debugfs_remove(fl->debugfs_file);
+ #endif
+@@ -5897,6 +5934,7 @@
+ 	fl->cid = -1;
+ 	fl->dev_minor = dev_minor;
+ 	fl->init_mem = NULL;
++	fl->qos_request = 0;
+ 	fl->dsp_proc_init = 0;
+ 	fl->is_ramdump_pend = false;
+ 	fl->dsp_process_state = PROCESS_CREATE_DEFAULT;
+@@ -5908,6 +5946,9 @@
+ 	spin_lock(&me->hlock);
+ 	hlist_add_head(&fl->hn, &me->drivers);
+ 	spin_unlock(&me->hlock);
++	fl->dev_pm_qos_req = kcalloc(me->silvercores.corecount,
++				sizeof(struct dev_pm_qos_request),
++				GFP_KERNEL);
+ 	return 0;
+ }
+ 
+@@ -6066,6 +6107,9 @@
+ 					struct fastrpc_ioctl_control *cp)
+ {
+ 	int err = 0;
++	unsigned int latency;
++	struct fastrpc_apps *me = &gfa;
++	u32 silver_core_count = me->silvercores.corecount, ii = 0, cpu;
+ 
+ 	VERIFY(err, !IS_ERR_OR_NULL(fl) && !IS_ERR_OR_NULL(fl->apps));
+ 	if (err) {
+@@ -6080,6 +6124,41 @@
+ 
+ 	switch (cp->req) {
+ 	case FASTRPC_CONTROL_LATENCY:
++		latency = cp->lp.enable == FASTRPC_LATENCY_CTRL_ENB ?
++			fl->apps->latency : PM_QOS_DEFAULT_VALUE;
++		VERIFY(err, latency != 0);
++		if (err) {
++			err = -EINVAL;
++			goto bail;
++		}
++
++		VERIFY(err, me->silvercores.coreno && fl->dev_pm_qos_req);
++		if (err)
++			goto bail;
++
++		for (ii = 0; ii < silver_core_count; ii++) {
++			cpu = me->silvercores.coreno[ii];
++			if (!fl->qos_request) {
++				err = dev_pm_qos_add_request(
++						get_cpu_device(cpu),
++						&fl->dev_pm_qos_req[ii],
++						DEV_PM_QOS_RESUME_LATENCY,
++						latency);
++			} else {
++				err = dev_pm_qos_update_request(
++						&fl->dev_pm_qos_req[ii],
++						latency);
++			}
++			if (err < 0) {
++				pr_warn("adsprpc: %s: %s: PM voting for cpu:%d failed, err %d, QoS update %d\n",
++					current->comm, __func__, cpu,
++					err, fl->qos_request);
++				break;
++			}
++		}
++		if (err >= 0)
++			fl->qos_request = 1;
++
+ 		/* Ensure CPU feature map updated to DSP for early WakeUp */
+ 		fastrpc_send_cpuinfo_to_dsp(fl);
+ 		break;
+@@ -6381,6 +6460,24 @@
+ 	return err;
+ }
+ 
++/* a52sxq: the checks every ioctl starts with, shared with the 32-bit entry */
++static int fastrpc_ioctl_gate(struct fastrpc_file *fl)
++{
++	int err;
++
++	err = fastrpc_check_pd_status(fl,
++			AUDIO_PDR_SERVICE_LOCATION_CLIENT_NAME);
++	if (err)
++		return err;
++	spin_lock(&fl->hlock);
++	if (fl->file_close >= FASTRPC_PROCESS_EXIT_START) {
++		err = -ESHUTDOWN;
++		pr_warn("adsprpc: fastrpc_device_release is happening, So not sending any new requests to DSP\n");
++	}
++	spin_unlock(&fl->hlock);
++	return err;
++}
++
+ static long fastrpc_device_ioctl(struct file *file, unsigned int ioctl_num,
+ 				 unsigned long ioctl_param)
+ {
+@@ -6398,20 +6495,10 @@
+ 	p.inv.perf_dsp = NULL;
+ 	p.inv.job = NULL;
+ 
+-	err = fastrpc_check_pd_status(fl,
+-			AUDIO_PDR_SERVICE_LOCATION_CLIENT_NAME);
++	err = fastrpc_ioctl_gate(fl);
+ 	if (err)
+ 		goto bail;
+ 
+-	spin_lock(&fl->hlock);
+-	if (fl->file_close >= FASTRPC_PROCESS_EXIT_START) {
+-		err = -ESHUTDOWN;
+-		pr_warn("adsprpc: fastrpc_device_release is happening, So not sending any new requests to DSP\n");
+-		spin_unlock(&fl->hlock);
+-		goto bail;
+-	}
+-	spin_unlock(&fl->hlock);
+-
+ 	switch (ioctl_num) {
+ 	case FASTRPC_IOCTL_INVOKE:
+ 		size = sizeof(struct fastrpc_ioctl_invoke);
+@@ -6621,6 +6708,12 @@
+ 		spd->pdrnb.notifier_call(&spd->pdrnb, state, NULL);
+ }
+ 
++#ifdef CONFIG_COMPAT
++#include "adsprpc_compat.c"
++#else
++#define compat_fastrpc_device_ioctl NULL
++#endif
++
+ static const struct file_operations fops = {
+ 	.open = fastrpc_device_open,
+ 	.release = fastrpc_device_release,
+@@ -6628,6 +6721,23 @@
+ 	.compat_ioctl = compat_fastrpc_device_ioctl,
+ };
+ 
++/*
++ * a52sxq: Samsung's 5.4 kernel honours qcom,secure-domains only when the
++ * bootloader passes signoff=0x2377 (early_param in adsprpc.c); on every
++ * other boot all domains stay reachable through /dev/adsprpc-smd. A module
++ * can't take an early_param, so the same value is a module parameter:
++ * frpc-adsprpc.signoff=0x2377 on the command line or at insmod.
++ */
++#define CDSP_SIGNOFF_BLOCK 0x2377
++static unsigned int signoff_val;
++module_param_named(signoff, signoff_val, uint, 0444);
++
++static unsigned int is_signoff_block(void)
++{
++	pr_info("adsprpc: signoff 0x%08x\n", signoff_val);
++	return signoff_val == CDSP_SIGNOFF_BLOCK;
++}
++
+ static const struct of_device_id fastrpc_match_table[] = {
+ 	{ .compatible = "qcom,msm-fastrpc-adsp", },
+ 	{ .compatible = "qcom,msm-fastrpc-compute", },
+@@ -6817,6 +6927,40 @@
+ 		kfree(gids);
+ }
+ 
++/* a52sxq: restored from the phone's 5.4 driver */
++static void init_qos_cores_list(struct device *dev, char *prop_name,
++						struct qos_cores *silvercores)
++{
++	int err = 0;
++	u32 len = 0, i = 0;
++	u32 *coreslist = NULL;
++
++	if (!of_find_property(dev->of_node, prop_name, &len))
++		goto bail;
++	if (len == 0)
++		goto bail;
++	len /= sizeof(u32);
++	VERIFY(err, NULL != (coreslist = kcalloc(len, sizeof(u32),
++						 GFP_KERNEL)));
++	if (err)
++		goto bail;
++	for (i = 0; i < len; i++) {
++		err = of_property_read_u32_index(dev->of_node, prop_name, i,
++								&coreslist[i]);
++		if (err) {
++			pr_err("adsprpc: %s: failed to read QOS cores list\n",
++								 __func__);
++			goto bail;
++		}
++	}
++	silvercores->coreno = coreslist;
++	silvercores->corecount = len;
++bail:
++	if (err) {
++		kfree(coreslist);
++	}
++}
++
+ static void configure_secure_channels(uint32_t secure_domains)
+ {
+ 	struct fastrpc_apps *me = &gfa;
+@@ -6940,11 +7084,13 @@
+ 							&gcinfo[0].rhvm);
+ 		fastrpc_init_privileged_gids(dev, "qcom,fastrpc-gids",
+ 					&me->gidlist);
++		init_qos_cores_list(dev, "qcom,qos-cores",
++							&me->silvercores);
+ 
+ 		of_property_read_u32(dev->of_node, "qcom,rpc-latency-us",
+ 			&me->latency);
+ 		if (of_get_property(dev->of_node,
+-			"qcom,secure-domains", NULL) != NULL) {
++			"qcom,secure-domains", NULL) != NULL && is_signoff_block()) {
+ 			VERIFY(err, !of_property_read_u32(dev->of_node,
+ 					  "qcom,secure-domains",
+ 			      &secure_domains));
+--- redwood/adsprpc_612.h
++++ a52sxq/adsprpc_612.h
+@@ -12,6 +12,8 @@
+ #include <linux/firmware/qcom/qcom_scm.h>
+ #include <linux/remoteproc/qcom_rproc.h>
+ #include <linux/soc/qcom/pdr.h>
++#include <linux/dma-buf.h>
++#include <linux/mem-buf.h>
+ 
+ /* QGKI only */
+ #define DMA_ATTR_SKIP_ZEROING		0
+@@ -30,6 +32,27 @@
+ #define SERVREG_NOTIF_SERVICE_STATE_UP_V01	SERVREG_SERVICE_STATE_UP
+ #define SERVREG_NOTIF_SERVICE_STATE_UNINIT_V01	SERVREG_SERVICE_STATE_UNINIT
+ 
++/*
++ * a52sxq: the 5.4 driver read ION_FLAG_SECURE from the ION buffer to route a
++ * secure buffer to the secure SMMU context bank. The 6.12 qcom heaps have no
++ * get_flags op (dma_buf_get_flags() then returns 0 flags), but every qcom
++ * heap buffer carries its VM permission list in mem-buf: a buffer that HLOS
++ * does not own exclusively (lent/assigned to a CP VMID by a qcom,secure-*
++ * heap, which is what ioncompat hands out for the 5.4 secure heap ids) is
++ * what 5.4 called ION_FLAG_SECURE.
++ */
++static inline int fastrpc_dma_buf_get_flags(struct dma_buf *buf,
++					    unsigned long *flags)
++{
++	int err = dma_buf_get_flags(buf, flags);
++
++	if (err)
++		return err;
++	if (is_mem_buf_dma_buf(buf) && !mem_buf_dma_buf_exclusive_owner(buf))
++		*flags |= ION_FLAG_SECURE;
++	return 0;
++}
++
+ static inline const char *ssr_name(const char *subsys)
+ {
+ 	if (!strcmp(subsys, "adsp"))
+--- redwood/Kbuild
++++ a52sxq/Kbuild
+@@ -1,6 +1,9 @@
+-# The legacy FastRPC driver from redwood's 5.4 kernel, which the HyperOS
+-# vendor's libadsprpc needs (/dev/adsprpc-smd and its ioctls); the
+-# dsp-kernel drivers for 6.12 only speak the upstream fastrpc ABI.
++# Legacy FastRPC driver (5.4 ABI: /dev/adsprpc-smd, /dev/adsprpc-smd-secure) for
++# the Qualcomm 6.12 BSP. Base: redwood-6.12 modules/adsprpc; a52sxq changes in NOTES.md.
++# SOCINCLUDE = -I<soc-repo>/include -I<soc-repo>/include/uapi (build.sh sets it):
++# the soc-repo headers must come before the ACK ones.
++LINUXINCLUDE := $(SOCINCLUDE) $(LINUXINCLUDE)
++
+ obj-m += frpc-adsprpc.o
+ frpc-adsprpc-y := adsprpc.o
+ ccflags-y += -I$(src) -I$(src)/trace -Wno-format
+--- redwood/adsprpc_compat.h
++++ /dev/null
+@@ -1,18 +0,0 @@
+-/* SPDX-License-Identifier: GPL-2.0-only */
+-/*
+- * Copyright (c) 2014, 2018-2019 The Linux Foundation. All rights reserved.
+- */
+-#ifndef ADSPRPC_COMPAT_H
+-#define ADSPRPC_COMPAT_H
+-
+-/* adsprpc_compat.c needs compat_alloc_user_space, gone since 5.11 */
+-#ifdef ADSPRPC_COMPAT_IOCTL
+-
+-long compat_fastrpc_device_ioctl(struct file *filp, unsigned int cmd,
+-				unsigned long arg);
+-#else
+-
+-#define compat_fastrpc_device_ioctl	NULL
+-
+-#endif /* CONFIG_COMPAT */
+-#endif /* ADSPRPC_COMPAT_H */

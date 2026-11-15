@@ -1,0 +1,18 @@
+sm5714-charger: _check_slow_rate_charging() sets CHARGE_TYPE from an uninitialised propval
+
+The union was passed to psy_do_property(set) uninitialised (clang 22:
+-Wuninitialized-const-pointer). sec-battery's CHARGE_TYPE setter only queues its monitor
+work and ignores the value, so zero it.
+
+--- a/drivers612/power/src/battery/charger/sm5714_charger/sm5714_charger.c
++++ b/drivers612/power/src/battery/charger/sm5714_charger/sm5714_charger.c
+@@ -1292,7 +1292,8 @@
+ 
+ static inline void _check_slow_rate_charging(struct sm5714_charger_data *charger)
+ {
+-	union power_supply_propval value;
++	/* sec-battery only kicks its monitor work on CHARGE_TYPE; it never reads the value */
++	union power_supply_propval value = { .intval = 0 };
+ 
+ 	if (charger->input_current <= SLOW_CHARGING_CURRENT_STANDARD &&
+ 			charger->cable_type != SEC_BATTERY_CABLE_NONE) {

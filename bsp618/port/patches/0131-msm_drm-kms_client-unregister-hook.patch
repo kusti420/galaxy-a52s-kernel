@@ -1,0 +1,50 @@
+msm_drm: give the embedded kms_client an .unregister hook
+
+msm_drm_component_init() calls drm_client_init(ddev, &kms->client, "kms_client", NULL):
+the client is embedded in struct msm_kms. With funcs == NULL,
+drm_client_dev_unregister() (called by drm_dev_unregister(), ack/drivers/gpu/drm/
+drm_client_event.c:32-50) does drm_client_release(client) followed by kfree(client), i.e.
+kfree() of a pointer into msm_kms -> slab corruption on every unbind/teardown after a
+successful drm_dev_register(). Same code in 6.12 (bsp612 drm_client.c had the identical
+loop), so not a 6.18 regression, but cheap to fix: an .unregister hook that only calls
+drm_client_release() (drm_client.c:163-172; no module refcount is taken on .owner in
+6.18 drm_client_init(), drm_client.c:78-104). No hotplug/restore hooks are added, so the
+client stays as passive as before (drm_client_register() and drm_client_dev_restore()
+skip NULL hooks).
+
+Teardown only; no effect on boot.
+
+--- a/drivers612/display/techpack/display-drivers/msm/msm_drv.c
++++ b/drivers612/display/techpack/display-drivers/msm/msm_drv.c
+@@ -927,6 +927,21 @@
+ 	return ret;
+ }
+ 
++/*
++ * bsp618: kms_client is embedded in struct msm_kms. Without an .unregister hook,
++ * drm_client_dev_unregister() (from drm_dev_unregister()) releases a client and then
++ * kfree()s it, i.e. frees a pointer into msm_kms. Release it without the kfree.
++ */
++static void msm_kms_client_unregister(struct drm_client_dev *client)
++{
++	drm_client_release(client);
++}
++
++static const struct drm_client_funcs msm_kms_client_funcs = {
++	.owner		= THIS_MODULE,
++	.unregister	= msm_kms_client_unregister,
++};
++
+ static int msm_drm_component_init(struct device *dev)
+ {
+ 	struct platform_device *pdev = to_platform_device(dev);
+@@ -1034,7 +1049,8 @@
+ 
+ 	/* create drm client only when fbdev is not supported */
+ 	if (!priv->fbdev) {
+-		ret = drm_client_init(ddev, &kms->client, "kms_client", NULL);
++		ret = drm_client_init(ddev, &kms->client, "kms_client",
++				      &msm_kms_client_funcs);
+ 		if (ret) {
+ 			DRM_ERROR("failed to init kms_client: %d\n", ret);
+ 			kms->client.dev = NULL;

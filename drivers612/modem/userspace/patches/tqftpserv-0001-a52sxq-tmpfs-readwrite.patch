@@ -1,0 +1,60 @@
+diff --color -ruN a/tqftpserv/tqftpserv.c b/tqftpserv/tqftpserv.c
+--- a/tqftpserv/tqftpserv.c	2026-11-14 19:15:21.259588002 +0200
++++ b/tqftpserv/tqftpserv.c	2026-11-14 19:16:45.922107277 +0200
+@@ -937,6 +937,7 @@
+ 	int ret;
+ 	int fd;
+ 
++	setvbuf(stdout, NULL, _IOLBF, 0);
+ 	while ((opt = getopt(argc, argv, "dh")) != -1) {
+ 		switch (opt) {
+ 		case 'd':
+diff --color -ruN a/tqftpserv/translate.c b/tqftpserv/translate.c
+--- a/tqftpserv/translate.c	2026-11-14 19:15:21.259627456 +0200
++++ b/tqftpserv/translate.c	2026-11-14 19:16:45.922040251 +0200
+@@ -4,6 +4,7 @@
+  */
+ #define _GNU_SOURCE /* asprintf() */
+ #include <sys/stat.h>
++#include <sys/statfs.h>
+ #include <sys/types.h>
+ #include <dirent.h>
+ #include <err.h>
+@@ -28,7 +29,16 @@
+ #define READONLY_VENDOR_PATH		"/readonly/vendor/firmware/"
+ #define READONLY_VENDOR_MNT_PATH	"/readonly/vendor/firmware_mnt/image/"
+ 
+-#ifndef ANDROID
++#if defined(A52SXQ_RAM_RW)
++/*
++ * a52sxq kernel-only test: /readwrite lives in a tmpfs (lost at reboot, nothing on a disk);
++ * translate_readwrite() refuses a directory that is not on tmpfs/ramfs.
++ */
++#define FIRMWARE_BASE	"/lib/firmware/"
++#ifndef TQFTPSERV_RW_DIR
++#define TQFTPSERV_RW_DIR	"/tmp/tqftp-rw"
++#endif
++#elif !defined(ANDROID)
+ #define FIRMWARE_BASE	"/lib/firmware/"
+ #define TQFTPSERV_RW_DIR	"/var/lib/tqftpserv"
+ #else
+@@ -192,6 +202,19 @@
+ 		warn("failed to open tqftpserv readwrite directory");
+ 		return -1;
+ 	}
++#if defined(A52SXQ_RAM_RW)
++	{
++		struct statfs sfs;
++
++		if (fstatfs(base, &sfs) < 0 ||
++		    (sfs.f_type != 0x01021994 && sfs.f_type != 0x858458f6)) {
++			warnx("%s is not on tmpfs/ramfs: refusing %s", TQFTPSERV_RW_DIR, file);
++			close(base);
++			errno = EPERM;
++			return -1;
++		}
++	}
++#endif
+ 
+ 	fd = openat(base, file, flags, 0600);
+ 	close(base);

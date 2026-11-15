@@ -1,0 +1,24 @@
+# a52sxq fingerprint (Egis ET713, optical, TrustZone-owned SPI) for the Qualcomm 6.12 BSP.
+# Copied into src/ by port.sh. Mirrors the phone's 5.4 drivers/fingerprint/Makefile with the
+# a52sxq defconfig switches (arch/arm64/configs/vendor/lineage-a52sxq_defconfig):
+#   CONFIG_SENSORS_FINGERPRINT=y  CONFIG_FINGERPRINT_SECURE=y  CONFIG_SENSORS_FINGERPRINT_QCOM=y
+#   CONFIG_SENSORS_ET7XX=y        (CONFIG_SEC_FACTORY off -> ENABLE_SENSORS_FPRINT_SECURE)
+# An external tree has no Kconfig, so the switches are passed as -D. Deliberately NOT defined:
+#   CONFIG_CPU_FREQ_LIMIT (on in 5.4, but the a52sxq node has no etspi-min_cpufreq_limit, so the
+#   5.4 FP_CPU_SPEEDUP path was a no-op there too; Samsung's cpufreq_limit has no 6.12 port here)
+#   CONFIG_SEC_FACTORY (factory build: non-secure SPI driver)
+#
+# Two modules, as two objects on 5.4 (both built in there):
+#   fingerprint_sysfs.ko  /sys/class/fingerprint + fingerprint_register()/..._unregister()
+#   fingerprint.ko        et7xx platform driver (/dev/esfp0, major 152), needs fingerprint_sysfs
+
+ccflags-y := -Wformat \
+	-DCONFIG_SENSORS_FINGERPRINT=1 \
+	-DCONFIG_FINGERPRINT_SECURE=1 \
+	-DCONFIG_SENSORS_FINGERPRINT_QCOM=1 \
+	-DCONFIG_SENSORS_ET7XX=1
+
+obj-m += fingerprint_sysfs.o
+obj-m += fingerprint.o
+fingerprint-y := fingerprint_common.o fingerprint_common_qcom.o \
+	et7xx-spi.o et7xx-spi_data_transfer.o

@@ -1,0 +1,47 @@
+ucsi_qti_glink: 6.18 sync_control(ucsi, cmd, cci, data, size) also reads CCI and MESSAGE_IN
+
+6.18's ucsi_run_command() no longer reads CCI and MESSAGE_IN after ->sync_control(); the
+driver does it (upstream: ucsi_sync_control_common()). Done here in 6.12 order: CCI always
+(read failure -> -EIO), MESSAGE_IN only for a completed command without NOT_SUPPORTED/ERROR
+that returned data. Not loaded on 6.12 or 5.4 (QTI_PMIC_GLINK off there; the A52s PD stack
+is SM5714): compile fix only.
+
+--- a/bsp612/soc-repo/drivers/usb/typec/ucsi/ucsi_qti_glink.c
++++ b/bsp612/soc-repo/drivers/usb/typec/ucsi/ucsi_qti_glink.c
+@@ -415,12 +415,34 @@
+ }
+ 
+ 
+-static int ucsi_qti_sync_control(struct ucsi *ucsi, u64 command)
++static int ucsi_qti_read_cci(struct ucsi *ucsi, u32 *cci);
++static int ucsi_qti_read_message_in(struct ucsi *ucsi, void *val,
++					size_t val_len);
++
++/*
++ * 6.18: sync_control(ucsi, command, cci, data, size). ucsi_run_command() no
++ * longer reads CCI and MESSAGE_IN itself after the blocking write; do it here
++ * the way 6.12's ucsi_run_command() did (CCI always, MESSAGE_IN only for a
++ * completed, successful command that returned data).
++ */
++static int ucsi_qti_sync_control(struct ucsi *ucsi, u64 command, u32 *cci,
++				 void *data, size_t size)
+ {
+ 	struct ucsi_dev *udev = ucsi_get_drvdata(ucsi);
++	int ret;
+ 
+-	return ucsi_qti_glink_write(udev, UCSI_CONTROL, &command,
++	ret = ucsi_qti_glink_write(udev, UCSI_CONTROL, &command,
+ 				sizeof(command), true);
++	if (cci && ucsi_qti_read_cci(ucsi, cci))
++		return -EIO;
++
++	if (!ret && cci && data && size &&
++	    (*cci & UCSI_CCI_COMMAND_COMPLETE) &&
++	    !(*cci & (UCSI_CCI_NOT_SUPPORTED | UCSI_CCI_ERROR)) &&
++	    UCSI_CCI_LENGTH(*cci))
++		ret = ucsi_qti_read_message_in(ucsi, data, size);
++
++	return ret;
+ }
+ 
+ static int ucsi_qti_read(struct ucsi_dev *udev, unsigned int offset,

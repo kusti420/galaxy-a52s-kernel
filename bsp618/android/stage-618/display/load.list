@@ -1,0 +1,19 @@
+01-refgen.ko
+02-qmi_helpers.ko
+03-qcom_pdr_msg.ko
+04-qcom_smd.ko
+05-qcom_glink.ko
+06-qcom_glink_smem.ko
+07-rproc_qcom_common.ko
+08-pdr_interface.ko
+09-qti_pmic_glink.ko
+10-altmode-glink.ko
+11-fsa4480_i2c.ko
+12-drm_display_helper.ko
+13-panel_event_notifier.ko
+14-qcom_va_minidump.ko
+15-lcd.ko
+16-sec_panel_notifier_v2.ko
+17-msm_ext_display.ko
+18-msm_drm.ko dsi_display0=ss_dsi_panel_S6E3FC3_AMS646YD01_LO_FHD: lcd_id=80000A
+19-qfprom-sys.ko

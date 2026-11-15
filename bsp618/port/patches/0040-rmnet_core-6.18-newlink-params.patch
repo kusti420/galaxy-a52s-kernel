@@ -1,0 +1,28 @@
+rmnet_core (datarmnet): rtnl_link_ops.newlink takes struct rtnl_newlink_params on 6.18
+
+6.18: newlink(dev, params, extack); src_net/tb/data are fields of the params. 6.12's
+rtnl_newlink_create() passed "link_net ? : net" as the first argument, which is exactly
+rtnl_newlink_link_net(params) (upstream rmnet uses the same helper). Needed by the modem
+stage (rmnet_ctl/core/offload/shs, as on 5.4): rild's rmnet_data* links.
+
+--- a/drivers612/conn/data/src/datarmnet/core/rmnet_config.c
++++ b/drivers612/conn/data/src/datarmnet/core/rmnet_config.c
+@@ -203,10 +203,16 @@
+ 	}
+ }
+ 
+-static int rmnet_newlink(struct net *src_net, struct net_device *dev,
+-			 struct nlattr *tb[], struct nlattr *data[],
++/* 6.18: newlink(dev, params, extack). 6.12 passed "link_net ? : net" as the first
++ * argument, which is what rtnl_newlink_link_net() returns (as upstream rmnet does).
++ */
++static int rmnet_newlink(struct net_device *dev,
++			 struct rtnl_newlink_params *params,
+ 			 struct netlink_ext_ack *extack)
+ {
++	struct net *src_net = rtnl_newlink_link_net(params);
++	struct nlattr **tb = params->tb;
++	struct nlattr **data = params->data;
+ 	struct net_device *real_dev;
+ 	int mode = RMNET_EPMODE_VND;
+ 	struct rmnet_endpoint *ep;

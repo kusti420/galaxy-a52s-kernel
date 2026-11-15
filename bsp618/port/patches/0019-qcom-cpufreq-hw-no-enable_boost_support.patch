@@ -1,0 +1,58 @@
+qcom-cpufreq-hw (soc-repo): no cpufreq_enable_boost_support(), no exported freq_attrs
+
+6.18 has no policy_has_boost_freq()/cpufreq_enable_boost_support(): the core sets
+policy->boost_supported from CPUFREQ_BOOST_FREQ table entries and offers boost when the
+driver has .set_boost. The fork gets .set_boost = cpufreq_boost_set_sw, as upstream
+qcom-cpufreq-hw has. Its .attr table goes too: the 6.18 core creates
+scaling_available_frequencies and scaling_boost_frequencies itself and no longer exports
+cpufreq_freq_attr_scaling_{available,boost}_freqs (modpost: undefined).
+
+Needed at run time by sched-walt: walt_init() requires a cpufreq policy on every CPU
+(WALT_PANIC otherwise), and the 6.18 GKI does not build ARM_QCOM_CPUFREQ_HW.
+
+--- a/bsp612/soc-repo/drivers/cpufreq/qcom-cpufreq-hw.c
++++ b/bsp612/soc-repo/drivers/cpufreq/qcom-cpufreq-hw.c
+@@ -823,11 +823,11 @@
+ 		goto error;
+ 	}
+ 
+-	if (policy_has_boost_freq(policy)) {
+-		ret = cpufreq_enable_boost_support();
+-		if (ret)
+-			dev_warn(cpu_dev, "failed to enable boost: %d\n", ret);
+-	}
++	/*
++	 * bsp618/port: cpufreq_enable_boost_support() is gone in 6.18: the core marks
++	 * policy->boost_supported from CPUFREQ_BOOST_FREQ table entries and offers boost when
++	 * the driver has .set_boost (cpufreq_boost_set_sw below, as upstream qcom-cpufreq-hw)
++	 */
+ 
+ 	ret = qcom_cpufreq_hw_lmh_init(policy, index, cpu_dev);
+ 	if (ret)
+@@ -858,11 +858,11 @@
+ 		enable_irq(data->throttle_irq);
+ }
+ 
+-static struct freq_attr *qcom_cpufreq_hw_attr[] = {
+-	&cpufreq_freq_attr_scaling_available_freqs,
+-	&cpufreq_freq_attr_scaling_boost_freqs,
+-	NULL
+-};
++/*
++ * bsp618/port: no .attr table: the 6.18 cpufreq core creates scaling_available_frequencies
++ * (policy with a freq_table) and scaling_boost_frequencies (driver with .set_boost) itself,
++ * and no longer exports the two freq_attr objects
++ */
+ 
+ static struct cpufreq_driver cpufreq_qcom_hw_driver = {
+ 	.flags		= CPUFREQ_NEED_INITIAL_FREQ_CHECK |
+@@ -878,8 +878,8 @@
+ 	.register_em	= cpufreq_register_em_with_opp,
+ 	.fast_switch    = qcom_cpufreq_hw_fast_switch,
+ 	.name		= "qcom-cpufreq-hw",
+-	.attr		= qcom_cpufreq_hw_attr,
+ 	.ready		= qcom_cpufreq_ready,
++	.set_boost	= cpufreq_boost_set_sw,
+ 	.boost_enabled	= true,
+ };
+ 

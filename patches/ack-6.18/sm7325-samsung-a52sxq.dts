@@ -1,0 +1,430 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Samsung Galaxy A52s 5G (SM-A528B, a52sxq), hardware revision 3.
+ *
+ * Bring-up stage 1: bootloader framebuffer, keys, USB 2.0 gadget, UFS. Everything in here comes from
+ * the phone's own downstream device tree (yupik.dtb + a52sxq_kor_single_w00_r02 overlay,
+ * decompiled in downstream-dt/a52sxq-r02.dts of the a52sxq-mainline project), never from another
+ * phone's file: memory reservations, GPIO numbers and regulator voltage ranges.
+ *
+ * Only the regulators that USB 2.0 and UFS need are described, each pinned to the voltage the
+ * downstream kernel uses. Every other rail stays exactly as the bootloader left it, because
+ * Linux does not touch an RPMh resource it has no node for.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
+#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include "sm7325.dtsi"
+#include "pm7325.dtsi"
+#include "pm8350c.dtsi"
+#include "pmk8350.dtsi"
+
+/ {
+	model = "Samsung Galaxy A52s 5G";
+	compatible = "samsung,a52sxq", "qcom,sm7325";
+	chassis-type = "handset";
+
+	/* Downstream yupik.dtb: SM7325 (475) and SM7325P (515), board 0. */
+	qcom,msm-id = <475 0x10000>, <515 0x10000>;
+	qcom,board-id = <0 0>;
+
+	chosen {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * The bootloader leaves the panel (Samsung S6E3FC3, AMS646YD01, 1080x2400) running
+		 * from this buffer. The clocks and the power domain are listed so that they stay on
+		 * until a real display driver takes over.
+		 */
+		framebuffer: framebuffer@e1000000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xe1000000 0x0 (1080 * 2400 * 4)>;
+			width = <1080>;
+			height = <2400>;
+			stride = <(1080 * 4)>;
+			format = "a8r8g8b8";
+
+			clocks = <&gcc GCC_DISP_HF_AXI_CLK>,
+				 <&dispcc DISP_CC_MDSS_MDP_CLK>,
+				 <&dispcc DISP_CC_MDSS_BYTE0_CLK>,
+				 <&dispcc DISP_CC_MDSS_BYTE0_INTF_CLK>,
+				 <&dispcc DISP_CC_MDSS_PCLK0_CLK>,
+				 <&dispcc DISP_CC_MDSS_VSYNC_CLK>;
+			power-domains = <&dispcc DISP_CC_MDSS_CORE_GDSC>;
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		pinctrl-0 = <&kypd_vol_up_n>;
+		pinctrl-names = "default";
+
+		/* downstream gpio_keys/vol_up: pm7325 gpio 6, active low */
+		key-volume-up {
+			label = "Volume Up";
+			gpios = <&pm7325_gpios 6 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_VOLUMEUP>;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+	};
+
+	reserved_memory: reserved-memory {
+		/*
+		 * Regions the A52s has on top of, or different from, kodiak.dtsi. Addresses and
+		 * sizes are the downstream ones.
+		 */
+		cdsp_secure_heap_mem: cdsp-secure-heap@81800000 {
+			reg = <0x0 0x81800000 0x0 0x1e00000>;
+			no-map;
+		};
+
+		camera_mem: camera@8ad00000 {
+			reg = <0x0 0x8ad00000 0x0 0x500000>;
+			no-map;
+		};
+
+		ipa_gsi_mem: ipa-gsi@8b710000 {
+			reg = <0x0 0x8b710000 0x0 0xa000>;
+			no-map;
+		};
+
+		dummy_mem: dummy@9c700000 {
+			reg = <0x0 0x9c700000 0x0 0x100000>;
+			no-map;
+		};
+
+		/* Samsung: HDM, KASLR and TIMA regions written by the secure world. */
+		hdm_mem: hdm@9fb00000 {
+			reg = <0x0 0x9fb00000 0x0 0x1000>;
+			no-map;
+		};
+
+		kaslr_mem: kaslr@a0001000 {
+			reg = <0x0 0xa0001000 0x0 0x1000>;
+			no-map;
+		};
+
+		tima_mem: tima@b0100000 {
+			reg = <0x0 0xb0100000 0x0 0x100000>;
+			no-map;
+		};
+
+		removed_mem: removed@c0000000 {
+			reg = <0x0 0xc0000000 0x0 0x6a00000>;
+			no-map;
+		};
+
+		/*
+		 * Trusted VM image, qrtr shared buffer and the two "neuron" channels, one block
+		 * 0xd0000000..0xd8000000 downstream (the modem shared region at 0xd0000000 has
+		 * size 0 there; the gap up to 0xd0800000 is kept out as well).
+		 */
+		trustedvm_mem: trustedvm@d0000000 {
+			reg = <0x0 0xd0000000 0x0 0x8000000>;
+			no-map;
+		};
+
+		/*
+		 * Downstream reserves 0x2300000 for the splash buffer and 0x100000 of "dfps" data
+		 * right behind it. Keep the whole block out of the kernel's hands.
+		 */
+		splash_mem: splash@e1000000 {
+			reg = <0x0 0xe1000000 0x0 0x2400000>;
+			no-map;
+		};
+
+		/* Samsung debug: sec_debug (0x900000) and ss_plog (0x200000). */
+		sec_debug_mem: sec-debug@f0000000 {
+			reg = <0x0 0xf0000000 0x0 0xb00000>;
+			no-map;
+		};
+
+		/*
+		 * Early log of a kexec'd test kernel (earlycon=a52ram,0xf0be0000), read back by the
+		 * harness from /proc/a52ram after the reset. See arch/arm64/kernel/a52ram.c.
+		 * It is the last 128 KiB of the 1 MiB the downstream kernel uses for ramoops: that
+		 * range survives a warm reset. (0xf0c00000, just above, does not: the bootloader
+		 * uses it on every boot.) Our ramoops node below is shortened accordingly.
+		 */
+		a52ram@f0be0000 {
+			compatible = "a52,ramcon";
+			reg = <0x0 0xf0be0000 0x0 0x20000>;
+			no-map;
+		};
+
+		/*
+		 * Same place and same layout as the downstream kernel's ramoops. A test kernel that
+		 * crashes or hangs leaves its console log here, and the next normal Android boot
+		 * (5.4 kernel, same ramoops) picks it up as "last kmsg":
+		 * dumpsys dropbox --print SYSTEM_LAST_KMSG
+		 */
+		ramoops@f0b00000 {
+			compatible = "ramoops";
+			reg = <0x0 0xf0b00000 0x0 0xe0000>;
+			/* one 128 KiB dump record: the last 128 KiB of the old 1 MiB went to a52ram */
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			ftrace-size = <0x40000>;
+			pmsg-size = <0x40000>;
+		};
+	};
+
+	vph_pwr: regulator-vph-pwr {
+		compatible = "regulator-fixed";
+
+		regulator-name = "vph_pwr";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+
+		regulator-always-on;
+		regulator-boot-on;
+	};
+};
+
+/*
+ * downstream: adsp region is 0x84700000 + 0x4800000 (kodiak.dtsi: 0x86700000 + 0x2800000).
+ * The node keeps its kodiak name; only the range changes.
+ */
+&adsp_mem {
+	reg = <0x0 0x84700000 0x0 0x4800000>;
+};
+
+/* downstream: reserved_xbl_uefi is 0x80880000 + 0x14000 (kodiak.dtsi starts it at 0x80884000). */
+&reserved_xbl_uefi_log {
+	reg = <0x0 0x80880000 0x0 0x14000>;
+};
+
+&apps_rsc {
+	/*
+	 * Each rail is pinned to the voltage the downstream kernel initialises it to
+	 * ("qcom,init-voltage" in downstream-dt/regulators-r02.txt), min == max. This matters:
+	 * Linux cannot read an RPMh regulator's voltage back, so when it registers one it
+	 * programs the lowest voltage the range allows. With the wide downstream ranges that
+	 * would drop, for example, the 0.88 V PHY rail to 0.72 V.
+	 *
+	 * All of them are kept on: other parts of the board hang off the same rails, and nothing
+	 * else describes those consumers yet.
+	 */
+	regulators-0 {
+		compatible = "qcom,pm7325-rpmh-regulators";
+		qcom,pmic-id = "b";
+
+		/* pm7325_l2 (downstream range 2.7 - 3.544 V): USB HS PHY 3.3 V */
+		vreg_l2b: ldo2 {
+			regulator-name = "vreg_l2b";
+			regulator-min-microvolt = <3072000>;
+			regulator-max-microvolt = <3072000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		/* pm7325_l6 (1.14 - 1.26 V): UFS PHY PLL, 1.2 V */
+		vreg_l6b: ldo6 {
+			regulator-name = "vreg_l6b";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		/* pm7325_l7 (2.4 - 3.544 V; UFS levels 2.504 - 2.952 V): UFS VCC */
+		vreg_l7b: ldo7 {
+			regulator-name = "vreg_l7b";
+			regulator-min-microvolt = <2952000>;
+			regulator-max-microvolt = <2952000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		/* pm7325_l9 (1.2 - 1.304 V): UFS VCCQ, 1.2 V */
+		vreg_l9b: ldo9 {
+			regulator-name = "vreg_l9b";
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+	};
+
+	regulators-1 {
+		compatible = "qcom,pm8350c-rpmh-regulators";
+		qcom,pmic-id = "c";
+
+		/* pm8350c_l1 (1.8 - 1.98 V): USB HS PHY 1.8 V */
+		vreg_l1c: ldo1 {
+			regulator-name = "vreg_l1c";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		/* pm8350c_l10 (0.72 - 1.05 V): USB HS PHY core and UFS PHY core, 0.88 V */
+		vreg_l10c: ldo10 {
+			regulator-name = "vreg_l10c";
+			regulator-min-microvolt = <880000>;
+			regulator-max-microvolt = <880000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+	};
+};
+
+/*
+ * Clocks the phone firmware owns (modem, WPSS, QSPI, secure control, LPASS config). On retail
+ * SM7325/QCM6490 firmware the kernel must not touch them or the phone resets. This is the union
+ * of the lists the other phones on this chip use (Fairphone 5, Nothing Phone 1, Motorola Edge
+ * 30, Xiaomi 12 Lite); the A52s runs the same class of firmware.
+ */
+&gcc {
+	protected-clocks = <GCC_CFG_NOC_LPASS_CLK>,
+			   <GCC_EDP_CLKREF_EN>,
+			   <GCC_MSS_CFG_AHB_CLK>,
+			   <GCC_MSS_GPLL0_MAIN_DIV_CLK_SRC>,
+			   <GCC_MSS_OFFLINE_AXI_CLK>,
+			   <GCC_MSS_Q6SS_BOOT_CLK_SRC>,
+			   <GCC_MSS_Q6_MEMNOC_AXI_CLK>,
+			   <GCC_MSS_SNOC_AXI_CLK>,
+			   <GCC_QSPI_CNOC_PERIPH_AHB_CLK>,
+			   <GCC_QSPI_CORE_CLK>,
+			   <GCC_QSPI_CORE_CLK_SRC>,
+			   <GCC_SEC_CTRL_CLK_SRC>,
+			   <GCC_WPSS_AHB_BDG_MST_CLK>,
+			   <GCC_WPSS_AHB_CLK>,
+			   <GCC_WPSS_RSCP_CLK>;
+};
+
+/* The audio DSP owns the LPASS always-on clock controller on this firmware. */
+&lpass_audiocc {
+	compatible = "qcom,qcm6490-lpassaudiocc";
+	/delete-property/ power-domains;
+};
+
+&pm7325_gpios {
+	kypd_vol_up_n: kypd-vol-up-n-state {
+		pins = "gpio6";
+		function = PMIC_GPIO_FUNC_NORMAL;
+		bias-pull-up;
+		input-enable;
+		power-source = <1>;
+	};
+};
+
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+
+	status = "okay";
+};
+
+&tlmm {
+	/*
+	 * 56..59: the fingerprint sensor's SPI bus, handed to the secure world (downstream
+	 * pinctrl-yupik.c reserves them under CONFIG_FINGERPRINT_SECURE). Reading a pin the
+	 * secure world owns resets the phone, and gpiolib reads every pin it is allowed to.
+	 */
+	gpio-reserved-ranges = <56 4>;
+};
+
+/*
+ * UFS, as downstream ufshc@1d84000 / ufsphy_mem@1d87000: VCC = L7B (800 mA), VCCQ = L9B
+ * (900 mA), PHY core = L10C, PHY PLL = L6B, reset on TLMM 175 (active low).
+ */
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 175 GPIO_ACTIVE_LOW>;
+
+	vcc-supply = <&vreg_l7b>;
+	vcc-max-microamp = <800000>;
+
+	vccq-supply = <&vreg_l9b>;
+	vccq-max-microamp = <900000>;
+
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l10c>;
+	vdda-pll-supply = <&vreg_l6b>;
+
+	status = "okay";
+};
+
+&usb_1 {
+	/* USB 2.0 only for now: no USB 3 PHY, no role switch, always a gadget. */
+	qcom,select-utmi-as-pipe-clk;
+	maximum-speed = "high-speed";
+	dr_mode = "peripheral";
+
+	phys = <&usb_1_hsphy>;
+	phy-names = "usb2-phy";
+
+	/delete-property/ usb-role-switch;
+
+	status = "okay";
+};
+
+&usb_1_hsphy {
+	vdda-pll-supply = <&vreg_l10c>;
+	vdda18-supply = <&vreg_l1c>;
+	vdda33-supply = <&vreg_l2b>;
+
+	status = "okay";
+};
+
+/*
+ * Samsung's bootloader takes the reboot target from the same PMK8350 SDAM cell as upstream.
+ * 0x15 is its code for Download mode (downstream PON_RESTART_REASON_DOWNLOAD); a round trip
+ * through Download mode is what clears the bootloader's sticky "enter recovery" param flag.
+ */
+&{/reboot-mode} {
+	mode-download = <0x15>;
+};
+
+/*
+ * The hypervisor's resource manager hands the bootloader its own overlay, written for the
+ * downstream tree: it adds /hypervisor and patches the watchdog by the path
+ * "/soc/qcom,wdt@17c10000" (status = "disabled") and "/soc/timer" (always-on), as a diff of
+ * the stock tree against the live tree shows; other builds also patch the label "qcom_tzlog". The bootloader's libufdt aborts the boot ("ufdt apply overlay failed", then
+ * Download mode) when a target is missing, and upstream names the bus /soc@0. These two
+ * placeholders give that overlay something to land on. /soc has no compatible, so Linux never
+ * looks inside it.
+ */
+/ {
+	soc {
+		wdog: qcom,wdt@17c10000 {
+		};
+
+		qcom_tzlog: tz-log@0x146aa720 {
+		};
+
+		/* the hypervisor overlay adds "always-on" to /soc/timer */
+		arch_timer: timer {
+		};
+	};
+};
+
+/* Stock label names on nodes an overlay written for the downstream tree may target. */
+/ {
+	aliases: aliases {
+	};
+
+	firmware: firmware {
+	};
+};

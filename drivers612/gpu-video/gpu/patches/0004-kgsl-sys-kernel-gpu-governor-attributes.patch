@@ -1,0 +1,102 @@
+--- a/kgsl_pwrctrl.c
++++ b/kgsl_pwrctrl.c
+@@ -5,6 +5,8 @@
+  */
+ 
+ #include <linux/clk/qcom.h>
++#include <linux/devfreq.h>
++#include <linux/fs.h>
+ #include <linux/interconnect.h>
+ #include <linux/iopoll.h>
+ #include <linux/version.h>
+@@ -1370,6 +1372,70 @@
+ 	NULL,
+ };
+ 
++/*
++ * a52sxq: /sys/kernel/gpu/gpu_governor and gpu_available_governor.
++ * The phone's 5.4 kernel (kgsl built in) made these two kernfs links to the "governor" and
++ * "available_governors" files of the GPU devfreq device (kgsl_gpu_sysfs_add_link(), compiled
++ * only when !MODULE because kernfs_create_link() is not exported). The 6.x driver dropped them.
++ * /sys/kernel/gpu has 9 entries on the phone and Samsung's HALs/scripts use them, so keep the
++ * two names as real attributes that forward reads and writes to the devfreq files.
++ */
++static ssize_t _gpu_devfreq_file(struct kgsl_device *device, const char *name,
++		char *rbuf, const char *wbuf, size_t count)
++{
++	struct devfreq *devfreq = device->pwrscale.devfreqptr;
++	char *kpath, *path;
++	struct file *filp;
++	loff_t pos = 0;
++	ssize_t ret;
++
++	if (IS_ERR_OR_NULL(devfreq))
++		return -ENODEV;
++
++	kpath = kobject_get_path(&devfreq->dev.kobj, GFP_KERNEL);
++	if (!kpath)
++		return -ENOMEM;
++
++	path = kasprintf(GFP_KERNEL, "/sys%s/%s", kpath, name);
++	kfree(kpath);
++	if (!path)
++		return -ENOMEM;
++
++	filp = filp_open(path, wbuf ? O_WRONLY : O_RDONLY, 0);
++	kfree(path);
++	if (IS_ERR(filp))
++		return PTR_ERR(filp);
++
++	if (wbuf) {
++		ret = kernel_write(filp, wbuf, count, &pos);
++	} else {
++		ret = kernel_read(filp, rbuf, PAGE_SIZE - 1, &pos);
++		if (ret >= 0)
++			rbuf[ret] = '\0';
++	}
++
++	filp_close(filp, NULL);
++
++	return ret;
++}
++
++static ssize_t _gpu_governor_show(struct kgsl_device *device, char *buf)
++{
++	return _gpu_devfreq_file(device, "governor", buf, NULL, 0);
++}
++
++static ssize_t _gpu_governor_store(struct kgsl_device *device,
++		const char *buf, size_t count)
++{
++	return _gpu_devfreq_file(device, "governor", NULL, buf, count);
++}
++
++static ssize_t _gpu_available_governor_show(struct kgsl_device *device,
++		char *buf)
++{
++	return _gpu_devfreq_file(device, "available_governors", buf, NULL, 0);
++}
++
+ static GPU_SYSFS_ATTR(gpu_busy, 0444, _gpu_busy_show, NULL);
+ static GPU_SYSFS_ATTR(gpu_min_clock, 0644, _min_clock_mhz_show,
+ 		_min_clock_mhz_store);
+@@ -1378,6 +1444,10 @@
+ static GPU_SYSFS_ATTR(gpu_clock, 0444, _clock_mhz_show, NULL);
+ static GPU_SYSFS_ATTR(gpu_freq_table, 0444, _freq_table_mhz_show, NULL);
+ static GPU_SYSFS_ATTR(gpu_tmu, 0444, _gpu_tmu_show, NULL);
++static GPU_SYSFS_ATTR(gpu_governor, 0644, _gpu_governor_show,
++		_gpu_governor_store);
++static GPU_SYSFS_ATTR(gpu_available_governor, 0444,
++		_gpu_available_governor_show, NULL);
+ 
+ static const struct attribute *gpu_sysfs_attr_list[] = {
+ 	&gpu_sysfs_attr_gpu_busy.attr,
+@@ -1386,6 +1456,8 @@
+ 	&gpu_sysfs_attr_gpu_clock.attr,
+ 	&gpu_sysfs_attr_gpu_freq_table.attr,
+ 	&gpu_sysfs_attr_gpu_tmu.attr,
++	&gpu_sysfs_attr_gpu_governor.attr,
++	&gpu_sysfs_attr_gpu_available_governor.attr,
+ 	NULL,
+ };
+ 

@@ -1,0 +1,14 @@
+/* ==== /soc/i2c@98c000/sm5714-fled  (r02 lines 20222-20234) ==== */
+			sm5714-fled {
+				timeout = <0xff>;
+				factory_current = <0x00>;
+				torch-brightness = <0x07>;
+				preflash-brightness = <0x07>;
+				flash-brightness = <0x0f>;
+				torch-en-gpio = <0x3c 0x61 0x00>;
+				flash-en-gpio = <0x3c 0x60 0x00>;
+				slave-addr = <0x92>;
+				status = "okay";
+				reg = <0x49>;
+				compatible = "siliconmitus,sm5714-fled";
+			};

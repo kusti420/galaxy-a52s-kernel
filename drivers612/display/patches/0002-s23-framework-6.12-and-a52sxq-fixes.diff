@@ -1,0 +1,425 @@
+--- ../../samsung612/donors/sm8550-modules/qcom/opensource/display-drivers/msm/samsung/ss_ddi_spi_common.c	2026-11-11 19:56:57.635879482 +0200
++++ techpack/display-drivers/msm/samsung/ss_ddi_spi_common.c	2026-11-11 20:43:26.870639506 +0200
+@@ -469,7 +469,7 @@
+ 						spi_driver.driver);
+ 
+ 	LCD_INFO(vdd, "chip select(%d), bus number(%d)\n",
+-			client->chip_select, client->master->bus_num);
++			spi_get_chipselect(client, 0), client->controller->bus_num);
+ 
+ 	ret = ss_spi_parse_dt(vdd, client);
+ 	if (ret) {
+@@ -490,14 +490,13 @@
+ 	return ret;
+ }
+ 
+-static int ss_spi_remove(struct spi_device *spi)
++static void ss_spi_remove(struct spi_device *spi)
+ {
+ 	struct samsung_display_driver_data *vdd =
+ 		container_of(spi->dev.driver,
+ 						struct samsung_display_driver_data,
+ 						spi_driver.driver);
+ 	LCD_INFO(vdd, "%s : remove \n", __func__);
+-	return 0;
+ }
+ 
+ static int ddi_spi_suspend(struct device *dev)
+--- ../../samsung612/donors/sm8550-modules/qcom/opensource/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.c	2026-11-11 19:56:57.635879482 +0200
++++ techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.c	2026-11-11 20:48:05.336977486 +0200
+@@ -1341,7 +1341,15 @@
+ 	return size;
+ }
+ 
++/* a52sxq: /sys/class/mdnie/mdnie/mode_max is read by the ROM's livedisplay HAL (DisplayModes);
++ * the 5.4 tree has it, the S23 framework does not. */
++static ssize_t mode_max_show(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%u\n", MAX_MODE);
++}
+ static DEVICE_ATTR(mode, 0664, mode_show, mode_store);
++static DEVICE_ATTR(mode_max, 0444, mode_max_show, NULL);
+ static DEVICE_ATTR(scenario, 0664, scenario_show, scenario_store);
+ static DEVICE_ATTR(outdoor, 0664, outdoor_show, outdoor_store);
+ static DEVICE_ATTR(bypass, 0664, bypass_show, bypass_store);
+@@ -1507,6 +1515,10 @@
+ 	if (device_create_file(tune_mdnie_dev, &dev_attr_mode) < 0)
+ 		DPRINT(vdd, "[mDNIe] Failed to create device file(%s)!\n", dev_attr_mode.attr.name);
+ 
++	/* MODE MAX */
++	if (device_create_file(tune_mdnie_dev, &dev_attr_mode_max) < 0)
++		DPRINT(vdd, "[mDNIe] Failed to create device file(%s)!\n", dev_attr_mode_max.attr.name);
++
+ 	/* OUTDOOR */
+ 	if (device_create_file(tune_mdnie_dev, &dev_attr_outdoor) < 0)
+ 		DPRINT(vdd, "[mDNIe] Failed to create device file(%s)!\n", dev_attr_outdoor.attr.name);
+@@ -1581,7 +1593,7 @@
+ 	}
+ 
+ 	if (!mdnie_class) {
+-		mdnie_class = class_create(THIS_MODULE, "mdnie");
++		mdnie_class = class_create("mdnie");
+ 		if (IS_ERR(mdnie_class)) {
+ 			DPRINT(vdd, "[mDNIe] Failed to create class(mdnie)!\n");
+ 			return NULL;
+--- ../../samsung612/donors/sm8550-modules/qcom/opensource/display-drivers/msm/samsung/ss_dsi_panel_common.c	2026-11-11 19:56:57.636879484 +0200
++++ techpack/display-drivers/msm/samsung/ss_dsi_panel_common.c	2026-11-11 20:51:02.897515738 +0200
+@@ -2497,7 +2497,7 @@
+ 		LCD_ERR(vdd, "fail to allocate data\n");
+ 		return -ENOMEM;
+ 	}
+-	strlcpy(data, data_org, len);
++	strscpy(data, data_org, len);
+ 	data_backup = data; /* to free data */
+ 
+ 	/* skip empty data line */
+@@ -2580,7 +2580,7 @@
+ 		LCD_ERR(vdd, "fail to allocate data\n");
+ 		return -ENOMEM;
+ 	}
+-	strlcpy(data, data_org, len);
++	strscpy(data, data_org, len);
+ 	data_backup = data; /* to free data */
+ 
+ 	row = 0;
+@@ -5484,7 +5484,7 @@
+ 
+ 		rc = of_property_read_string(child, "samsung,panel_resolution_name", &data_str);
+ 		if (!rc)
+-			strlcpy(vdd->res[count].name, data_str, sizeof(vdd->res[count].name));
++			strscpy(vdd->res[count].name, data_str, sizeof(vdd->res[count].name));
+ 
+ 		LCD_INFO(vdd, "[%d] [%s] %dx%d\n", count, vdd->res[count].name,
+ 				vdd->res[count].width, vdd->res[count].height);
+@@ -6392,6 +6392,13 @@
+ 
+ 
+ 	/* Set lux value for mdnie HBM */
++	/* a52sxq: parser kept from the 5.4 framework (S23 dropped it; the member is still used) */
++	data_32 = of_get_property(np, "samsung,elvss_interpolation_temperature", NULL);
++	if (data_32)
++		vdd->br_info.common_br.elvss_interpolation_temperature = (int)(be32_to_cpup(data_32));
++	else
++		vdd->br_info.common_br.elvss_interpolation_temperature = ELVSS_INTERPOLATION_TEMPERATURE;
++
+ 	data_32 = of_get_property(np, "samsung,enter_hbm_ce_lux", NULL);
+ 	if (data_32)
+ 		vdd->mdnie.enter_hbm_ce_lux = (int)(be32_to_cpup(data_32));
+@@ -7726,7 +7733,16 @@
+ 			if (vdd->finger_mask_updated) /* do not backup br.bl_level at on to on */
+ 				backup_bl_level = vdd->br_info.common_br.bl_level;
+ 			level = vdd->br_info.common_br.finger_mask_bl_level;
+-			vdd->br_info.acl_status = 0;
++			/*
++			 * IchthysOS (5.4 commit 8b3de7b345e5): never darker than the screen already
++			 * is. Above the mask level (331 = 547 nits) the normal level is brighter.
++			 */
++			if (backup_bl_level > level && backup_bl_level <= vdd->br_info.common_br.max_bl_level)
++				level = backup_bl_level;
++			/*
++			 * IchthysOS (5.4 commit 9d97d2093379): ACL is kept as it was (stock sets
++			 * acl_status = 0 here), so SystemUI's uniform nits-matched dim stays uniform.
++			 */
+ 
+ 			LCD_INFO(vdd, "[FINGER_MASK]BACKLIGHT_FINGERMASK_ON turn on finger hbm & back up acl = %d, level = %d\n",
+ 				backup_acl, backup_bl_level);
+@@ -7744,6 +7760,9 @@
+ 				send finger hbm & back up acl = %d, level = %d->%d\n",
+ 				vdd->br_info.acl_status, level,vdd->br_info.common_br.finger_mask_bl_level);
+ 			level = vdd->br_info.common_br.finger_mask_bl_level;
++			/* IchthysOS: same rule as at mask on. */
++			if (backup_bl_level > level && backup_bl_level <= vdd->br_info.common_br.max_bl_level)
++				level = backup_bl_level;
+ 		}
+ 	}
+ 
+@@ -9839,6 +9858,10 @@
+ 	else if (!strncmp(panel_string, "ss_dsi_panel_PBA_BOOTING_FHD_DSI1", strlen(panel_string)))
+ 		vdd->panel_func.samsung_panel_init = PBA_BOOTING_FHD_DSI1_init;
+ #endif
++#if IS_ENABLED(CONFIG_PANEL_S6E3FC3_AMS646YD01_LO_FHD) /* a52sxq, panel directory from the 5.4 tree */
++	else if (!strncmp(panel_string, "ss_dsi_panel_S6E3FC3_AMS646YD01_LO_FHD", strlen(panel_string)))
++		vdd->panel_func.samsung_panel_init = S6E3FC3_AMS646YD01_LO_FHD_init;
++#endif
+ #if IS_ENABLED(CONFIG_PANEL_S6E3FAB_AMB624XT01_FHD)
+ 	else if (!strncmp(panel_string, "ss_dsi_panel_S6E3FAB_AMB624XT01_FHD", strlen(panel_string)))
+ 		vdd->panel_func.samsung_panel_init = S6E3FAB_AMB624XT01_FHD_init;
+--- ../../samsung612/donors/sm8550-modules/qcom/opensource/display-drivers/msm/samsung/ss_dsi_panel_common.h	2026-11-11 19:56:57.636879484 +0200
++++ techpack/display-drivers/msm/samsung/ss_dsi_panel_common.h	2026-11-11 20:47:25.002280093 +0200
+@@ -90,6 +90,8 @@
+ #include "ss_dpui_common.h"
+ 
+ #include "ss_dsi_panel_sysfs.h"
++#include <drm/drm_vblank.h>
++#include <linux/vmalloc.h>
+ #include "ss_dsi_panel_debug.h"
+ 
+ #include "ss_ddi_poc_common.h"
+@@ -1712,6 +1714,7 @@
+ void B5_S6E3FC5_AMB338EH01_SVGA_init(struct samsung_display_driver_data *vdd);
+ void PBA_BOOTING_FHD_init(struct samsung_display_driver_data *vdd);
+ void PBA_BOOTING_FHD_DSI1_init(struct samsung_display_driver_data *vdd);
++void S6E3FC3_AMS646YD01_LO_FHD_init(struct samsung_display_driver_data *vdd); /* a52sxq */
+ 
+ struct panel_func {
+ 	/* ON/OFF */
+@@ -3304,7 +3307,7 @@
+ 
+ 	len = (size_t) (pos - dsi_display_primary) + 1;
+ 
+-	strlcpy(panel_name, dsi_display_primary, len);
++	strscpy(panel_name, dsi_display_primary, len);
+ }
+ 
+ static inline void ss_get_secondary_panel_name_cmdline(char *panel_name)
+@@ -3318,7 +3321,7 @@
+ 
+ 	len = (size_t) (pos - dsi_display_secondary) + 1;
+ 
+-	strlcpy(panel_name, dsi_display_secondary, len);
++	strscpy(panel_name, dsi_display_secondary, len);
+ }
+ 
+ struct samsung_display_driver_data *ss_get_vdd(enum ss_display_ndx ndx);
+--- ../../samsung612/donors/sm8550-modules/qcom/opensource/display-drivers/msm/samsung/ss_dsi_panel_debug.c	2026-11-11 19:56:57.636879484 +0200
++++ techpack/display-drivers/msm/samsung/ss_dsi_panel_debug.c	2026-11-11 20:46:38.418817461 +0200
+@@ -1397,7 +1397,7 @@
+ 	memset(&lcd_debug, 0, sizeof(struct lcd_debug_t));
+ 	ss_read_debug_partition(&lcd_debug);
+ 	lcd_debug.ftout.count += 1;
+-	strlcpy(lcd_debug.ftout.name, name, MAX_FTOUT_NAME);
++	strscpy(lcd_debug.ftout.name, name, MAX_FTOUT_NAME);
+ 	ss_write_debug_partition(&lcd_debug);
+ }
+ 
+--- ../../samsung612/donors/sm8550-modules/qcom/opensource/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c	2026-11-11 19:56:57.636879484 +0200
++++ techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c	2026-11-11 20:46:38.419242218 +0200
+@@ -319,11 +319,11 @@
+ 	}
+ 
+ 	if (!vdd->cell_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_INFO(vdd, "no cell_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+-	strlcpy(buf, vdd->cell_id_dsi, vdd->cell_id_len);
++	strscpy(buf, vdd->cell_id_dsi, vdd->cell_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 
+ 	return strlen(buf);
+@@ -341,11 +341,11 @@
+ 	}
+ 
+ 	if (!vdd->octa_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_INFO(vdd, "no octa_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+-	strlcpy(buf, vdd->octa_id_dsi, vdd->octa_id_len);
++	strscpy(buf, vdd->octa_id_dsi, vdd->octa_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 
+ 	return strlen(buf);
+@@ -379,7 +379,7 @@
+ 		snprintf(temp, 20, "SDC_000000\n");
+ 	}
+ 
+-	strlcpy(buf, temp, string_size);
++	strscpy(buf, temp, string_size);
+ 
+ 	return strnlen(buf, string_size);
+ }
+@@ -414,7 +414,7 @@
+ 
+ 	LCD_INFO(vdd,"%02x %02x %02x\n", id1, id2, id3);
+ 	snprintf(temp, sizeof(temp), "%02x %02x %02x\n", id1, id2, id3);
+-	strlcpy(buf, temp, string_size);
++	strscpy(buf, temp, string_size);
+ 
+ 	return strnlen(buf, string_size);
+ }
+@@ -436,7 +436,7 @@
+ 	date = vdd->manufacture_date_dsi;
+ 	snprintf((char *)temp, sizeof(temp), "manufacture date : %d\n", date);
+ 
+-	strlcpy(buf, temp, string_size);
++	strscpy(buf, temp, string_size);
+ 	LCD_INFO(vdd, "manufacture date : %d\n", date);
+ 
+ 	return strnlen(buf, string_size);
+@@ -454,12 +454,12 @@
+ 	}
+ 
+ 	if (!vdd->ddi_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_ERR(vdd, "no ddi_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+ 
+-	strlcpy(buf, vdd->ddi_id_dsi, vdd->ddi_id_len);
++	strscpy(buf, vdd->ddi_id_dsi, vdd->ddi_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 
+ 	return strlen(buf);
+@@ -2616,7 +2616,7 @@
+ 
+ 	snprintf((char *)temp, sizeof(temp), "%d %d %02x\n",
+ 			poc, check_sum[4], EB_value[3]);
+-	strlcpy(buf, temp, string_size);
++	strscpy(buf, temp, string_size);
+ 
+ 	return strnlen(buf, string_size);
+ }
+@@ -3204,12 +3204,12 @@
+ 	}
+ 
+ 	if (!vdd->cell_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_INFO(vdd, "no cell_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+ 
+-	strlcpy(buf, vdd->cell_id_dsi, vdd->cell_id_len);
++	strscpy(buf, vdd->cell_id_dsi, vdd->cell_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 	return strlen(buf);
+ }
+@@ -3225,12 +3225,12 @@
+ 	}
+ 
+ 	if (!vdd->cell_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_INFO(vdd, "no cell_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+ 
+-	strlcpy(buf, vdd->cell_id_dsi, vdd->cell_id_len);
++	strscpy(buf, vdd->cell_id_dsi, vdd->cell_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 	return strlen(buf);
+ }
+@@ -3246,12 +3246,12 @@
+ 	}
+ 
+ 	if (!vdd->octa_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_INFO(vdd, "no octa_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+ 
+-	strlcpy(buf, vdd->octa_id_dsi, vdd->octa_id_len);
++	strscpy(buf, vdd->octa_id_dsi, vdd->octa_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 	return strlen(buf);
+ }
+@@ -3267,12 +3267,12 @@
+ 	}
+ 
+ 	if (!vdd->octa_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_INFO(vdd, "no octa_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+ 
+-	strlcpy(buf, vdd->octa_id_dsi, vdd->octa_id_len);
++	strscpy(buf, vdd->octa_id_dsi, vdd->octa_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 	return strlen(buf);
+ }
+@@ -3288,12 +3288,12 @@
+ 	}
+ 
+ 	if (!vdd->ddi_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_ERR(vdd, "no ddi_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+ 
+-	strlcpy(buf, vdd->ddi_id_dsi, vdd->ddi_id_len);
++	strscpy(buf, vdd->ddi_id_dsi, vdd->ddi_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 	return strlen(buf);
+ }
+@@ -3309,12 +3309,12 @@
+ 	}
+ 
+ 	if (!vdd->ddi_id_dsi) {
+-		strlcpy(buf, "0000000000", 11);
++		strscpy(buf, "0000000000", 11);
+ 		LCD_ERR(vdd, "no ddi_id_dsi set to default buf[%s]\n", buf);
+ 		return strlen(buf);
+ 	}
+ 
+-	strlcpy(buf, vdd->ddi_id_dsi, vdd->ddi_id_len);
++	strscpy(buf, vdd->ddi_id_dsi, vdd->ddi_id_len);
+ 	LCD_INFO(vdd, "[%s]\n", buf);
+ 	return strlen(buf);
+ }
+@@ -3561,7 +3561,7 @@
+ 
+ 	/* cell id */
+ 	if (vdd->cell_id_dsi) {
+-		size = strlcpy(tbuf, vdd->cell_id_dsi, vdd->cell_id_len);
++		size = strscpy(tbuf, vdd->cell_id_dsi, vdd->cell_id_len);
+ 	} else {
+ 		LCD_ERR(vdd, "cell_id_dsi is null\n");
+ 		size = scnprintf(tbuf, MAX_DPUI_VAL_LEN, "0\n");
+@@ -3572,7 +3572,7 @@
+ 	/* OCTA ID */
+ 	if (vdd->octa_id_dsi) {
+ 		octa_id = vdd->octa_id_dsi;
+-		size = strlcpy(tbuf, vdd->octa_id_dsi, vdd->octa_id_len);
++		size = strscpy(tbuf, vdd->octa_id_dsi, vdd->octa_id_len);
+ 	} else {
+ 		LCD_ERR(vdd, "octa_id_dsi is null\n");
+ 		size = scnprintf(tbuf, MAX_DPUI_VAL_LEN, "0\n");
+@@ -6490,9 +6490,9 @@
+ 
+ 	/* Creat mottoN folder and sysfs under mottoN */
+ 	if (vdd->ndx == PRIMARY_DISPLAY_NDX)
+-		motto_class = class_create(THIS_MODULE, "motto");
++		motto_class = class_create("motto");
+ 	else
+-		motto_class = class_create(THIS_MODULE, "motto1");
++		motto_class = class_create("motto1");
+ 	if (IS_ERR_OR_NULL(motto_class)) {
+ 		LCD_INFO(vdd, "failed to create %s motto class\n", dirname);
+ 	}
+--- ../../samsung612/donors/sm8550-modules/qcom/opensource/display-drivers/msm/samsung/ss_wrapper_common.c	2026-11-11 19:56:57.638879488 +0200
++++ techpack/display-drivers/msm/samsung/ss_wrapper_common.c	2026-11-11 20:46:38.420055884 +0200
+@@ -1576,7 +1576,7 @@
+ 	set->cmd_set_rev[0] = set;
+ 
+ 	/* For revB ~ revT */
+-	strlcpy(map, cmd_name, SS_CMD_PROP_STR_LEN);
++	strscpy(map, cmd_name, SS_CMD_PROP_STR_LEN);
+ 	len = strlen(cmd_name);
+ 
+ 	if (len >= SS_CMD_PROP_STR_LEN) {
+@@ -1788,7 +1788,7 @@
+ 	if (!data_block)
+ 		return -ENOMEM;
+ 
+-	strlcpy(data_block, data, length);
++	strscpy(data_block, data, length);
+ 	data_block_backup = data_block;
+ 
+ 	while ((data_line = strsep(&data_block, "\r\n")) != NULL) {
+@@ -2071,7 +2071,7 @@
+ 		LCD_ERR(vdd, "fail to allocate data_block\n");
+ 		return -ENOMEM;
+ 	}
+-	strlcpy(data_block, dtsi_data, length);
++	strscpy(data_block, dtsi_data, length);
+ 	data_block_backup = data_block;
+ 
+ 	/* concatenate cmd data split by '\n', like below.

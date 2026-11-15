@@ -1,0 +1,70 @@
+# GKI exports imported by the 6.12-built module binaries (bsp612 soc-repo + drivers612 .ko) that
+# android17-6.18 GKI does not export under the same name (symbol, #modules, modules). Most are
+# renames/inlines that a recompile resolves (alloc_workqueue -> alloc_workqueue_noprof, ...); the
+# ones that are real API removals also show up as compile errors in SURVEY.md.
+init_timer_key	55	altmode-glink.ko bcl_soc.ko camera.ko cfg80211.ko charger-ulog-glink.ko cpucp_log.ko dwc3-msm.ko extcon-usb-gpio.ko icnss2.ko ipam.ko mac80211.ko mbhc_dlkm.ko msm-vidc.ko msm_drm.ko msm_geni_serial.ko msm_kgsl.ko msm_lmh_dcvs.ko msm_qmp.ko muic_sm5714.ko pca9468_charger.ko pdic_sm5714.ko pdr_interface.ko platform_dlkm.ko qce50_dlkm.ko qcom-cpufreq-hw.ko qcom-hv-haptics.ko qcom_q6v5_pas.ko qcom_sysmon.ko qcom_wdt_core.ko qcrypto-msm_dlkm.ko qseecom_dlkm.ko qti_amoled_ecm.ko rmnet_core.ko rmnet_mem.ko rmnet_perf.ko rmnet_shs.ko rmnet_wlan.ko rproc_qcom_common.ko sched-walt.ko sec-battery.ko sec-direct-charger.ko sec_cmd.ko sm5714-charger.ko sm5714_fuelgauge.ko stm_ts.ko subsys_compat.ko tas256x_dlkm.ko tx_macro_dlkm.ko ufs-qcom.ko usb_f_gsi.ko usb_notify_layer.ko usb_typec_manager.ko va_macro_dlkm.ko wlan.ko
+debugfs_create_file	54	adsp_sleepmon.ko apr_dlkm.ko bcl_pmic5.ko camera.ko cdsprm.ko clk-qcom.ko cmd-db.ko cnss_utils.ko cpucp_log.ko debug-regulator.ko dwc3-msm.ko frpc-adsprpc.ko gh_ctrl.ko gic_intr_routing.ko gsim.ko icnss2.ko ioncompat.ko ipam.ko mem_buf.ko mem_buf_dev.ko minidump.ko msm-vidc.ko msm_drm.ko msm_kgsl.ko native_dlkm.ko pca9468_charger.ko pci-msm-drv.ko q6_dlkm.ko qcedev-mod_dlkm.ko qcom-hv-haptics.ko qcom_aoss.ko qcom_iommu_debug.ko qcom_q6v5_pas.ko qcom_stats.ko qcom_tsens.ko qcrypto-msm_dlkm.ko qti_battery_debug.ko sb-core.ko sched-walt.ko sec-battery.ko sm5714_fuelgauge.ko socinfo.ko sps_drv.ko swr_ctrl_dlkm.ko sys_pm_vx.ko sysmon_subsystem_stats.ko thermal_config.ko usb_f_cdev.ko usb_f_gsi.ko virtio_console.ko wcd937x_slave_dlkm.ko wcd938x_slave_dlkm.ko wlan.ko wsa883x_dlkm.ko
+alloc_workqueue	50	apr_dlkm.ko bwmon.ko camera.ko cap1296.ko cdsprm.ko cfg80211.ko coresight-tmc.ko cpucp_log.ko drm_display_helper.ko dwc3-msm.ko f_fs_ipc_log.ko gsim.ko gunyah_loader.ko icnss2.ko ipam.ko mac80211.ko mem-offline.ko mem_buf.ko memlat.ko mhi.ko msm-vidc.ko msm_drm.ko msm_geni_serial.ko msm_kgsl.ko pci-msm-drv.ko pdic_sm5714.ko pdr_interface.ko qcrypto-msm_dlkm.ko qmi_helpers.ko qti_pmic_glink.ko rmnet_core.ko rmnet_mem.ko rmnet_shs.ko rq_stats.ko sched-walt.ko sdhci-msm.ko sec-battery.ko sec-direct-charger.ko sec_common_fn.ko si_core_module.ko slim-qcom-ngd-ctrl.ko sm5714-charger.ko ufs-qcom.ko usb_f_cdev.ko usb_f_gsi.ko usb_f_qdss.ko usb_notify_layer.ko usb_typec_manager.ko virtio_block.ko wlan.ko
+ioremap_prot	25	bwmon.ko camera.ko dwc3-msm.ko gunyah_loader.ko ipam.ko llcc-qcom.ko msm_drm.ko msm_kgsl.ko pci-msm-drv.ko phy-qcom-ufs-qrbtc-sdm845.ko qce50_dlkm.ko qcom-dcvs.ko qcom-pdc.ko qcom_dma_heaps.ko qcom_glink_spss.ko qcom_pil_info.ko qcom_q6v5_pas.ko qcom_ramdump.ko qcom_smmu_v2_v3_dispatcher.ko qcom_spss.ko qrng_dlkm.ko rproc_qcom_common.ko spmi-pmic-arb-debug.ko sps_drv.ko wcd9xxx_dlkm.ko
+sg_next	22	bam_dma.ko camera.ko coresight-tmc.ko cqhci.ko dwc3-msm.ko frpc-adsprpc.ko ipam.ko mem_buf_dev.ko msm_dma_iommu_mapping.ko msm_gpi.ko msm_kgsl.ko q6_dlkm.ko qce50_dlkm.ko qcom_dma_heaps.ko qcom_iommu_debug.ko qcom_iommu_util.ko qcrypto-msm_dlkm.ko qseecom_dlkm.ko secure_buffer.ko si_core_module.ko snd-usb-audio-qmi.ko wlan.ko
+__memcpy_fromio	19	camera.ko cpucp_log.ko memory_dump_v2.ko msm_drm.ko msm_kgsl.ko msm_qmp.ko pci-msm-drv.ko qcom_glink_smem.ko qcom_glink_spss.ko qcom_pil_info.ko qcom_q6v5_pas.ko qcom_ramdump.ko qcom_smd.ko qcom_stats.ko qrtr-gunyah.ko rproc_qcom_common.ko slimbus.ko smp2p.ko tz_log_dlkm.ko
+snd_soc_unregister_component	12	bolero_cdc_dlkm.ko bt_fm_slim.ko hdmi_dlkm.ko platform_dlkm.ko stub_dlkm.ko swr_dmic_dlkm.ko swr_haptics_dlkm.ko tas256x_dlkm.ko wcd937x_dlkm.ko wcd938x_dlkm.ko wsa883x_dlkm.ko
+hrtimer_init	11	ipam.ko leds-qpnp-vibrator-ldo.ko leds-qti-flash.ko llcc_perfmon.ko mac80211.ko memlat.ko platform_dlkm.ko qcom_lpm.ko rmnet_core.ko rmnet_mem.ko rmnet_shs.ko
+__memset_io	10	bam_dma.ko camera.ko dcc_v2.ko llcc-qcom.ko pci-msm-drv.ko qcom-pmu-lib.ko qcom_pil_info.ko slim-qcom-ngd-ctrl.ko sps_drv.ko wlan.ko
+__memcpy_toio	10	camera.ko dwc3-msm.ko memory_dump_v2.ko msm_kgsl.ko pci-msm-drv.ko qcom_pil_info.ko qcom_smd.ko qrtr-gunyah.ko slim-qcom-ngd-ctrl.ko wlan.ko
+krealloc_noprof	9	cnss_prealloc.ko coresight.ko platform_dlkm.ko rx_macro_dlkm.ko snd_event_dlkm.ko swr_dlkm.ko tx_macro_dlkm.ko va_macro_dlkm.ko wsa_macro_dlkm.ko
+gpiochip_add_pin_range	5	pinctrl-msm.ko pinctrl-spmi-gpio.ko pinctrl-spmi-mpp.ko pinctrl_lpi_dlkm.ko pinctrl_wcd_dlkm.ko
+snd_soc_dapm_kcontrol_widget	5	platform_dlkm.ko rx_macro_dlkm.ko tx_macro_dlkm.ko va_macro_dlkm.ko wsa_macro_dlkm.ko
+device_get_child_node_count	3	leds-qcom-flash.ko qcom-spmi-adc5.ko qti-glink-adc.ko
+__get_task_comm	2	msm_kgsl.ko stm_core.ko
+nr_irqs	2	gic_intr_routing.ko qcom_wdt_core.ko
+crypto_shash_update	2	mac80211.ko wlan.ko
+napi_gro_receive	2	mac80211.ko wlan.ko
+iommu_domain_alloc	2	msm_kgsl.ko snd-usb-audio-qmi.ko
+__netif_napi_del	2	ipam.ko wlan.ko
+init_dummy_netdev	2	ipam.ko wlan.ko
+netif_napi_add_weight	2	ipam.ko wlan.ko
+llist_add_batch	2	msm_kgsl.ko qcrypto-msm_dlkm.ko
+blk_mq_freeze_queue	1	virtio_block.ko
+blk_mq_unfreeze_queue	1	virtio_block.ko
+blk_mq_virtio_map_queues	1	virtio_block.ko
+crypto_comp_compress	1	zram.ko
+crypto_comp_decompress	1	zram.ko
+cpufreq_enable_boost_support	1	qcom-cpufreq-hw.ko
+cpufreq_freq_attr_scaling_available_freqs	1	qcom-cpufreq-hw.ko
+cpufreq_freq_attr_scaling_boost_freqs	1	qcom-cpufreq-hw.ko
+policy_has_boost_freq	1	qcom-cpufreq-hw.ko
+iommu_fwspec_free	1	arm_smmu.ko
+kvm_iommu_init_hyp	1	qcom_smmu_v2_v3_dispatcher.ko
+irq_domain_create_hierarchy	1	qcom-pdc.ko
+sdhci_pltfm_free	1	sdhci-msm.ko
+of_pci_parse_bus_range	1	pci-msm-drv.ko
+get_dmabuf_debugfs_data	1	minidump.ko
+console_stop	1	msm_geni_serial.ko
+msi_lock_descs	1	ufs-qcom.ko
+msi_unlock_descs	1	ufs-qcom.ko
+__scx_ops_enabled	1	sched-walt.ko
+__ClearPageMovable	1	zsmalloc.ko
+__SetPageMovable	1	zsmalloc.ko
+__dev_change_net_namespace	1	cfg80211.ko
+debugfs_rename	1	cfg80211.ko
+__tracepoint_android_vh_snd_pcm_check_no_buffer	1	machine_dlkm.ko
+snd_soc_set_runtime_hwparams	1	machine_dlkm.ko
+crypto_shash_final	1	wlan.ko
+napi_gro_flush	1	wlan.ko
+iommu_present	1	msm_drm.ko
+mipi_dsi_dcs_set_tear_off	1	msm_drm.ko
+kthread_create_worker	1	msm_kgsl.ko
+wakeup_source_add	1	usb_notify_layer.ko
+wakeup_source_remove	1	usb_notify_layer.ko
+scatterwalk_map_and_copy	1	qcrypto-msm_dlkm.ko
+
+# Namespace changes of imported GKI symbols (symbol, 6.12 ns -> 6.18 ns). All seven LOST their namespace
+# on 6.18 (ACK/QC-specific namespaces gone), so existing MODULE_IMPORT_NS() lines become no-ops: not a blocker.
+close_fd	'ANDROID_GKI_VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver' -> ''	smcinvoke_dlkm.ko 
+dma_heap_add	'DMA_BUF_HEAP' -> ''	qcom_dma_heaps.ko 
+dma_heap_get_drvdata	'DMA_BUF_HEAP' -> ''	qcom_dma_heaps.ko 
+dma_heap_get_name	'DMA_BUF_HEAP' -> ''	qcom_dma_heaps.ko 
+filp_open	'ANDROID_GKI_VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver' -> ''	msm_kgsl.ko 
+pcpu_nr_pages	'MINIDUMP' -> ''	minidump.ko 
+vmalloc_nr_pages	'MINIDUMP' -> ''	minidump.ko 

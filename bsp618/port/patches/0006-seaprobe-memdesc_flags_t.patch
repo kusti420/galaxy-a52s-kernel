@@ -1,0 +1,13 @@
+seaprobe: folio->flags is memdesc_flags_t on 6.18 (print .f)
+
+--- a/drivers612/debug/seaprobe/seaprobe.c
++++ b/drivers612/debug/seaprobe/seaprobe.c
+@@ -37,7 +37,7 @@
+ 
+ 		pr_info("seaprobe: %s[%d] far %lx esr %lx pa %llx folio pfn %lx order %u flags %lx mapcount %d ref %d %s\n",
+ 			current->comm, current->pid, far, esr, pa, folio_pfn(f), folio_order(f),
+-			f->flags, folio_mapcount(f), folio_ref_count(f),
++			f->flags.f, folio_mapcount(f), folio_ref_count(f),
+ 			folio_test_anon(f) ? "anon" : (f->mapping ? "file" : "nomapping"));
+ 	} else {
+ 		pr_info("seaprobe: %s[%d] far %lx esr %lx pa %llx (no struct page)\n",

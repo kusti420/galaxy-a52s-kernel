@@ -1,0 +1,1 @@
+obj-m += sm5714_fled_stub.o

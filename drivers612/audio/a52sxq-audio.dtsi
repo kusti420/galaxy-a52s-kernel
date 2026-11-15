@@ -1,0 +1,376 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Samsung Galaxy A52s 5G (a52sxq): audio on the Qualcomm 6.12 BSP (downstream bindings,
+ * legacy Elite/APR audio techpack in ../audio-kernel).
+ *
+ * The 6.12 yupik.dtb has NO audio nodes at all. They come from dts/ (Qualcomm's yupik audio
+ * dtsi as carried by the redwood-6.12 port: msm-audio-lpass, yupik-audio, yupik-lpi,
+ * yupik-audio-overlay) and this file puts the phone on top.
+ *
+ * Every value below is from the tree the phone boots, downstream-dt/a52sxq-r02.dts
+ * (a52sxq_kor_single_w00_r02 covers hardware revisions 2..0x20, so bench revisions 3 and 4 use
+ * the same audio nodes; r00/r01 have the same tas256x/adaptation/sysfs nodes).
+ * NOT compiled yet: it needs the dt-bindings headers of the techpack
+ * (audio-kernel/include/bindings -> dt-bindings/clock/qcom,audio-ext-clk.h and
+ * dt-bindings/sound/{qcom,bolero-clk-rsc.h,audio-codec-port-types.h}) on the dtc include path.
+ *
+ * Include order in the a52sxq overlay:
+ *   #include "dts/yupik-audio.dtsi"
+ *   #include "a52sxq-audio.dtsi"      (this file includes dts/yupik-audio-overlay.dtsi)
+ */
+
+#include "dts/yupik-audio-overlay.dtsi"
+
+&{/aliases} {
+	/* SoundWire master bus numbers come from these on 6.12 (redwood lesson) */
+	swr0 = "/soc/qcom,msm-audio-apr/qcom,q6core-audio/bolero-cdc/wsa-macro@3240000/wsa_swr_master";
+	swr1 = "/soc/qcom,msm-audio-apr/qcom,q6core-audio/bolero-cdc/rx-macro@3200000/rx_swr_master";
+	swr2 = "/soc/qcom,msm-audio-apr/qcom,q6core-audio/bolero-cdc/tx-macro@3220000/tx_swr_master";
+	/*
+	 * The machine driver names the amplifier codec "tas256x.18-004c" (as on 5.4, where
+	 * the phone's alias is i2c18 = /soc/i2c@984000). Without this alias the bus gets
+	 * another number, the dai-link never binds and the card never registers.
+	 * 6.12 path of the same controller:
+	 */
+	i2c18 = "/soc/qcom,qupv3_0_geni_se@9c0000/i2c@984000";
+};
+
+/* --- ADSP lookup on 6.12: through the remoteproc handle, not the 5.4 subsystem name --- */
+&audio_apr {
+	qcom,rproc-handle = <&adsp_pas>;
+};
+
+&adsp_loader {
+	/* phone: nvmem adsp_variant, adsp-fw-names "adsp2", bit value 0x4: same as the base */
+	qcom,rproc-handle = <&adsp_pas>;
+};
+
+&soc {
+	adsp_notify: qcom,msm-adsp-notify {
+		compatible = "qcom,adsp-notify";
+		qcom,rproc-handle = <&adsp_pas>;
+	};
+
+	/* Samsung: jack detection ADC zones, referenced by mbhc-button-thres */
+	det_zones: det_zones {
+		#list-det-cells = <2>;
+	};
+
+	/*
+	 * Samsung "adaptation" platform component (dai-link "Audio ADAPTATION Hostless", FE 46):
+	 * the controls the closed HAL sets by hard-coded name. Needs the sec adaptation port
+	 * (samsung/adaptation); harmless without it.
+	 */
+	samsung_q6audio_adaptation: samsung,q6audio-adaptation {
+		compatible = "samsung,q6audio-adaptation";
+		adaptation,device-tx-port-id = <0xb037>;	/* TX_CODEC_DMA_TX_3 */
+		adaptation,spk-rx-port-id = <0x1016>;		/* QUINARY_MI2S_RX (TAS256x) */
+		adaptation,usb-rx-port-id = <0x7000>;
+		adaptation,bt-rx-port-id = <0x400e>;		/* SLIMBUS_7_RX */
+		adaptation,headset-rx-port-id = <0xb030>;	/* RX_CODEC_DMA_RX_0 */
+	};
+
+	/* /sys/class/audio/{earjack,codec,amp}: sec_audio_sysfs.ko */
+	sec-audio-sysfs {
+		compatible = "samsung,audio-sysfs";
+		status = "okay";
+		audio,num-amp = <2>;
+	};
+};
+
+/* --- audio ION: SMMU stream 0x1801 on the phone --- */
+&msm_audio_ion {
+	iommus = <&apps_smmu 0x1801 0x0>;
+	qcom,smmu-sid-mask = /bits/ 64 <0xf>;
+	/*
+	 * 5.4: qcom,iommu-dma-addr-pool = <0x10000000 0x10000000> (DMA API IOVAs only in
+	 * 0x10000000..0x1fffffff). 6.12/6.18 arm-smmu ignores that property except for a WARN
+	 * per probe ("deprecated. Switch to using iommu-addresses"), so the window is expressed
+	 * the 6.12 way: everything below and above it is reserved (msm_audio_ion_iova below).
+	 * msm_audio_ion.c never reads the pool; it maps through the DMA API
+	 * (dma_buf_map_attachment, dma_map_resource) and ORs the SID into bits 32+, so the
+	 * IOVA must stay below 4 GiB (the device keeps the default 32-bit DMA mask).
+	 * memory-region is only read by msm_audio_protect_memory_region(), which runs only
+	 * without qcom,smmu-enabled.
+	 */
+	memory-region = <&msm_audio_ion_iova>;
+};
+
+/*
+ * iommu-addresses entries are sized by the DMA parent of the device they name
+ * (of_translate_dma_region): give qcom,msm-audio-apr the /soc format, as Qualcomm's 6.12
+ * msm-audio.dtsi does for the parent of its msm-audio-ion. Without it 6.18 matches no OF bus
+ * for the parent and drops every entry ("cannot translate entry"). Its children have no reg.
+ */
+&audio_apr {
+	#address-cells = <1>;
+	#size-cells = <1>;
+};
+
+&soc {
+	/* the 5.4 pool <0x10000000 0x10000000>: reserve [0, 0x10000000) and [0x20000000, 4 GiB) */
+	msm_audio_ion_iova: msm_audio_ion_iommu_region_partition {
+		iommu-addresses = <&msm_audio_ion 0x0 0x10000000>,
+				  <&msm_audio_ion 0x20000000 0xe0000000>;
+	};
+};
+
+/* --- TLMM: amplifier reset (63) and interrupt (55) --- */
+&tlmm {
+	tas25xx_gpio_default: tas25xx_gpio_default {
+		mux {
+			pins = "gpio55", "gpio63";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio55", "gpio63";
+			bias-disable;
+		};
+	};
+};
+
+/* --- LPI pins of QUIN MI2S (lpi gpio 6..9, func2): the phone drives them at 4 mA, not 8 --- */
+&lpi_i2s1_sck_active { config { drive-strength = <4>; }; };
+&lpi_i2s1_ws_active  { config { drive-strength = <4>; }; };
+&lpi_i2s1_sd0_active { config { drive-strength = <4>; }; };
+&lpi_i2s1_sd1_active { config { drive-strength = <4>; }; };
+
+&q6core {
+	cdc_quin_mi2s_gpios: msm_cdc_pinctrl_quin {
+		compatible = "qcom,msm-cdc-pinctrl";
+		pinctrl-names = "aud_active", "aud_sleep";
+		pinctrl-0 = <&lpi_i2s1_sck_active &lpi_i2s1_ws_active
+			     &lpi_i2s1_sd0_active &lpi_i2s1_sd1_active>;
+		pinctrl-1 = <&lpi_i2s1_sck_sleep &lpi_i2s1_ws_sleep
+			     &lpi_i2s1_sd0_sleep &lpi_i2s1_sd1_sleep>;
+		qcom,lpi-gpios;
+		#gpio-cells = <0>;
+	};
+};
+
+&cdc_sec_mi2s_gpios {
+	status = "disabled";
+};
+
+/* QUIN MI2S: 2 data lines out (stereo amps), 1 line in (IV sense) */
+&dai_mi2s4_rx {
+	qcom,msm-mi2s-lines = <2>;
+};
+
+&dai_mi2s4_tx {
+	qcom,msm-mi2s-lines = <1>;
+};
+
+/* --- speaker/receiver amplifiers: 2x TI TAS256x, I2C SE1 (i2c@984000, 1 MHz), 0x4c + 0x4d --- */
+&qupv3_se1_i2c {
+	status = "ok";
+	qcom,clk-freq-out = <1000000>;
+
+	tas256x: tas256x@4c {
+		/* the space after the comma is in Samsung's driver match table: keep it */
+		compatible = "ti, tas256x";
+		reg = <0x4c>;
+		#sound-dai-cells = <0>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&tas25xx_gpio_default>;
+		ti,reset-gpio = <&tlmm 63 0>;
+		ti,irq-gpio = <&tlmm 55 0>;
+		ti,left-channel = <0x4d>;
+		ti,right-channel = <0x4c>;
+		ti,channels = <2>;
+		ti,iv-width = <8>;
+		ti,vbat-mon = <1>;
+		ti,port_id = <0x1016>;			/* AFE QUINARY_MI2S_RX */
+		ti,module_id_rx = <0x1000fc00>;		/* TI smart-amp modules in the ADSP */
+		ti,module_id_tx = <0x1000fd00>;
+		/* no regulators in the phone's node: the amps sit on always-on rails */
+		status = "ok";
+	};
+};
+
+/* on the phone the USB-C analog audio switch node is disabled and the handle is empty */
+&fsa4480 {
+	status = "disabled";
+};
+
+/* --- bolero: RX + TX + VA macros; no WSA SoundWire amplifiers on this phone --- */
+&bolero {
+	qcom,num-macros = <3>;
+
+	/* Samsung: headphone impedance table cells (used by imp-table) */
+	imp_list: imp_list {
+		#list-imp-cells = <3>;
+	};
+};
+
+&wsa_macro {
+	status = "disabled";
+};
+
+&wsa_swr_gpios {
+	status = "disabled";
+};
+
+&wsa_spkr_en1 {
+	status = "disabled";
+};
+
+&wsa_spkr_en2 {
+	status = "disabled";
+};
+
+&wsa883x_0221 {
+	status = "disabled";
+};
+
+&wsa883x_0222 {
+	status = "disabled";
+};
+
+&swr_haptics {
+	status = "disabled";
+};
+
+/* --- codec: WCD9380 (wcd938x), reset TLMM 83, slaves <0x0d 0x01170223> (tx) / ..224 (rx) --- */
+&wcd937x_codec {
+	status = "disabled";
+};
+
+&wcd937x_rx_slave {
+	status = "disabled";
+};
+
+&wcd937x_tx_slave {
+	status = "disabled";
+};
+
+&wcd938x_rx_slave {
+	status = "okay";
+};
+
+&wcd938x_tx_slave {
+	status = "okay";
+};
+
+&wcd938x_codec {
+	status = "ok";
+
+	/* rails and loads exactly as in the phone's tree */
+	cdc-vdd-rxtx-supply = <&L18B>;			/* pm7325_l18, 1.8 V */
+	qcom,cdc-vdd-rxtx-voltage = <1800000 1800000>;
+	qcom,cdc-vdd-rxtx-current = <30000>;
+	cdc-vddpx-supply = <&L18B>;
+	qcom,cdc-vddpx-voltage = <1800000 1800000>;
+	qcom,cdc-vddpx-current = <30000>;
+	cdc-vdd-buck-supply = <&L17B>;			/* pm7325_l17 */
+	qcom,cdc-vdd-buck-voltage = <1800000 1800000>;
+	qcom,cdc-vdd-buck-current = <600000>;
+	cdc-vdd-mic-bias-supply = <&BOB>;		/* pm8350c_bob */
+	qcom,cdc-vdd-mic-bias-voltage = <3296000 3296000>;
+	qcom,cdc-vdd-mic-bias-current = <30000>;
+
+	qcom,cdc-micbias1-mv = <1800>;
+	qcom,cdc-micbias2-mv = <2800>;			/* headset mic bias: 2.8 V on this phone */
+	qcom,cdc-micbias3-mv = <1800>;
+	qcom,cdc-micbias4-mv = <1800>;
+
+	/*
+	 * Samsung MBHC data (read by Samsung's changes to wcd938x-mbhc.c / wcd-mbhc-v2.c, which
+	 * are NOT ported yet; the stock 6.12 driver ignores both properties).
+	 */
+	mbhc-button-thres = <&det_zones 13 63>, <&det_zones 88 138>,
+			    <&det_zones 138 138>, <&det_zones 225 225>,
+			    <&det_zones 450 450>, <&det_zones 450 620>,
+			    <&det_zones 450 620>, <&det_zones 450 620>;
+	imp-table = <&imp_list 0 5 6>, <&imp_list 6 23 8>,
+		    <&imp_list 24 38 7>, <&imp_list 39 100 6>,
+		    <&imp_list 101 160 10>, <&imp_list 161 400 11>,
+		    <&imp_list 401 2000 11>, <&imp_list 2001 0x7fffffff 6>;
+
+	/*
+	 * New on 6.12 (no 5.4 counterpart): per-port SoundWire offsets. These are the lahaina
+	 * defaults redwood uses with the same codec; mic capture must confirm them.
+	 */
+	qcom,swr-tx-port-params =
+		<OFFSET1_VAL0 LANE1>, <OFFSET1_VAL5 LANE0>, <OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>,
+		<OFFSET1_VAL0 LANE1>, <OFFSET1_VAL2 LANE0>, <OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>,
+		<OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>,
+		<OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>, <OFFSET1_VAL1 LANE0>;
+};
+
+/* --- sound card: same name as on 5.4, the HAL picks its XMLs by it --- */
+&yupik_snd {
+	qcom,model = "lahaina-yupikidp-snd-card";
+	qcom,msm-mi2s-master = <1>, <1>, <1>, <1>, <1>, <1>;
+	qcom,tdm-max-slots = <8>;
+	qcom,wcd-disabled = <0>;
+	qcom,mi2s-audio-intf = <1>;
+	qcom,auxpcm-audio-intf = <1>;		/* links compiled out: CONFIG_AUXPCM_DISABLE, as on 5.4 */
+	/delete-property/ qcom,tdm-audio-intf;
+	qcom,ext-disp-audio-rx = <0>;
+	qcom,afe-rxtx-lb = <0>;
+	/*
+	 * Bluetooth SCO/A2DP back end. 5.4: qcom,wcn-bt = <1> (SLIMBUS_7 + btfmslim_slave).
+	 * The 6.12 lahaina.c has that table under #if 0 and reads qcom,wcn-btfm instead (same
+	 * SLIMBUS_7_RX/TX links plus SLIMBUS_8_TX). Set qcom,wcn-btfm = <1> only once a
+	 * btfmslim codec module is loaded, or the card never registers.
+	 */
+	qcom,wcn-bt = <1>;
+
+	qcom,audio-routing =
+		"AMIC1", "Analog Mic1",
+		"Analog Mic1", "MIC BIAS1",
+		"AMIC2", "Analog Mic2",
+		"Analog Mic2", "MIC BIAS2",
+		"AMIC3", "Analog Mic3",
+		"Analog Mic3", "MIC BIAS1",
+		"AMIC4", "Analog Mic4",
+		"Analog Mic4", "MIC BIAS3",
+		"IN1_HPHL", "HPHL_OUT",
+		"IN2_HPHR", "HPHR_OUT",
+		"RX_TX DEC0_INP", "TX DEC0 MUX",
+		"RX_TX DEC1_INP", "TX DEC1 MUX",
+		"RX_TX DEC2_INP", "TX DEC2 MUX",
+		"RX_TX DEC3_INP", "TX DEC3 MUX",
+		"TX SWR_INPUT", "WCD_TX_OUTPUT",
+		"VA SWR_INPUT", "VA_SWR_CLK",
+		"VA SWR_INPUT", "WCD_TX_OUTPUT",
+		"VA_AIF1 CAP", "VA_SWR_CLK",
+		"VA_AIF2 CAP", "VA_SWR_CLK",
+		"VA_AIF3 CAP", "VA_SWR_CLK";
+
+	qcom,msm-mbhc-hphl-swh = <1>;
+	qcom,msm-mbhc-gnd-swh = <1>;
+	qcom,msm-mbhc-gnd-det = <1>;			/* Samsung property */
+	qcom,msm-mbhc-hs-mic-max-threshold-mv = <9999>;	/* Samsung values */
+	qcom,msm-mbhc-hs-mic-min-threshold-mv = <640>;
+
+	qcom,swr-dmic-max-devs = <0>;
+	qcom,wsa-max-devs = <0>;
+	/* the phone's tree empties these four (no digital mics, no SEC MI2S) */
+	/delete-property/ qcom,cdc-dmic01-gpios;
+	/delete-property/ qcom,cdc-dmic23-gpios;
+	/delete-property/ qcom,cdc-dmic45-gpios;
+	/delete-property/ qcom,sec-mi2s-gpios;
+	/delete-property/ fsa4480-i2c-handle;
+	qcom,quin-mi2s-gpios = <&cdc_quin_mi2s_gpios>;
+
+	asoc-codec = <&stub_codec>, <&bolero>, <&wcd938x_codec>;
+	asoc-codec-names = "msm-stub-codec.1", "bolero_codec", "wcd938x_codec";
+
+	/* as the base list plus Samsung's adaptation platform (last entry on 5.4 too) */
+	asoc-platform = <&pcm0>, <&pcm1>, <&pcm2>, <&voip>, <&voice>,
+			<&loopback>, <&compress>, <&hostless>,
+			<&afe>, <&lsm>, <&routing>, <&compr>,
+			<&pcm_noirq>, <&samsung_q6audio_adaptation>;
+	asoc-platform-names = "msm-pcm-dsp.0", "msm-pcm-dsp.1",
+			"msm-pcm-dsp.2", "msm-voip-dsp",
+			"msm-pcm-voice", "msm-pcm-loopback",
+			"msm-compress-dsp", "msm-pcm-hostless",
+			"msm-pcm-afe", "msm-lsm-client",
+			"msm-pcm-routing", "msm-compr-dsp",
+			"msm-pcm-dsp-noirq", "q6audio-adaptation";
+
+	qcom,msm_audio_ssr_devs = <&audio_apr>, <&q6core>, <&lpi_tlmm>, <&bolero>;
+};

@@ -1,0 +1,7 @@
+# a52sxq: plain-make entry (the donor only builds with Kleaf). See ../build.sh.
+# The codec sub-directories are listed here because asoc/codecs/Kbuild only descends
+# into them for in-tree (KERNEL_BUILD=1) builds.
+obj-y += soc/ ipc/ dsp/ asoc/
+obj-y += asoc/codecs/bolero/ asoc/codecs/wcd938x/ asoc/codecs/wcd937x/ asoc/codecs/wsa883x/
+# Samsung (a52sxq): TAS256x smart amp and the sec audio sysfs class, same place as on 5.4
+obj-y += asoc/codecs/sec_audio/ asoc/codecs/tas256x/

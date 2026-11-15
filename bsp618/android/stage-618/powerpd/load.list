@@ -1,0 +1,27 @@
+# charging/battery stack (drivers612/power README "Load order"); sec_core comes from the touch
+# stage. This stage (powerpd) also loads usb_notifier + pdic_sm5714 (USB-PD, at the end).
+# leds-sm5714-fled is loaded by stage camera (before camera.ko; needs pdic_sm5714 = powerpd).
+qcom-vadc-common.ko
+qcom-spmi-adc5.ko
+a52sxq_usb_glue.ko
+if_cb_manager.ko
+switch_class.ko
+usb_notify_layer.ko
+vbus_notifier.ko
+sb-core.ko
+sec_pd.ko
+# hwmon.ko   # bsp618: built into the 6.18 GKI (CONFIG_HWMON=y; soc-repo copy DROPPED in port618.py)
+# sec_thermistor.ko   wrong ADC values on 6.12 (ap 41 C, pa 71 C when idle): fix channels first
+s2mpb03.ko
+common_muic.ko
+pdic_notifier_module.ko
+usb_typec_manager.ko
+mfd_sm5714.ko
+muic_sm5714.ko
+sec-battery.ko &
+sm5714_fuelgauge.ko
+sm5714-charger.ko
+pca9468_charger.ko
+sec-direct-charger.ko
+usb_notifier.ko
+pdic_sm5714.ko

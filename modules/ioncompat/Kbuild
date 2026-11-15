@@ -1,0 +1,3 @@
+# SPDX-License-Identifier: GPL-2.0-only
+obj-m += ioncompat.o
+ccflags-y += -I$(src)/include -I$(src)/include/uapi

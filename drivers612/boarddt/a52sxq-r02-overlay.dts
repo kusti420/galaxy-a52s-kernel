@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Samsung Galaxy A52s 5G (a52sxq), dtbo entry r02: overlay on Qualcomm's 6.12 yupik.dtb.
+ * WRITTEN BY check-dt.sh. Root properties: verbatim from the stock dtbo entry with the
+ * same qcom,board-id (the ABL selects by qcom,board-id = <0x22 N>, N <= hardware revision).
+ * a52sxq-agents-{labels,nodes}.dtsi are written by check-dt.sh into out/build/.
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	model = "Samsung A52SXQ PROJECT (board-id,02)";
+	qcom,msm-id = <0x1db 0x10000 0x203 0x10000>;
+	qcom,board-id = <0x22 0x2>;
+	dtbo-version = <0x0>;
+	compatible = "qcom,yupik-idp", "qcom,yupik", "qcom,idp";
+	dtbo-hw_rev = <0x2>;
+	dtbo-hw_rev_end = <0x20>;
+};
+
+/include/ "a52sxq-agents-labels.dtsi"
+/include/ "a52sxq-common.dtsi"
+/include/ "a52sxq-agents-nodes.dtsi"
+/include/ "a52sxq-r02.dtsi"
+/include/ "a52sxq-bsp612-fixups.dtsi"
+/include/ "a52sxq-r02-fixups.dtsi"

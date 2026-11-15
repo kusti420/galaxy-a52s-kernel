@@ -1,0 +1,39 @@
+camera: cam_icc_get_np() must not free the device a live icc path points at
+
+What: put the throw-away device only when of_icc_get() failed; a returned path keeps it
+(leaked at icc_put(), one small allocation per bus-client registration).
+Hardening, not a 6.18 regression: same code ran on 6.12 (compat/cam_compat_612.h). Applies
+after 0023.
+
+Why / evidence:
+- of_icc_get(dev, NULL) -> of_icc_get_by_index() -> path_init() stores the device:
+  ack/drivers/interconnect/core.c:187 `path->reqs[i].dev = dev;` (6.12 core.c:185 same).
+- cam_icc_get_np() then put_device(dev) -> cam_icc_dev_release() -> kfree(dev); the kobject
+  name goes with it.
+- Users of reqs[].dev afterwards: debugfs interconnect_summary (core.c:64-73,
+  dev_name(r->dev) for every request on every node: the CPAS/ICP/IFE requests sit on the
+  camnoc/mnoc nodes) and the icc_set_bw / icc_set_bw_end tracepoints
+  (drivers/interconnect/trace.h:26, 62: __string(dev, dev_name(p->reqs[..].dev))), the latter
+  fired by the icc_set_bw(path, 0, 0) right after the get (cam_soc_icc.c:111) and on every
+  camera bandwidth vote. Reading the summary or enabling interconnect tracing (perfetto /
+  atrace can) is a use-after-free.
+
+--- a/drivers612/camera/work/compat/cam_compat_612.h
++++ b/drivers612/camera/work/compat/cam_compat_612.h
+@@ -105,7 +105,15 @@
+ 	dev->of_node = np;
+ 	dev_set_name(dev, "cam-icc-%pOFn", np);
+ 	path = of_icc_get(dev, NULL);
+-	put_device(dev);
++	/*
++	 * bsp618/port: a path keeps its device in path->reqs[].dev for its whole life
++	 * (dev_name() in debugfs interconnect_summary and in the icc_set_bw tracepoint), so the
++	 * throw-away device may only go with a failed lookup; a live path keeps it. It is
++	 * leaked at icc_put() (struct icc_path is core-private): one small allocation per
++	 * camera bus client registration.
++	 */
++	if (IS_ERR_OR_NULL(path))
++		put_device(dev);
+ 	return path;
+ }
+ 

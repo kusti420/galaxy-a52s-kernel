@@ -1,0 +1,807 @@
+#!/bin/bash
+# Builds the REAL boot path for a daily-driven LineageOS 24 (Android 17) on the Qualcomm 6.12
+# kernel or on the 6.18 port (ACK android17-6.18 + the forward-ported BSP), for test phone 2
+# (PHONE2, LineageOS, bit-2 bootloader). BUILDS ONLY: nothing is flashed, no phone is
+# touched. README.md has the install plan, CHECKLIST.md what hardware must still prove.
+#
+#   ./build-realboot.sh [name]               6.12 (default name rb-612) -> out/<name>/
+#   KERNEL=618 ./build-realboot.sh [name]    6.18 (default name rb-618)
+#
+# Output (out/<name>/):
+#   boot.img         header v3: GKI Image + the ROM's generic ramdisk (byte for byte),
+#                    os_version/os_patch_level of the ROM's boot.img (Keymaster binds keys to
+#                    them), unsigned AVB hash footer like the ROM's, padded to the partition
+#   vendor_boot.img  header v3: merged board dtb, vendor cmdline, vendor ramdisk = the ROM's
+#                    (fstab only) + /lib/modules (first-stage modules, modules.load/dep/...) +
+#                    /force_debuggable + /adb_debug.prop (ro.bpf.kver_override only)
+#   dtbo.img         one minimal overlay entry (board-id <0x22 2>) for the ABL
+#   vendor-addon/    files for the vendor partition: lib/modules/6.<x> (audio, loaded after the
+#                    ADSP runs), the wlan.ko for macloader's path lib/modules/5.4-gki/qca_cld3_wlan.ko
+#                    (6.12: in 5.4-gki itself; 6.18: in lib/modules/6.18-wlan, which its rc binds over
+#                    5.4-gki, so the 6.12 copy there stays), etc/init/a52sxq-k6<x>.rc
+#   rollback/        sha256 of the phone's own boot/vendor_boot/dtbo dumps (the way back)
+#   info/            avbtool info_image + unpack_bootimg dumps of the three images, dtbo table
+#   REPORT.txt       every check, the module plan, the predicted command line, BLOCKERS
+#
+# The two kernels (everything else is shared):
+#   KERNEL=612  Image/modules bsp612/out/dist (6.12.81, COMMAND_LINE_SIZE 4096 since 14:23),
+#               modules byte for byte from drivers612/androidboot/out/<REF>-rd.cpio.gz (REF=s76 =
+#               s74 + the bsp612/patches/soc-repo/0009 geni modules + stage kgsl with the GPU devfreq
+#               governors + stage dcvs (bwmon, memlat), run ab-s76), tree = out-ack/kx/android-r02.dtb
+#               rebuilt from its inputs; + drivers612/busdcvs (SCMI dt-fix, bus tunables in the vendor rc)
+#   KERNEL=618  Image/modules bsp618/android/out/dist (6.18.33-4k-g00c8666046c2-dirty; ack/ has
+#               COMMAND_LINE_SIZE 4096 already), modules from bsp618/android/out/<REF>-rd.cpio.gz
+#               (REF=a10 = a9 (a8 + the 0009 geni modules) + the GPU governors in stage kgsl + stage dcvs
+#               (bwmon, memlat): bsp618/android/mkrd-dcvs-618.sh, the 6.18 s76/s77), tree =
+#               bsp618/android/out/android-r02-618.dtb (since 2026-11-15 from the busdcvs-fixed 6.12 tree)
+#               WITHOUT its kexec-only a52ram earlycon reservation (dwc3 qcom,iommu-faults non-fatal
+#               stays, as tested; SMMU_NONFATAL=0 drops it), DT bootargs + sched_proxy_exec=0 (as tested)
+#   Both kernels get the same MODEM=1, SDCARD=1, bus/GPU DCVS and sync_state handling; what differs
+#   is only the inputs (6.18 modem pack drivers612/modem/out-618/pack-modem-618-txfix.tgz, 6.18
+#   dev_ril_bridge.ko) and the Wi-Fi path (6.18 binds its own wlan dir over 5.4-gki, below).
+# Kexec artefacts that are never in a real boot: /reserved-memory/a52ram@f0be0000 + earlycon=,
+# kexec/mkkexecdtb.py's memory/hypervisor/uh/watchdog/timer copies and the live rmtfs carry-over
+# (the ABL and the hypervisor patch the real ones in), a52.* arguments, test modules.
+#
+# Environment:
+#   DUMP=<dir>        partition dumps of the phone (default ../../testdev-PHONE2): boot.img,
+#                     vendor_boot.img, dtbo.img, live.dtb (/sys/firmware/fdt of its 5.4 boot)
+#   KERNEL=612|618    which kernel (default 612; an Image path here still means 612 + IMAGE=)
+#   REF=<name>        tested kexec ramdisk whose modules are used (612: s76 of run ab-s76 = s74 +
+#                     0009 i2c-msm-geni/msm_geni_serial + kgsl governors + dcvs stage; s77 = s76 + the
+#                     busdcvs post script, same modules; 618: a9 = a8 of runs ab618-a8/a8e + the
+#                     0009 modules). The 612 build needs the dcvs stage. The tree is in
+#                     the 5.4 sysfs layout (research/sepolicy/PATHS.md): the build fails if a geni
+#                     module of the plan lacks 0009.
+#   IMAGE=<Image>     default: the dist Image of that kernel (the kernel of those runs)
+#   SELINUX=enforcing (default: nothing on the cmdline, as the ROM) | permissive
+#   USB_EXTCON=samsung (default, the phone's tree: dwc3 waits for the Samsung extcon of the
+#                     power stack) | eud (test edit of kexec/mkfulltree.sh: EUD only)
+#   MODEM=0           (default) modem remoteproc disabled in the tree, as in all real-boot test runs
+#   MODEM=1           (both kernels; the phone's OWN modem, phone 1 PHONE1: rb12) cellular for the
+#                     ROM's own radio userspace (rmt_storage, tftp_server, pd-mapper, qrtr-ns,
+#                     pm-service, ipacm, Samsung rild): the modem/data modules of the kernel-only
+#                     runs that brought LTE data up on 6.12 (drivers612/modem, kx-m2data3 =
+#                     MODEM_PACK's m/ files byte for byte, minus the test-only a52_modem_guard) +
+#                     dev_ril_bridge.ko, appended to the FIRST STAGE after wlanb (/dev/ipa must exist
+#                     before ipa_fws.rc's early-boot write, /dev/uio "rmtfs" before rmt_storage, the
+#                     ROM's own 5.4 rmnet loader paths load nothing on 6.x); msm_sharedmem leaves the
+#                     blocklist; tree = drivers612/modem/dt/mkmodemtree.sh (modem_pas okay, memshare
+#                     client_4 off, IPA IOVA fix dt/ipa-iova-fix.sh), modem subtrees checked against the
+#                     run's kexec tree MODEM_TESTED_DTB; firmware_class.path gains
+#                     /vendor/firmware-modem/image (modem.mdt directly, not via ueventd's fallback);
+#                     ueventd owners of the new /dev nodes checked against the ROM's ueventd.rc and
+#                     the 5.4 /dev listing (tools/ueventd-check.py -> modem-devnodes.txt).
+#                     6.18: MODEM_PACK = out-618/pack-modem-618-txfix.tgz (the pack of run kx-m2k618 with
+#                     the 6.18 ipam.ko of patch 0002, drivers612/modem/mk-txfix-pack.sh), dev_ril_bridge
+#                     = the bsp618 port build (stripped); the modem subtrees are checked against the 6.12
+#                     data run's tree AND the 6.18 modem run's tree (MODEM_TESTED_DTB2)
+#   SDCARD=1          (default, both kernels) cqhci + sdhci-msm (soc-repo modules, not built in) in the
+#                     first stage after the camera stage; SDCARD=0 keeps them out and blocklisted
+#   IGNORE_UNUSED=1   (default) keep clk/pd/regulator_ignore_unused (every test ran with them)
+#   MODULE_FAILURES=ignore (default: androidboot.first_stage_console=2, a first-stage module
+#                     that fails is logged and skipped) | fatal (AOSP default: reboot loop)
+#   EXTRA_CMDLINE=    appended to the vendor_boot command line
+#   SYNC_STATE_ARGS   bootargs that let interconnect/clk providers sync_state after a timeout (bus DCVS floor;
+#                     default "fw_devlink.sync_state=timeout deferred_probe_timeout=30", empty = off; both
+#                     kernels parse both: drivers/base/core.c fw_devlink_sync_state_setup, dd.c)
+#   DIAG=1            6.18: only DIAG_BOOTARGS on the DT bootargs (no 6.18 a52bc kernel exists, so no
+#                     breadcrumbs/RAM console and no a52ram node; the pstore console is the log).
+#                     6.12: instrumented build for a real-boot attempt that may fail early
+#                     (rb6, after rb4/rb5 died before ramoops in a watchdog-bite loop):
+#                     IMAGE defaults to bsp612/out/diag/Image (kernel-diag/build-diag-kernel.sh:
+#                     same release/CRCs + a52bc breadcrumbs and RAM console at 0xf0be0000), the
+#                     tree gets /reserved-memory/a52ram@f0be0000 ("a52,ramcon", no-map: what the
+#                     6.18 harness prints as /proc/a52ram), the DT bootargs get DIAG_BOOTARGS
+#                     (default: keep_bootcon initcall_debug ignore_loglevel softlockup_panic=1).
+#                     DIAG_WDT=off adds a52bc.wdt=off (disable the hypervisor watchdog at the
+#                     param stage; default: observe only). kernel-diag/README.md: how to read it.
+set -eu
+HERE=$(cd "$(dirname "$0")" && pwd); TOP=$(cd "$HERE/../.." && pwd)
+KSER=${KERNEL:-612}
+case "$KSER" in 612|618) ;; *) [ -f "$KSER" ] && { IMAGE=$KSER; KSER=612; } || { echo "KERNEL=612|618" >&2; exit 2; };; esac
+NAME=${1:-rb-$KSER}
+DUMP=$(cd "${DUMP:-$TOP/testdev-PHONE2}" && pwd)
+PB=${ANDROID_TREE:-$HOME/android}/prebuilts
+SYNC_ARGS="${SYNC_STATE_ARGS-fw_devlink.sync_state=timeout deferred_probe_timeout=30}"
+if [ "$KSER" = 612 ]; then
+	KV=6.12; KT=k612; KDESC="Qualcomm 6.12 (GKI 6.12.81 + r70 BSP)"
+	REF=${REF:-s76}; REFRD=$TOP/drivers612/androidboot/out/$REF-rd.cpio.gz
+	BSP=$TOP/bsp612; DIST=$BSP/out/dist; KCONFIG=$BSP/out/lahaina/.config
+	SYMVERS=$BSP/out/gki/Module.symvers
+	CLANG=$PB/clang/host/linux-x86/clang-r547379/bin
+	KMAKE=(make -s -C "$BSP/kernel" ARCH=arm64 LLVM="$CLANG/" O="$BSP/out/lahaina" KCONFIG_EXT_PREFIX="$BSP/soc-repo/")
+	DSPBOOT_KBUILD=$HERE/modules/dspboot/Kbuild
+	TREF=$TOP/out-ack/kx/android-r02.dtb   # kexec/mkandroidtree.sh output = KEXEC_BASE of run ab-s74
+	KEXEC_ONLY_NODES=""; EXTRA_BOOTARGS="$SYNC_ARGS"; SMMU_NONFATAL=0
+	TESTED_CMDLINE_FILE=$TOP/drivers612/androidboot/out/android-cmdline.txt
+	DIAG_KERNEL=1   # DIAG=1 uses the a52bc Image (kernel-diag/)
+	# Wi-Fi: wlan.ko sits in the ROM's fixed macloader path /vendor/lib/modules/5.4-gki itself
+	WLD=5.4-gki
+	MODEM_PACK_DEF=$TOP/drivers612/modem/out/pack-modem-txfix.tgz   # rb13+: kx-m2data3 pack + IPA TX fix 0002
+	MODEM_DRB_DEF=$TOP/drivers612/modem/out/stage-radio/dev_ril_bridge.ko
+	MODEM_TESTED_DTB2_DEF=
+else
+	KV=6.18; KT=k618; KDESC="ACK android17-6.18 (6.18.33 + forward-ported r70 BSP, bsp618)"
+	REF=${REF:-a10}; REFRD=$TOP/bsp618/android/out/$REF-rd.cpio.gz
+	BSP=$TOP/bsp618; DIST=$BSP/android/out/dist; KCONFIG=$DIST/gki.config
+	SYMVERS=$BSP/out-survey/gki/Module.symvers
+	CLANG=$PB/clang/host/linux-x86/clang-r596125/bin
+	RUSTBIN=$HOME/.rustup/toolchains/1.91.1-x86_64-unknown-linux-gnu/bin
+	export LIBCLANG_PATH=$PB/clang/host/linux-x86/clang-r584948b/lib
+	# the make line of bsp618/build-survey.sh (the port's "extra" build of this same module)
+	KMAKE=(make -s -C "$TOP/ack" ARCH=arm64 LLVM="$CLANG/" RUSTC="$RUSTBIN/rustc" HOSTRUSTC="$RUSTBIN/rustc"
+		BINDGEN=$PB/clang-tools/linux-x86/bin/bindgen O="$BSP/out-survey/lahaina" KCONFIG_EXT_PREFIX="$BSP/src/bsp612/soc-repo/")
+	DSPBOOT_KBUILD=$BSP/src/drivers612/realboot/modules/dspboot/Kbuild   # + -Wno-error=missing-prototypes
+	TREF=$BSP/android/out/android-r02-618.dtb  # bsp618/android/mkdtb-618.sh = KEXEC_BASE of ab618-a8
+	# kexec-only: earlycon=a52ram ring (the Samsung ABL strips earlycon= on a real boot anyway)
+	KEXEC_ONLY_NODES="/reserved-memory/a52ram@f0be0000"
+	# ACK 6.18 has proxy execution on by default, 6.12 had it off (bsp618/PORT-STATUS.md)
+	EXTRA_BOOTARGS="sched_proxy_exec=0${SYNC_ARGS:+ $SYNC_ARGS}"; SMMU_NONFATAL=${SMMU_NONFATAL:-1}
+	TESTED_CMDLINE_FILE=$BSP/android/android-cmdline-618.txt
+	DIAG_KERNEL=0   # no 6.18 a52bc kernel: DIAG=1 = DIAG_BOOTARGS only
+	# Wi-Fi: macloader's path /vendor/lib/modules/5.4-gki/qca_cld3_wlan.ko holds ONE 6.x wlan.ko and the
+	# phones carry the 6.12 one there. The 6.18 add-on keeps its own copy in /vendor/lib/modules/6.18-wlan
+	# (same files as a 5.4-gki dir) and its rc bind-mounts that dir over 5.4-gki on post-fs (before
+	# macloader, post-fs-data); 6.12 and 5.4 never see the bind. README.md section 2g, vendor-addon/wlan-bind.rc.in.
+	WLD=$KV-wlan
+	MODEM_PACK_DEF=$TOP/drivers612/modem/out-618/pack-modem-618-txfix.tgz   # kx-m2k618 pack + 6.18 ipam with 0002
+	MODEM_DRB_DEF=$BSP/src/drivers612/conn/rild/drb/dev_ril_bridge.ko         # bsp618 port build (stripped below)
+	MODEM_TESTED_DTB2_DEF=$TOP/logs/kx-m2k618-p1-p1-194536/kexec.dtb          # the 6.18 modem run (modem up, no data call)
+fi
+DIAG=${DIAG:-0}
+SYSMAP=$DIST/System.map
+if [ "$DIAG" = 1 ]; then
+	if [ "$DIAG_KERNEL" = 1 ]; then IMAGE=${IMAGE:-$BSP/out/diag/Image}; SYSMAP=$(dirname "$IMAGE")/System.map; fi
+	DIAG_BOOTARGS=${DIAG_BOOTARGS:-keep_bootcon initcall_debug ignore_loglevel softlockup_panic=1}
+	[ "${DIAG_WDT:-}" = off ] && { [ "$DIAG_KERNEL" = 1 ] || { echo "DIAG_WDT=off needs the a52bc kernel (6.12)" >&2; exit 2; }; DIAG_BOOTARGS="$DIAG_BOOTARGS a52bc.wdt=off"; }
+fi
+[ "$DIAG" = 1 ] && [ "$DIAG_KERNEL" = 1 ] || DIAG_KERNEL=0
+IMAGE=${IMAGE:-$DIST/Image}
+SELINUX=${SELINUX:-enforcing}; USB_EXTCON=${USB_EXTCON:-samsung}; MODEM=${MODEM:-0}
+case "$MODEM" in 0|1) ;; *) echo "MODEM=0|1" >&2; exit 2;; esac
+# SDCARD=1 (default since 2026-11-15, both kernels): microSD host (cqhci + sdhci-msm), proven read-only
+# kernel-only on 6.12 (run sdprobe-p1: mmcblk1 detected), rb16 on phone 1. The owner's card must never
+# be formatted: vold only mounts it.
+SDCARD=${SDCARD:-1}; case "$SDCARD" in 0|1) ;; *) echo "SDCARD=0|1" >&2; exit 2;; esac
+if [ "$MODEM" = 1 ]; then
+	MODEM_PACK=${MODEM_PACK:-$MODEM_PACK_DEF}         # pack of the kernel-only modem runs (modem.list + m/)
+	MODEM_DRB=${MODEM_DRB:-$MODEM_DRB_DEF}
+	MODEM_TESTED_DTB=${MODEM_TESTED_DTB:-$TOP/logs/kx-m2data3-p1-p1-103254/kexec.dtb}   # the tree of the 6.12 LTE data run (kernel-independent DT)
+	MODEM_TESTED_DTB2=${MODEM_TESTED_DTB2-$MODEM_TESTED_DTB2_DEF}
+	AND=${ANDROID_TREE:-$HOME/android}
+	ROM_UEVENTD=${ROM_UEVENTD:-$AND/device/samsung/sm7325-common/init/ueventd.qcom.rc}   # = the ROM's /vendor/etc/ueventd.rc
+	SYS_UEVENTD=${SYS_UEVENTD:-$AND/system/core/rootdir/ueventd.rc}
+	ROM_CONFIGFS=${ROM_CONFIGFS:-$AND/device/samsung/sm7325-common/config.fs}
+	AID_HEADER=${AID_HEADER:-$AND/system/core/libcutils/include/private/android_filesystem_config.h}
+	DEV54=${DEV54:-$TOP/research/blob-uapi-evidence/dev_lZ.txt}                 # ls -lZ /dev of a 5.4 boot
+fi
+IGNORE_UNUSED=${IGNORE_UNUSED:-1}
+MKDTBOIMG=${ANDROID_TREE:-$HOME/android}/system/libufdt/utils/src/mkdtboimg.py
+BOOT_PART=100663296; VENDOR_BOOT_PART=100663296; DTBO_PART=25165824   # BoardConfigCommon.mk
+O=$HERE/out/$NAME; W=$O/work
+rm -rf "$O"; mkdir -p "$W" "$O/rollback"
+R=$O/REPORT.txt; : > "$R"
+say() { echo "$*" | tee -a "$R"; }
+fail() { echo "CHECK FAILED: $*" | tee -a "$R" >&2; exit 1; }
+BLOCKERS=(); blocker() { BLOCKERS+=("$*"); say "BLOCKER: $*"; }
+for t in unpack_bootimg mkbootimg avbtool fdtget fdtput fdtoverlay dtc lz4 depmod modinfo python3 cpio; do
+	command -v $t >/dev/null || fail "tool $t missing"; done
+[ -f "$REFRD" ] || fail "no tested ramdisk $REFRD"
+for f in boot.img vendor_boot.img dtbo.img live.dtb; do [ -f "$DUMP/$f" ] || fail "no $DUMP/$f"; done
+if [ "$MODEM" = 1 ]; then for f in "$MODEM_PACK" "$MODEM_DRB" "$MODEM_TESTED_DTB" "$ROM_UEVENTD" "$SYS_UEVENTD" "$ROM_CONFIGFS" "$AID_HEADER" "$DEV54"; do
+	[ -f "$f" ] || fail "MODEM=1: missing $f"; done
+	[ -z "$MODEM_TESTED_DTB2" ] || [ -f "$MODEM_TESTED_DTB2" ] || fail "MODEM=1: missing $MODEM_TESTED_DTB2"; fi
+say "realboot $NAME ($KV), $(date '+%F %T'); NOT FLASHED. dump=$DUMP ref=$REFRD image=$IMAGE"
+say "options: SELINUX=$SELINUX USB_EXTCON=$USB_EXTCON MODEM=$MODEM SDCARD=$SDCARD IGNORE_UNUSED=$IGNORE_UNUSED DIAG=$DIAG${DIAG_BOOTARGS:+ ($DIAG_BOOTARGS)}$( [ "$DIAG" = 1 ] && [ "$DIAG_KERNEL" = 0 ] && echo ' [bootargs only: no a52bc kernel for this kernel]')"
+
+# ---------------------------------------------------------------- 1. the phone's images
+say "== 1. phone images ($DUMP)"
+for i in boot vendor_boot dtbo; do sha256sum "$DUMP/$i.img" | sed "s|$DUMP/||" >> "$O/rollback/SHA256SUMS"; done
+cp "$O/rollback/SHA256SUMS" "$O/rollback/SHA256SUMS.phone-dumps"
+unpack_bootimg --boot_img "$DUMP/boot.img" --out "$W/b" --format mkbootimg > "$W/b.args"
+unpack_bootimg --boot_img "$DUMP/vendor_boot.img" --out "$W/vb" --format mkbootimg > "$W/vb.args"
+unpack_bootimg --boot_img "$DUMP/boot.img" --out "$W/b" > "$W/b.info"
+unpack_bootimg --boot_img "$DUMP/vendor_boot.img" --out "$W/vb" > "$W/vb.info"
+grep -q '^boot image header version: 3$' "$W/b.info" || fail "boot.img is not header v3"
+grep -q '^vendor boot image header version: 3$' "$W/vb.info" || fail "vendor_boot.img is not header v3"
+OSV=$(sed -n 's/^os version: //p' "$W/b.info"); OSP=$(sed -n 's/^os patch level: //p' "$W/b.info")
+[ -n "$OSV" ] && [ -n "$OSP" ] || fail "no os version/patch level in boot.img"
+STOCK_VC=$(sed -n 's/^vendor command line args: //p' "$W/vb.info"); printf '%s\n' "$STOCK_VC" > "$W/stock-vendor-cmdline.txt"
+[ -z "$(sed -n 's/^command line args: //p' "$W/b.info")" ] || fail "boot.img has a cmdline (script assumes the ROM's empty one)"
+VB_ARGS=$(sed -e "s/--vendor_cmdline '[^']*'//" -e 's/--dtb [^ ]*//' -e 's/--vendor_ramdisk [^ ]*//' "$W/vb.args")
+say "boot: header v3, os $OSV / $OSP, cmdline empty; vendor_boot: $VB_ARGS"
+# control: the packer arguments must rebuild the ROM's own images bit for bit
+eval mkbootimg $(cat "$W/b.args") -o "$W/ctl-boot.img"
+eval mkbootimg $(cat "$W/vb.args") --vendor_boot "$W/ctl-vendor_boot.img"
+cmp -s "$W/ctl-boot.img" <(head -c "$(stat -c %s "$W/ctl-boot.img")" "$DUMP/boot.img") || fail "control repack of boot.img differs"
+cmp -s "$W/ctl-vendor_boot.img" <(head -c "$(stat -c %s "$W/ctl-vendor_boot.img")" "$DUMP/vendor_boot.img") || fail "control repack of vendor_boot.img differs"
+say "control: ROM boot.img and vendor_boot.img rebuilt byte-identical with these arguments"
+# AVB footers of the ROM: unsigned (Algorithm NONE), verification is off in vbmeta (flags 3)
+avbtool info_image --image "$DUMP/vbmeta.img" > "$W/vbmeta.info" 2>/dev/null || true
+VBF=$(sed -n 's/^Flags: *//p' "$W/vbmeta.info" | head -1)
+say "vbmeta flags: ${VBF:-unknown} (3 = verification + hashtree disabled: boot/vendor_boot/dtbo digests are not checked)"
+[ "$VBF" = 3 ] || blocker "vbmeta flags are not 3: new boot/vendor_boot/dtbo would need a new vbmeta"
+footer() {   # <part> <img> <size>: unsigned hash footer with the ROM's salt and props
+	local p=$1 img=$2 size=$3 info salt props=()
+	info=$(avbtool info_image --image "$DUMP/$p.img")
+	echo "$info" | grep -q 'Algorithm: *NONE' || fail "$p dump footer is signed: not handled"
+	salt=$(echo "$info" | sed -n 's/^ *Salt: *//p' | head -1)
+	while IFS= read -r l; do props+=(--prop "$l"); done < <(echo "$info" | sed -n "s/^ *Prop: \(.*\) -> '\(.*\)'$/\1:\2/p")
+	avbtool add_hash_footer --image "$img" --partition_name "$p" --partition_size "$size" --salt "$salt" "${props[@]}"
+}
+cp "$W/ctl-boot.img" "$W/ctl-boot-f.img"; footer boot "$W/ctl-boot-f.img" $BOOT_PART
+cmp -s "$W/ctl-boot-f.img" "$DUMP/boot.img" || fail "control AVB footer of boot.img differs from the dump"
+say "control: ROM boot.img incl. AVB footer rebuilt byte-identical (footer recipe proven)"
+
+# ---------------------------------------------------------------- 2. kernel
+say "== 2. kernel"
+[ "$(od -An -tx4 -j56 -N4 "$IMAGE" | tr -d ' ')" = 644d5241 ] || fail "Image has no ARMd magic"
+KREL=$(strings "$IMAGE" | sed -n 's/^Linux version \([^ ]*\) .*/\1/p' | head -1)
+[ -d "$DIST/lib/modules/$KREL" ] || fail "no $KV dist modules for $KREL"
+case "$KREL" in $KV.*) ;; *) fail "Image is $KREL, not $KV";; esac
+KVER=${KREL%%-*}
+ISZ=$(od -An -tu8 -j16 -N8 "$IMAGE" | tr -d ' ')
+say "Image $KREL, image_size $(printf %#x "$ISZ"), file $(stat -c %s "$IMAGE") bytes"
+if [ -f "$SYSMAP" ]; then
+	CLS=$(python3 -I - "$SYSMAP" <<'EOF'
+import sys
+syms = [l.split() for l in open(sys.argv[1])]
+for i, s in enumerate(syms):
+    if len(s) == 3 and s[2] == 'boot_command_line':
+        print(int(syms[i + 1][0], 16) - int(s[0], 16)); break
+EOF
+)
+else CLS=0; fi
+CLS_EFF=$(( CLS >= 4096 ? 4096 : CLS >= 2048 ? 2048 : CLS ))
+say "boot_command_line is $CLS bytes in System.map -> COMMAND_LINE_SIZE $CLS_EFF"
+[ "$CLS_EFF" = 4096 ] || blocker "COMMAND_LINE_SIZE $CLS_EFF: the Samsung ABL's ~2.7 KB append would be cut (needs the 4096 patch, patches/)"
+CONFIG_CMDLINE=$(sed -n 's/^CONFIG_CMDLINE="\(.*\)"$/\1/p' "$KCONFIG")
+grep -q '^CONFIG_CMDLINE_EXTEND=y' "$KCONFIG" || fail "kernel is not CONFIG_CMDLINE_EXTEND: cmdline model wrong"
+# drivers/of/fdt.c (both kernels): CONFIG_CMDLINE first, then " " + /chosen/bootargs, cut at
+# COMMAND_LINE_SIZE - 1 (= tools/cmdline-sim.py's model)
+say "CONFIG_CMDLINE (prepended): $CONFIG_CMDLINE"
+if [ "$DIAG_KERNEL" = 1 ]; then
+	grep -q ' a52bc_stage$' "$SYSMAP" && grep -q ' a52ram_write$' "$SYSMAP" || fail "DIAG=1 but $IMAGE has no a52bc (kernel-diag/build-diag-kernel.sh)"
+	[ "$(sha256sum < "$IMAGE" | cut -d' ' -f1)" != "$(sha256sum < "$DIST/Image" | cut -d' ' -f1)" ] || fail "DIAG Image = dist Image"
+	cmp -s <(sed -n 's/^release=//p' "$(dirname "$IMAGE")/BUILDINFO") <(echo "$KREL") || fail "DIAG kernel BUILDINFO release differs"
+	say "DIAG kernel: $IMAGE = dist release + a52bc (breadcrumbs + RAM console); $(grep '^modversion' "$(dirname "$IMAGE")/BUILDINFO")"
+	# boots the same Image in QEMU and checks every breadcrumb, the RAM console, the warm-reset
+	# attempt counter and the no-reservation gate (kernel-diag/qemu-test.sh, ~40 s); QEMU_TEST=0 skips
+	if [ "${QEMU_TEST:-1}" = 1 ]; then
+		"$HERE/kernel-diag/qemu-test.sh" "$IMAGE" > "$W/qemu-test.log" 2>&1 || { tail -5 "$W/qemu-test.log"; fail "DIAG kernel QEMU smoke test"; }
+		say "DIAG kernel QEMU smoke test: $(head -1 "$BSP/out/diag/qemu/VERDICT.txt")"
+	else say "DIAG kernel QEMU smoke test SKIPPED (QEMU_TEST=0)"; fi
+fi
+
+# ---------------------------------------------------------------- 3. modules
+say "== 3. modules (from the tested ramdisk $REF)"
+python3 -I "$HERE/tools/cpiox.py" "$REFRD" "$W/ref" >> "$R"
+# the realboot DSP starter (replaces helper2.sh's "@adsp" job), built against this kernel in a
+# work copy (both kernels from the same source file)
+mkdir -p "$W/dspboot"; cp "$HERE/modules/dspboot/a52sxq_dsp_boot.c" "$W/dspboot/"; cp "$DSPBOOT_KBUILD" "$W/dspboot/Kbuild"
+"${KMAKE[@]}" M="$W/dspboot" KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost modules > "$W/dspboot.log" 2>&1 \
+	|| { tail -20 "$W/dspboot.log"; fail "a52sxq_dsp_boot build"; }
+cp "$W/dspboot/a52sxq_dsp_boot.ko" "$W/a52sxq_dsp_boot.ko"; "$CLANG/llvm-strip" --strip-debug "$W/a52sxq_dsp_boot.ko"
+say "a52sxq_dsp_boot.ko: $(modinfo -F vermagic "$W/a52sxq_dsp_boot.ko")"
+# first stage = the kernel's bring-up set + every stage that the test loaded before Android's
+# init, in the test order (a52.mods of runs ab-s74 / ab618-a8 =
+# debug,secure,display,kgsl,video,i2c,nfc,touch,fingerprint,powerpd,vibrator,camera,dsp,wlanb,
+# susp,audio@adsp,wlan@adsp, without "debug" (seaprobe) and "susp" (a52susp: the suspend-test
+# safety module refuses every suspend not started by the test: never in a real boot));
+# late = what waited for the ADSP
+FIRST_STAGES="secure display kgsl video i2c nfc touch fingerprint powerpd vibrator camera dsp wlanb"
+# + stage dcvs (bwmon, memlat) right after kgsl, as in run ab-s76 (a52.mods=...,kgsl,dcvs,video,...);
+# REF s76 / a10 have the GPU devfreq governors before msm_kgsl in stage kgsl (drivers612/busdcvs/README.md)
+FIRST_STAGES=${FIRST_STAGES/kgsl /kgsl dcvs }
+MODEM_EXTRA=()
+if [ "$MODEM" = 1 ]; then
+	# the modem stage of the kernel-only runs (drivers612/modem: kpack/m1.sh "ld modem.list", the
+	# order of stages/modem/resolved-kernelonly.list), from the pack that ran, minus the test-only
+	# crash guard; then Samsung's /dev/drb (rild). Appended after the last tested stage, so the
+	# rb11 prefix of modules.load is unchanged.
+	mkdir -p "$W/modempack"; tar xzf "$MODEM_PACK" -C "$W/modempack" ./modem.list ./m
+	MPL=$(grep -vE '^[[:space:]]*(#|$)' "$W/modempack/modem.list" | sed 's/[[:space:]].*//' | tr '\n' ' ')
+	[ "$MPL" = "a52_modem_guard.ko msm_sharedmem.ko heap_mem_ext_v01.ko msm_memshare.ko glink_pkt.ko rmnet_mem.ko qcom_va_minidump.ko gsim.ko usb_f_gsi.ko ipam.ko ipanetm.ko rmnet_ctl.ko rmnet_core.ko rmnet_offload.ko rmnet_shs.ko " ] \
+		|| fail "MODEM_PACK modem.list is not the list of the kx-m2data3 run: $MPL"
+	for m in $MPL; do [ "$m" = a52_modem_guard.ko ] && continue; MODEM_EXTRA+=(--extra-after "wlanb:$W/modempack/m/$m"); done
+	cp "$MODEM_DRB" "$W/dev_ril_bridge.ko"
+	# a module build (6.18: the port tree's) carries debug info; the 6.12 stage-radio copy is stripped already
+	"$CLANG/llvm-readelf" -S "$W/dev_ril_bridge.ko" | grep -q '\.debug_' && "$CLANG/llvm-strip" --strip-debug "$W/dev_ril_bridge.ko"
+	MODEM_EXTRA+=(--extra-after "wlanb:$W/dev_ril_bridge.ko")
+	say "MODEM=1: modem stage from $MODEM_PACK (sha256 $(sha256sum < "$MODEM_PACK" | cut -c1-16)) minus a52_modem_guard, + dev_ril_bridge.ko ($MODEM_DRB, $(sha256sum < "$MODEM_DRB" | cut -c1-16)), after wlanb"
+fi
+# SDCARD=1: microSD host. Both kernels build cqhci + sdhci-msm as soc-repo modules (dist
+# lib/modules/<krel>/drivers/mmc/host; GKI has only mmc_core/mmc_block/sdhci/sdhci-pltfm built in, checked
+# below): taken from the dist like every first-stage module of the tested ramdisks.
+SD_EXTRA=()
+if [ "$SDCARD" = 1 ]; then
+	for m in cqhci sdhci-msm; do
+		f=$(find "$DIST/lib/modules/$KREL" -name "$m.ko" | head -1); [ -n "$f" ] || fail "$m.ko not in dist"
+		SD_EXTRA+=(--extra-after "camera:$f"); done   # dist modules are stripped already (no .debug_*)
+	say "SDCARD=1: cqhci + sdhci-msm ($(find "$DIST/lib/modules/$KREL" -name sdhci-msm.ko | sed "s|$DIST/lib/modules/$KREL/||")) added to the first stage (after the camera stage)"
+fi
+python3 -I "$HERE/tools/modplan.py" --ref "$W/ref" --first "$FIRST_STAGES" --late audio --wlan wlan \
+	--extra-after "dsp:$W/a52sxq_dsp_boot.ko" "${MODEM_EXTRA[@]}" "${SD_EXTRA[@]}" --drop "seaprobe testguard hhwdt a52susp a52_modem_guard" --out "$W/plan" | tee -a "$R"
+for st in debug susp; do [ -f "$W/ref/a52/mods/$st.list" ] && say "stage $st of $REF NOT in the real boot: $(tr '\n' ' ' < "$W/ref/a52/mods/$st.list")"; done
+cat "$W/plan/first.load" "$W/plan/late.load" "$W/plan/wlan.load" | grep -qx 'a52susp.ko\|seaprobe.ko\|testguard.ko\|hhwdt.ko\|a52_modem_guard.ko' && fail "test module planned"
+{	# GPU + bus DCVS (both kernels) (drivers612/busdcvs/README.md): devfreq governors before msm_kgsl (kgsl looks its
+	# governor up once, at probe: "Unable to find governor" -> no GPU DCVS); bwmon/memlat after
+	# every module they use (qcom-dcvs, sched-walt, qcom-pmu-lib + its llcc/scmi deps)
+	pos() { grep -nx "$1" "$W/plan/first.load" | cut -d: -f1; }
+	for m in governor_msm_adreno_tz.ko governor_gpubw_mon.ko msm_kgsl.ko bwmon.ko memlat.ko qcom-dcvs.ko qcom-pmu-lib.ko qcom_llcc_pmu.ko qcom_scmi_client.ko sched-walt.ko; do
+		[ -n "$(pos $m)" ] || fail "DCVS: $m not in the first stage (REF=$REF needs the kgsl2 + dcvs stages: s76 / a10)"; done
+	for g in governor_msm_adreno_tz.ko governor_gpubw_mon.ko; do [ "$(pos $g)" -lt "$(pos msm_kgsl.ko)" ] || fail "DCVS: $g after msm_kgsl"; done
+	for d in qcom-dcvs.ko sched-walt.ko qcom-pmu-lib.ko qcom_llcc_pmu.ko qcom_scmi_client.ko; do
+		for m in bwmon.ko memlat.ko; do [ "$(pos $d)" -lt "$(pos $m)" ] || fail "DCVS: $m before its dependency $d"; done; done
+	say "DCVS: GPU governors at $(pos governor_msm_adreno_tz.ko)/$(pos governor_gpubw_mon.ko) < msm_kgsl $(pos msm_kgsl.ko); bwmon $(pos bwmon.ko), memlat $(pos memlat.ko) after qcom-dcvs $(pos qcom-dcvs.ko), sched-walt $(pos sched-walt.ko), qcom-pmu-lib $(pos qcom-pmu-lib.ko)"
+}
+if [ "$MODEM" = 1 ]; then
+	MODEM_MODS="msm_sharedmem heap_mem_ext_v01 msm_memshare glink_pkt rmnet_mem gsim usb_f_gsi ipam ipanetm rmnet_ctl rmnet_core rmnet_offload rmnet_shs dev_ril_bridge"
+	for m in $MODEM_MODS qcom_va_minidump; do grep -qx "$m.ko" "$W/plan/first.load" || fail "MODEM=1: $m.ko not in the first stage"; done
+	# the tested prefix (rb11's first stage) is untouched: the modem set comes after it, in pack order
+	NM=$(echo $MODEM_MODS | wc -w)
+	[ "$(tail -n "$NM" "$W/plan/first.load" | sed 's/\.ko$//' | tr '\n' ' ')" = "$MODEM_MODS " ] || fail "MODEM=1: the modem modules are not the tail of modules.load in pack order"
+	for m in $MODEM_MODS; do
+		[ "$m" = dev_ril_bridge ] && src=$W/dev_ril_bridge.ko || src=$W/modempack/m/$m.ko
+		cmp -s "$src" "$W/plan/first/$m.ko" || fail "MODEM=1: $m.ko is not the tested file"; done
+	cmp -s "$W/modempack/m/qcom_va_minidump.ko" "$W/plan/first/qcom_va_minidump.ko" || fail "MODEM=1: qcom_va_minidump of the pack differs from the first stage's"
+	grep -qE '^(rmnet|ipa|gsim|msm_sharedmem|msm_memshare|glink_pkt|dev_ril)' "$W/plan/late.load" "$W/plan/wlan.load" && fail "MODEM=1: a modem module in the vendor add-on"
+	say "MODEM=1: $NM modem/data modules are the last $NM lines of modules.load (byte-identical to the run's pack; qcom_va_minidump already in the first stage, same file)"
+fi
+for k in "$W"/plan/{first,late,wlan}/*.ko; do strings "$k" | grep -q "^vermagic=$KREL " || fail "wrong vermagic: $k"; done
+# modules.dep/alias/softdep, flat paths, symbols checked against the kernel's System.map
+depmod_dir() {   # <outdir> <dir with .ko>...
+	local out=$1; shift; rm -rf "$out"; mkdir -p "$out/lib/modules/$KREL"
+	for d in "$@"; do cp "$d"/*.ko "$out/lib/modules/$KREL/"; done
+	depmod -b "$out" -F "$DIST/System.map" -e "$KREL" 2> "$out.err" || true
+	grep -v "^depmod: WARNING: could not open modules\.\(order\|builtin\)" "$out.err" > "$out.unresolved" || true
+}
+depmod_dir "$W/dep1" "$W/plan/first"
+[ -s "$W/dep1.unresolved" ] && { head "$W/dep1.unresolved"; fail "first-stage set: unresolved symbols (needs a late module?)"; }
+depmod_dir "$W/depall" "$W/plan/first" "$W/plan/late" "$W/plan/wlan"
+[ -s "$W/depall.unresolved" ] && { head "$W/depall.unresolved"; fail "full set: unresolved symbols"; }
+VR=$W/vr; LM=$VR/lib/modules; mkdir -p "$LM"
+cp "$W"/plan/first/*.ko "$LM/"
+for f in modules.dep modules.alias modules.softdep; do cp "$W/dep1/lib/modules/$KREL/$f" "$LM/$f"; done
+cp "$W/plan/first.load" "$LM/modules.load"
+while read -r m; do grep -q "^$m:" "$LM/modules.dep" || fail "$m of modules.load is not in modules.dep"; done < "$LM/modules.load"
+# blocked in every test (bsp612/mkramdisk-612.sh DROP, pack-android-612.sh BLOCK); the
+# blocklist stops an alias or softdep from pulling them in
+BLOCK="qcom_edac qcom-dload-mode gh_virt_wdt qcom_wdt_core tz_log_dlkm sdhci-msm cqhci phy-msm-ssusb-qmp msm_sharedmem"
+# MODEM=1: msm_sharedmem is rmt_storage's UIO buffer: loaded, so not blocked
+[ "$MODEM" = 1 ] && BLOCK=${BLOCK% msm_sharedmem}
+[ "$SDCARD" = 1 ] && BLOCK=${BLOCK/ sdhci-msm cqhci/}
+for b in $BLOCK; do echo "blocklist $b"; done > "$LM/modules.blocklist"
+for b in $BLOCK; do grep -qx "$b.ko" "$LM/modules.load" && fail "blocked module $b in modules.load"; done
+# no SD host driver in any set (phone 1 has a microSD, mmcblk1, that nothing may touch)
+[ "$SDCARD" = 1 ] || { ls "$W"/plan/{first,late,wlan}/ | grep -q '^sdhci\|^cqhci\|^mmc' && fail "SD/MMC host module in the module plan"; }
+grep -q 'sdhci-msm\|cqhci' "$DIST/lib/modules/$KREL/modules.builtin" && fail "sdhci-msm/cqhci built into the kernel"
+cp "$W/plan/first.params" "$LM/modules.options"
+# The test loaded every module with a plain insmod in list order, so no softdep ever applied.
+# libmodprobe would honour the "pre:" ones and pull e.g. qcom_hwspinlock before smem, qcom-pdc
+# before pinctrl-msm: keep the tested order, the depmod result stays next to it for reference.
+mv "$LM/modules.softdep" "$LM/modules.softdep.depmod"; : > "$LM/modules.softdep"
+say "softdeps NOT used (tested order kept): $(grep -vc '^#' "$LM/modules.softdep.depmod") in modules.softdep.depmod"
+grep -q '^testguard\|^hhwdt\|^seaprobe\|^a52susp' "$LM/modules.load" && fail "test module in modules.load"
+say "first stage: $(wc -l < "$LM/modules.load") modules ($(du -sb "$LM" | cut -f1) bytes); options: $(tr '\n' ';' < "$LM/modules.options")"
+# vendor add-on: late dir with deps reduced to modules of the same dir (the first-stage ones are
+# loaded already; libmodprobe would try to open their files otherwise)
+VA=$O/vendor-addon; mkdir -p "$VA/lib/modules/$KV" "$VA/lib/modules/$WLD" "$VA/lib/modules/5.4-gki" "$VA/etc/init"
+late_dir() {   # <plan group> <dest>
+	local g=$1 dst=$2
+	cp "$W/plan/$g"/*.ko "$dst/"
+	python3 -I - "$W/depall/lib/modules/$KREL/modules.dep" "$W/plan/$g.load" "$W/plan/first.load" "$dst/modules.dep" <<'EOF'
+import sys
+dep, load, first, out = sys.argv[1:5]
+mine = set(l.strip() for l in open(load) if l.strip()); fs = set(l.strip() for l in open(first) if l.strip())
+with open(out, 'w') as fh:
+    for l in open(dep):
+        k, _, v = l.partition(':'); k = k.strip()
+        if k not in mine: continue
+        deps = v.split(); bad = [d for d in deps if d not in mine and d not in fs]
+        if bad: sys.exit(f"{k}: needs {bad}, neither in this dir nor in the first stage")
+        # depmod format, no trailing blank: libmodprobe splits on single spaces, and "a.ko: "
+        # gives an empty dependency -> "<dir>/" -> every module without deps (and all that need
+        # them) fails to load (rehearsal rh612a/rh618a, 2026-11-14: no audio module loaded)
+        fh.write(k + ':' + ''.join(' ' + d for d in deps if d in mine) + '\n')
+EOF
+	cp "$W/plan/$g.load" "$dst/modules.load.order"
+	cp "$W/plan/$g.params" "$dst/modules.options"
+}
+late_dir late "$VA/lib/modules/$KV"
+# WLD = the directory macloader will see as /vendor/lib/modules/5.4-gki: 5.4-gki itself (6.12) or
+# 6.18-wlan, bind-mounted over 5.4-gki by the 6.18 rc (6.18 keeps the 6.12 files in 5.4-gki untouched;
+# the add-on's 5.4-gki is then an empty mount point dir, never pushed over the phone's)
+late_dir wlan "$VA/lib/modules/$WLD"
+# 5.4-gki/: macloader is the ONLY loader of wlan.ko (it writes wpss_boot first, then finit_module()s
+# the file by path; that is what ran in the rehearsal). libmodprobe must see no module there: else
+# init.target.rc's "on boot" modprobe -d 5.4-gki qca_cld3_wlan races macloader. Empty modules.dep
+# = `modprobe -l` lists nothing (vendor_modprobe.sh's 5.4-gki fallback loads nothing either).
+printf '# empty on purpose: wlan.ko here is loaded by macloader only (drivers612/realboot)\n' > "$VA/lib/modules/$WLD/modules.dep"
+# vendor_modprobe.sh (early-init) falls back to 5.4-gki/ on 6.12 and loads every module there in
+# parallel: block qca_cld3_wlan from that path, macloader and init.target.rc load it later.
+echo "blocklist qca_cld3_wlan" > "$VA/lib/modules/$WLD/modules.blocklist"
+: > "$VA/lib/modules/$WLD/modules.load"
+[ "$WLD" = 5.4-gki ] || [ -z "$(ls -A "$VA/lib/modules/5.4-gki")" ] || fail "the $KV add-on must not carry files in 5.4-gki (the other 6.x kernel's wlan lives there)"
+AUDIO=$(sed 's/\.ko$//' "$W/plan/late.load" | tr '\n' ' ' | sed 's/ $//')
+# Wi-Fi part: wlan-5.4-gki.rc.in (6.12: wlan.ko in 5.4-gki itself, nothing to do) or wlan-bind.rc.in
+# (6.18: bind its own $WLD over 5.4-gki on post-fs; README.md section 2g). init runs `mount` itself (not
+# in vendor_init; system/core/init builtins.cpp) and may mounton vendor_file dirs (system/sepolicy
+# private/init.te); /vendor/lib/modules/* are vendor_file on this ROM.
+[ "$WLD" = 5.4-gki ] && WRC=wlan-5.4-gki.rc.in || WRC=wlan-bind.rc.in
+cat "$HERE/vendor-addon/a52sxq-kernel.rc.in" "$HERE/vendor-addon/$WRC" | sed -e "s|@AUDIO_MODULES@|$AUDIO|" -e "s|@KT@|$KT|g" -e "s|@KV@|$KV|g" \
+	-e "s|@KDESC@|$KDESC|" -e "s|@NAME@|$NAME|" -e "s|@WLD@|$WLD|g" > "$VA/etc/init/a52sxq-$KT.rc"
+grep -q '@[A-Z_]*@' "$VA/etc/init/a52sxq-$KT.rc" && fail "unreplaced placeholder in a52sxq-$KT.rc"
+if [ "$WLD" != 5.4-gki ]; then
+	grep -q "^    mount none /vendor/lib/modules/$WLD /vendor/lib/modules/5.4-gki bind$" "$VA/etc/init/a52sxq-$KT.rc" || fail "wlan bind line"
+	# init's do_mount: "mount <type> <source> <target> [flags]", flag "bind" = MS_BIND (mount_flags[])
+	grep -q '{ "bind", *MS_BIND }' ${ANDROID_TREE:-$HOME/android}/system/core/init/builtins.cpp || fail "init has no bind mount flag?"
+	say "vendor rc: on post-fs bind /vendor/lib/modules/$WLD over /vendor/lib/modules/5.4-gki (macloader path; the phone's 6.12 wlan.ko there stays)"
+fi
+BUSDCVS_CONF=$TOP/drivers612/busdcvs/busdcvs.conf
+{
+	# bus DCVS tunables + end of the boot boost + interconnect sync_state, once Android has booted
+	# (drivers612/busdcvs/busdcvs.conf; Qualcomm's post_boot does the same; vendor rc writes run as
+	# vendor_init, which may write every sysfs file). The paths are checked against the tree in step 4.
+	{ printf '\n# Bus DCVS (drivers612/busdcvs/busdcvs.conf, generated by build-realboot.sh): the ROM'"'"'s 5.4 post_boot\n'
+	  printf '# writes /sys/class/devfreq nodes that do not exist on %s; these are their bus_dcvs equivalents,\n' "$KV"
+	  printf '# then the qcom-dcvs boot boost is dropped and the interconnect providers are told to sync_state\n'
+	  printf '# (without that DDR/LLCC keep the INT_MAX boot floor). A failed write is only logged by init.\n'
+	  printf 'on property:sys.boot_completed=1 && property:ro.boot.a52sxq.%s=1\n' "$KT"
+	  grep -vE '^[[:space:]]*(#|$)' "$BUSDCVS_CONF" | while read -r p v; do printf '    write /sys/%s "%s"\n' "$p" "$v"; done
+	} >> "$VA/etc/init/a52sxq-$KT.rc"
+	NW=$(grep -c '^    write /sys/' "$VA/etc/init/a52sxq-$KT.rc")
+	[ "$NW" = "$(grep -cvE '^[[:space:]]*(#|$)' "$BUSDCVS_CONF")" ] || fail "bus DCVS rc: $NW writes for $(grep -cvE '^[[:space:]]*(#|$)' "$BUSDCVS_CONF") conf lines"
+	say "vendor rc: $NW bus-DCVS writes on sys.boot_completed (busdcvs.conf $(sha256sum < "$BUSDCVS_CONF" | cut -c1-16))"
+}
+say "late (vendor /vendor/lib/modules/$KV, after the ADSP): $(wc -l < "$W/plan/late.load") modules; wlan: $(cat "$W/plan/wlan.load") in /vendor/lib/modules/$WLD"
+cp "$W/plan/plan.txt" "$O/module-plan.txt"
+# insmod simulation of the real boot order: first stage (modules.load), vendor rc (late.load),
+# macloader (wlan): vermagic, symbols, modversion CRCs, duplicate exports, built-in clashes
+python3 -I "$HERE/tools/loadsim.py" --krel "$KREL" --symvers "$SYMVERS" --builtin "$DIST/lib/modules/$KREL/modules.builtin" \
+	"first:$LM:$LM/modules.load" "late:$VA/lib/modules/$KV:$VA/lib/modules/$KV/modules.load.order" \
+	"wlan:$VA/lib/modules/$WLD:$W/plan/wlan.load" > "$W/loadsim.txt" || { cat "$W/loadsim.txt"; fail "insmod simulation"; }
+tee -a "$R" < "$W/loadsim.txt" > /dev/null; cat "$W/loadsim.txt"; cp "$W/loadsim.txt" "$O/insmod-simulation.txt"
+# libmodprobe dry run of the config files exactly as the ROM's loaders read them (tools/modprobesim.py)
+MPS="python3 -I $HERE/tools/modprobesim.py"
+{ $MPS --label first-stage --dir "$LM" --as /lib/modules --load-file modules.load \
+  && $MPS --label "vendor rc" --dir "$VA/lib/modules/$KV" --as /vendor/lib/modules/$KV --modules $AUDIO; } > "$W/modprobesim.txt" 2>&1 \
+	|| { cat "$W/modprobesim.txt"; fail "libmodprobe dry run (modprobesim.py)"; }
+$MPS --label 5.4-gki --dir "$VA/lib/modules/$WLD" --as /vendor/lib/modules/5.4-gki --modules qca_cld3_wlan > /dev/null 2>&1 \
+	&& fail "libmodprobe would load wlan from 5.4-gki (races macloader)"
+echo "modprobe dry run 5.4-gki ($WLD): libmodprobe resolves nothing there (macloader loads qca_cld3_wlan.ko by path)" >> "$W/modprobesim.txt"
+tee -a "$R" < "$W/modprobesim.txt" > /dev/null; cat "$W/modprobesim.txt"
+
+# ---------------------------------------------------------------- 4. device tree
+say "== 4. device tree"
+H=$TOP/drivers612/hwbringup/dt; T=$W/dt
+MERGED=$TOP/drivers612/boarddt/out/build/merged-r02.dtb
+OVS1="$H/gpu.dtbo $H/video.dtbo"
+OVS2="$H/audio.dtbo $H/fastrpc.dtbo $TOP/drivers612/camera/dt-work/check-overlay.dtbo $TOP/drivers612/fingerprint/dt-work/a52sxq-fingerprint.dtbo $TOP/drivers612/vibrator/a52sxq-vibrator.dtbo $TOP/drivers612/nfc/dt-work/a52sxq-nfc.dtbo"
+for f in $MERGED $OVS1 $OVS2; do [ -f "$f" ] || fail "missing dt input $f (run kexec/mkandroidtree.sh once)"; done
+mkdir -p "$T"
+# the same steps as kexec/mkandroidtree.sh, from its already built inputs, WITHOUT
+# kexec/mkfulltree.sh's test edit (ssusb extcon cut to the EUD)
+cp "$MERGED" "$T/base.dtb"
+[ "$USB_EXTCON" = eud ] && fdtput -t u "$T/base.dtb" /soc/ssusb@a600000 extcon "$(fdtget -t u "$T/base.dtb" /soc/ssusb@a600000 extcon | cut -d' ' -f1)"
+fdtoverlay -i "$T/base.dtb" -o "$T/gv.dtb" $OVS1
+for n in qcom,secure_cdsp qcom,display; do fdtput -t s "$T/gv.dtb" /soc/qcom,dma-heaps/$n status disabled; done
+fdtoverlay -i "$T/gv.dtb" -o "$T/rb.dtb" $OVS2
+fdtput -t s "$T/rb.dtb" /soc/qcom,pmic_glink/qcom,battery_charger status disabled
+B=/soc/qcom,msm-audio-apr/qcom,q6core-audio/bolero-cdc
+for n in rx-macro@3200000/rx_swr_master tx-macro@3220000/tx_swr_master wsa-macro@3240000/wsa_swr_master; do
+	fdtput -t x "$T/rb.dtb" $B/$n qcom,swr-master-version 0x01060000; done
+# bus DCVS: no SCMI vendor-protocol nodes (the CPUCP firmware lacks them; else qcom-pmu-lib + memlat defer
+# forever): the same step as in kexec/mkandroidtree.sh (drivers612/busdcvs/dt-fix.sh); the 6.18 tested
+# tree (mkdtb-618.sh) is made from that 6.12 tree, so it has the same edit
+DTFIX=$("$TOP/drivers612/busdcvs/dt-fix.sh" "$T/rb.dtb") || fail "busdcvs dt-fix.sh"; say "$DTFIX"
+# the modem stays off for the comparison with the tested tree; MODEM=1 switches it on below
+fdtput -t s "$T/rb.dtb" "$(fdtget "$T/rb.dtb" /__symbols__ modem_pas)" status disabled
+# 6.18: bsp618/android/mkdtb-618.sh's test-safety edit (kept: the tested tree had it): a dwc3
+# SMMU context fault is printed and terminated instead of the forked arm_smmu's BUG()
+U=/soc/ssusb@a600000/dwc3@a600000
+[ "$SMMU_NONFATAL" = 1 ] && fdtput -t s "$T/rb.dtb" $U qcom,iommu-faults non-fatal
+# 5.4 sysfs paths for the ROM's genfscon labels (research/sepolicy/PATHS.md): QUP I2C/SPI/UART
+# nodes as /soc children with qcom,wrapper-core, /aliases i2cN = the 5.4 bus numbers; the same
+# step as at the end of kexec/mkandroidtree.sh (so the tested tree below matches)
+SC="python3 -I $TOP/drivers612/boarddt/tools/sysfscompat.py"
+cp "$T/rb.dtb" "$T/rb-wrapperlayout.dtb"
+$SC apply "$T/rb-wrapperlayout.dtb" "$T/rb.dtb" > "$W/sysfscompat.txt" || { cat "$W/sysfscompat.txt"; fail "sysfscompat apply"; }
+$SC verify "$T/rb-wrapperlayout.dtb" "$T/rb.dtb" >> "$W/sysfscompat.txt" || { cat "$W/sysfscompat.txt"; fail "sysfscompat verify"; }
+say "5.4 sysfs layout: $(tail -1 "$W/sysfscompat.txt")"
+# the moved nodes need the geni drivers with bsp612/patches/soc-repo/0009 (wrapper by phandle)
+GENI=$(ls "$W"/plan/{first,late,wlan}/{i2c-msm-geni,spi-msm-geni,msm_geni_serial}.ko 2>/dev/null || true)
+[ -n "$GENI" ] || fail "no geni module in the module plan"
+$SC ko-patched $GENI >> "$W/sysfscompat.txt" 2>&1 || { cat "$W/sysfscompat.txt"; fail "geni modules of $REF lack soc-repo patch 0009 (the 5.4-layout tree needs it)"; }
+say "geni modules with 0009: $(for g in $GENI; do basename "$g"; done | tr '\n' ' ')"
+# simulated sysfs paths of the i2c clients / UARTs (sysfscompat.py sim: of_device_make_bus_id +
+# the i2c core's alias numbering); the two the rb10 denials were about must be the 5.4 ones
+$SC sim "$T/rb.dtb" | grep -E '\.i2c/i2c-[0-9]+/|qup_uart|qup_hsuart' > "$W/sysfs-sim.txt"
+for p in /devices/platform/soc/98c000.i2c/i2c-21/21-0049 /devices/platform/soc/a94000.i2c/i2c-25/25-0049; do
+	cut -f1 "$W/sysfs-sim.txt" | grep -qx "$p" || fail "simulated sysfs: no $p (5.4 path of the genfscon label)"; done
+say "simulated sysfs: SM5714 /sys$(cut -f1 "$W/sysfs-sim.txt" | grep -x '.*/21-0049'), touch /sys$(cut -f1 "$W/sysfs-sim.txt" | grep -x '.*/25-0049')"
+cp "$W/sysfs-sim.txt" "$W/sysfscompat.txt" "$O/" 2>/dev/null || true
+# proof that this is the tested tree: against the run's KEXEC_BASE (minus its kexec-only nodes)
+# only the extcon may differ (none with USB_EXTCON=eud)
+if [ -f "$TREF" ]; then
+	cp "$TREF" "$T/tref.dtb"
+	for n in $KEXEC_ONLY_NODES; do
+		fdtget -l "$T/tref.dtb" "$n" >/dev/null 2>&1 || fail "tested tree $TREF has no $n (kexec-only node expected)"
+		fdtput -r "$T/tref.dtb" "$n"; say "tested tree: kexec-only node $n left out"
+	done
+	if [ "$SMMU_NONFATAL" != 1 ] && fdtget "$T/tref.dtb" $U qcom,iommu-faults >/dev/null 2>&1; then fdtput -d "$T/tref.dtb" $U qcom,iommu-faults; fi
+	dtc -q -I dtb -O dts -o "$T/ref.dts" "$T/tref.dtb"; dtc -q -I dtb -O dts -o "$T/rb.dts" "$T/rb.dtb"
+	diff "$T/ref.dts" "$T/rb.dts" > "$T/vs-tested.diff" || true
+	NDIFF=$(grep -c '^[<>]' "$T/vs-tested.diff" || true)
+	if [ "$USB_EXTCON" = eud ]; then [ "$NDIFF" = 0 ] || fail "tree differs from the tested $TREF ($T/vs-tested.diff)"
+	else [ "$NDIFF" = 2 ] && grep -q '^> .*extcon = <' "$T/vs-tested.diff" || fail "tree differs from the tested $TREF beyond the extcon ($T/vs-tested.diff)"; fi
+	say "tree = the tested $(basename "$TREF") ($REF) except: $( [ "$NDIFF" = 0 ] && echo nothing || sed -n 's/^> *//p' "$T/vs-tested.diff")"
+else fail "no tested tree $TREF to compare with"; fi
+if [ "$MODEM" = 1 ]; then
+	# drivers612/modem/dt/mkmodemtree.sh = the tree edit of the kernel-only modem runs (modem_pas okay,
+	# memshare client_4 off) + dt/ipa-iova-fix.sh, and its checks (mpss/IPA GSI regions, IPA, rmnet,
+	# rmtfs UIO, glinkpkt and memshare nodes enabled, no upstream qcom,rmtfs-mem, no qcom,sc7280)
+	cp "$T/rb.dtb" "$T/rb-nomodem.dtb"
+	"$TOP/drivers612/modem/dt/mkmodemtree.sh" "$T/rb-nomodem.dtb" "$T/rb.dtb" > "$W/mkmodemtree.txt" 2>&1 || { cat "$W/mkmodemtree.txt"; fail "MODEM=1: mkmodemtree.sh"; }
+	grep -q '^ipa-iova-fix: ' "$W/mkmodemtree.txt" || fail "MODEM=1: the IPA IOVA fix did not run"
+	MSS=$(fdtget "$T/rb.dtb" /__symbols__ modem_pas); IPA=/soc/qcom,ipa@1e00000
+	IPAFIX="--allow $IPA:#address-cells --allow $IPA:#size-cells --allow /soc/ipa_ap_iommu_region_partition:iommu-addresses --allow /soc/ipa_uc_iommu_region_partition:iommu-addresses"
+	# 1) against the tree without the modem: exactly these properties changed, nothing else in the whole tree
+	python3 -I "$HERE/tools/dtcompare.py" "$T/rb-nomodem.dtb" "$T/rb.dtb" --path / --allow "$MSS:status" \
+		--allow /soc/qcom,memshare/qcom,client_4:status $IPAFIX > "$W/modem-delta.txt" || { cat "$W/modem-delta.txt"; fail "MODEM=1: the modem edit changed more than expected"; }
+	[ "$(grep -c '^allowed: ' "$W/modem-delta.txt")" = 6 ] || { cat "$W/modem-delta.txt"; fail "MODEM=1: expected 6 changed properties"; }
+	# 2) the modem subtrees = those of the kexec tree that brought LTE data up on 6.12 (phandles compared
+	#    by target path), except the IPA IOVA fix
+	MRES=$(for l in pil_mpss_mem pil_ipa_gsi_mem memshare_mem modem_shared_mem; do fdtget "$T/rb.dtb" /__symbols__ $l 2>/dev/null || fail "MODEM=1: no symbol $l"; done)
+	SP2P=/soc/qcom,smp2p-modem; fdtget -l "$T/rb.dtb" $SP2P > /dev/null || fail "MODEM=1: no $SP2P"
+	#    and, for 6.18, also those of the 6.18 kernel-only modem run (MODEM_TESTED_DTB2: modem up on 6.18)
+	MPATHS=$(for p in "$MSS" /soc/qcom,memshare $IPA /soc/ipa_ap_iommu_region_partition \
+		/soc/ipa_uc_iommu_region_partition /soc/qcom,rmnet-ipa /soc/qcom,msm_gsi /soc/qcom,rmtfs_sharedmem@0 /soc/qcom,glinkpkt $SP2P $MRES; do echo --path "$p"; done)
+	python3 -I "$HERE/tools/dtcompare.py" "$T/rb.dtb" "$MODEM_TESTED_DTB" $MPATHS \
+		$IPAFIX > "$W/modem-vs-tested.txt" || { cat "$W/modem-vs-tested.txt"; fail "MODEM=1: modem subtrees differ from the tested $MODEM_TESTED_DTB"; }
+	if [ -n "$MODEM_TESTED_DTB2" ]; then
+		python3 -I "$HERE/tools/dtcompare.py" "$T/rb.dtb" "$MODEM_TESTED_DTB2" $MPATHS \
+			$IPAFIX > "$W/modem-vs-tested2.txt" || { cat "$W/modem-vs-tested2.txt"; fail "MODEM=1: modem subtrees differ from the tested $MODEM_TESTED_DTB2"; }
+		cp "$W/modem-vs-tested2.txt" "$O/"
+		say "MODEM=1 tree vs $(basename "$(dirname "$MODEM_TESTED_DTB2")") ($KV modem run): $(tail -1 "$W/modem-vs-tested2.txt" | sed 's/^dtcompare: //')"
+	fi
+	# 3) what the kernel will make of the IPA IOVA reservations (model checked against the run logs:
+	#    the old tree gives the logged "Cannot reserve IOVA region of 0 size" lines)
+	for cb in ap uc; do python3 -I "$HERE/tools/iommu-resv-sim.py" "$T/rb.dtb" $IPA/ipa_smmu_$cb --expect-fast 20000000-3fffffff --expect-no-warn; done > "$W/ipa-iova.txt" \
+		|| { cat "$W/ipa-iova.txt"; fail "MODEM=1: IPA IOVA window is not the 5.4 pool"; }
+	[ "$(fdtget "$T/rb.dtb" /soc/qcom,rmtfs_sharedmem@0 compatible)" = qcom,sharedmem-uio ] && [ "$(fdtget "$T/rb.dtb" /soc/qcom,rmtfs_sharedmem@0 reg-names)" = rmtfs ] \
+		&& [ "$(fdtget "$T/rb.dtb" /soc/qcom,rmtfs_sharedmem@0 status 2>/dev/null || echo okay)" = okay ] || fail "MODEM=1: no enabled rmtfs UIO node"
+	cp "$W/mkmodemtree.txt" "$W/modem-delta.txt" "$W/modem-vs-tested.txt" "$W/ipa-iova.txt" "$O/"
+	say "MODEM=1 tree: $(tail -1 "$W/mkmodemtree.txt" | sed 's#.*: ##'); delta to the tested tree: $(grep -c '^allowed: ' "$W/modem-delta.txt") properties (modem_pas status, client_4 status, IPA cells + 2 iommu-addresses); vs $(basename "$(dirname "$MODEM_TESTED_DTB")"): $(tail -1 "$W/modem-vs-tested.txt" | sed 's/^dtcompare: //')"
+	say "MODEM=1 IPA IOVA: $(grep 'fastmap IOVA range' "$W/ipa-iova.txt" | sed 's/.*ipa_smmu_\([a-z]*\): merged \(.*\); fastmap IOVA range \(.*\)/\1 \3/' | tr '\n' ' ')(5.4 pool 0x20000000 + 512 MiB; was [0x40000000, 0xffffffff] in the runs)"
+	say "MODEM=1 rmtfs UIO: /soc/qcom,rmtfs_sharedmem@0 qcom,sharedmem-uio reg-names rmtfs size $(fdtget -t x "$T/rb.dtb" /soc/qcom,rmtfs_sharedmem@0 reg | awk '{print $NF}') (dynamic buffer, no fixed rmtfs region)"
+fi
+# real-boot additions: the DSP starter node, the Qualcomm bootargs, a marker
+fdtput -c "$T/rb.dtb" /soc/a52sxq-dsp-boot
+fdtput -t s "$T/rb.dtb" /soc/a52sxq-dsp-boot compatible "a52sxq,dsp-boot"
+fdtput -t x "$T/rb.dtb" /soc/a52sxq-dsp-boot qcom,adsp-rproc "$(fdtget -t x "$T/rb.dtb" "$(fdtget "$T/rb.dtb" /__symbols__ adsp_pas)" phandle)"
+fdtput -t x "$T/rb.dtb" /soc/a52sxq-dsp-boot qcom,cdsp-rproc "$(fdtget -t x "$T/rb.dtb" "$(fdtget "$T/rb.dtb" /__symbols__ cdsp_pas)" phandle)"
+# Qualcomm's yupik /chosen/bootargs: the Samsung ABL APPENDS to them (live tree of the 5.4
+# boot), so on a real boot they apply, unlike kexec_file_load which replaced them. Replaced
+# here by the subset every Android run used (drivers612/androidboot/out/android-cmdline.txt);
+# left out of Qualcomm's list (untested): fw_devlink.strict=1, cpufreq.default_governor=
+# performance, sysctl.kernel.panic_on_rcu_stall=1, ftrace_dump_on_oops, slub_debug=-,
+# swiotlb=0, pcie_ports=compat, printk.console_no_auto_verbose=1, loglevel=6, log_buf_len=512K.
+QCOM_BOOTARGS="android_arch_task_struct_size=512 rcupdate.rcu_expedited=1 rcu_nocbs=0-7 kpti=0 arm64.nosme sysctl.kernel.sched_pelt_multiplier=4 no-steal-acc irqaffinity=0-1 kasan=off cgroup_disable=pressure restrict_cma_redirect=false${EXTRA_BOOTARGS:+ $EXTRA_BOOTARGS}"
+# every one of them was on the tested kexec command line of this kernel
+TESTED_CMDLINE=$(cat "$TESTED_CMDLINE_FILE")
+# UNTESTED_OK: words allowed although no kexec-tested cmdline had them; they must be proven by a real-boot
+# rehearsal (rehearse.sh runs the real-boot cmdline) before a flash. sync_state timeout: bus DCVS floor (2026-11-15).
+UNTESTED_OK=" fw_devlink.sync_state=timeout deferred_probe_timeout=30 "
+for w in $QCOM_BOOTARGS; do case " $TESTED_CMDLINE " in *" $w "*) ;; *) case "$UNTESTED_OK" in *" $w "*) say "WARNING: DT bootarg $w is new (allowed; rehearse before flashing)";; *) fail "DT bootarg $w was not on the tested $KV cmdline";; esac;; esac; done
+say "Qualcomm DT bootargs were: $(fdtget "$T/rb.dtb" /chosen bootargs)"
+DT_BOOTARGS="$QCOM_BOOTARGS${DIAG_BOOTARGS:+ $DIAG_BOOTARGS}"
+fdtput -t s "$T/rb.dtb" /chosen bootargs "$DT_BOOTARGS"
+printf '%s\n' "$DT_BOOTARGS" > "$W/dt-bootargs.txt"
+fdtput -t s "$T/rb.dtb" /soc a52sxq,realboot-base "$NAME"
+if [ "$DIAG_KERNEL" = 1 ]; then
+	# the a52bc area (kernel-diag/a52bc.c): 128 KiB at 0xf0be0000, the last 128 KiB of the 5.4
+	# ramoops MiB, outside our ramoops (0xf0b00000+0xe0000); survives a warm reset (0xf0c00000
+	# does not); the 6.18 harness reserves the same range and prints it as /proc/a52ram
+	A=/reserved-memory/a52ram@f0be0000
+	fdtput -c "$T/rb.dtb" $A; fdtput -t s "$T/rb.dtb" $A compatible a52,ramcon
+	fdtput -t x "$T/rb.dtb" $A reg 0 f0be0000 0 20000; fdtput "$T/rb.dtb" $A no-map
+	python3 -I "$HERE/tools/resv-overlap.py" "$T/rb.dtb" a52ram@f0be0000 || fail "a52ram region overlaps another reservation"
+	fdtput -t s "$T/rb.dtb" /soc a52sxq,realboot-diag "a52bc ring 0xf0be0000; bootargs: $DIAG_BOOTARGS"
+	say "DIAG: /reserved-memory/a52ram@f0be0000 (a52,ramcon, no-map) added; DT bootargs + $DIAG_BOOTARGS"
+fi
+dtc -q -I dtb -O dtb -o "$W/vendor_boot.dtb" "$T/rb.dtb"   # repack (fdtput leaves slack)
+D=$W/vendor_boot.dtb
+# checks of research/bootloader-acceptance.md
+strings "$D" | grep -qx __symbols__ || fail "base dtb has no __symbols__"
+for p in /soc/qcom,wdt@17c10000 /soc/timer /chosen /reserved-memory /firmware/android; do fdtget -l "$D" $p >/dev/null 2>&1 || fail "$p missing (ABL / hypervisor overlay target)"; done
+for l in soc intc reserved_memory aliases firmware wdog arch_timer qcom_tzlog; do fdtget "$D" /__symbols__ $l >/dev/null 2>&1 || fail "label $l lost"; done
+[ "$(fdtget "$D" / qcom,msm-id)" = "475 65536 515 65536" ] && [ "$(fdtget "$D" / qcom,board-id)" = "0 0" ] || fail "root msm-id/board-id are not the stock base values"
+fdtget -l "$D" /reserved-memory | grep -qi '^kaslr_region@a0001000$' || fail "no kaslr_region@A0001000 (ABL writes its KASLR offset there)"
+fdtget -l "$D" /reserved-memory | grep -qi '^ramoops@f0b00000$' || fail "no ramoops@F0B00000"
+fdtget -l "$D" /reserved-memory | grep -qi 'rmtfs' && fail "tree has an rmtfs region (kexec carry-over?)" || say "no fixed rmtfs region (5.4 uses a dynamic qcom,sharedmem-uio one; nothing assigns 0x9c900000 without the harness)"
+# no kexec artefact may be in the real tree (kexec/mkkexecdtb.py, bsp618/android/mkdtb-618.sh)
+KXRE='^kexec-live\|^uh_guest_region\|^uh_heap_region'; [ "$DIAG_KERNEL" = 1 ] || KXRE="^a52ram\\|$KXRE"
+fdtget -l "$D" /reserved-memory | grep -qi "$KXRE" && fail "kexec-only reserved-memory node in the tree"
+if [ "$DIAG_KERNEL" = 1 ]; then [ "$(fdtget "$D" /reserved-memory/a52ram@f0be0000 compatible)" = a52,ramcon ] || fail "DIAG: a52ram node missing"; fi
+fdtget -l "$D" / | grep -qx hypervisor && fail "/hypervisor in the tree (the hypervisor's own overlay adds it on a real boot)"
+[ "$(fdtget "$D" /soc/qcom,wdt@17c10000 status 2>/dev/null || echo none)" = reserved ] && fail "watchdog status from a kexec live tree"
+MEMN=$(fdtget -l "$D" / | grep '^memory' | head -1)
+[ -n "$MEMN" ] && [ "$(fdtget -t x "$D" "/$MEMN" reg 2>/dev/null | wc -w)" -gt 4 ] && fail "memory banks filled in (kexec copy): the ABL fills /memory"
+say "no kexec artefacts: no a52ram/kexec-live/uh_* reserved-memory, no /hypervisor, watchdog status and /$MEMN reg as in the stock base ($(fdtget -t x "$D" "/$MEMN" reg 2>/dev/null))"
+[ "$(fdtget "$D" /soc/ssusb@a600000 extcon | wc -w)" = $([ "$USB_EXTCON" = eud ] && echo 1 || echo 2) ] || fail "ssusb extcon not as USB_EXTCON=$USB_EXTCON"
+say "vendor_boot dtb: $(stat -c %s "$D") bytes, msm-id/board-id = stock base, labels and ABL targets present"
+python3 -I "$TOP/drivers612/busdcvs/check-conf.py" "$D" "$BUSDCVS_CONF" > "$W/busdcvs-check.txt" || { cat "$W/busdcvs-check.txt"; fail "bus DCVS conf vs tree"; }
+say "bus DCVS: $(tail -1 "$W/busdcvs-check.txt")"
+if [ "$MODEM" = 1 ]; then
+	[ "$(fdtget "$D" "$(fdtget "$D" /__symbols__ modem_pas)" status)" = okay ] || fail "MODEM=1: modem_pas not okay in the final tree"
+	# /dev nodes of the modem/data modules: owner/group/mode the ROM's ueventd gives them (system
+	# ueventd.rc, then the vendor one; last match wins) = what the same nodes had on 5.4
+	python3 -I "$HERE/tools/ueventd-check.py" --ueventd "$SYS_UEVENTD" --ueventd "$ROM_UEVENTD" --config-fs "$ROM_CONFIGFS" \
+		--aid-header "$AID_HEADER" --dev54 "$DEV54" --dtb "$D" --modules "$LM" -o "$O/modem-devnodes.txt" > "$W/ueventd-check.txt" \
+		|| { cat "$W/ueventd-check.txt"; fail "MODEM=1: ueventd owners of the modem device nodes"; }
+	cp "$W/ueventd-check.txt" "$O/"; tee -a "$R" < "$W/ueventd-check.txt" > /dev/null
+	grep -q '^firmware_directories .*/vendor/firmware-modem/image/' "$ROM_UEVENTD" || fail "MODEM=1: ROM ueventd has no /vendor/firmware-modem/image firmware directory"
+	say "MODEM=1 ueventd: $(tail -1 "$W/ueventd-check.txt") (ROM ueventd $(sha256sum < "$ROM_UEVENTD" | cut -c1-16), 5.4 /dev listing $(basename "$DEV54"))"
+fi
+# dtbo
+sed "s|@MARKER@|$NAME|" "$HERE/dts/a52sxq-realboot-dtbo.dts" > "$W/dtbo.dts"
+# -p 65536: the ABL's libufdt re-writes the merged tree into a buffer sized base + overlays and grows the
+# string table by ~1.1 KB; without free space in the dtbo entry it NULL-derefs (rb4..rb8 bootloops,
+# ABL-HANG.md). Stock dtbo entries carry ~256 KB.
+dtc -q -@ -p 65536 -I dts -O dtb -o "$W/realboot.dtbo" "$W/dtbo.dts"
+strings "$W/realboot.dtbo" | grep -qx __fixups__ || fail "dtbo has no __fixups__"
+fdtoverlay -i "$D" -o "$W/merged-by-abl.dtb" "$W/realboot.dtbo" || fail "dtbo does not apply on the base"
+[ "$(stat -c %s "$W/merged-by-abl.dtb")" -lt $((0x201000)) ] || fail "merged dtb >= 0x201000 (ABL limit)"
+[ "$(fdtget "$W/merged-by-abl.dtb" /soc a52sxq,realboot)" = "$NAME" ] || fail "marker not applied"
+"$HERE/tools/ufdt-host/check.sh" "$D" "$W/realboot.dtbo" 16384 >> "$R" 2>&1 || fail "ABL libufdt emulation: merged tree does not fit with 16 KiB to spare (tools/ufdt-host/check.sh)"
+say "ABL libufdt emulation: overlay merge fits ($(tail -1 "$R"))"
+python3 -I "$MKDTBOIMG" create "$W/dtbo-raw.img" --page_size=4096 "$W/realboot.dtbo" > /dev/null
+python3 -I "$MKDTBOIMG" dump "$W/dtbo-raw.img" > "$W/dtbo-table.txt"
+say "dtbo: 1 entry, board-id <0x22 2> (rev >= 2), applies on the base (fdtoverlay; the ABL's libufdt was never run offline)"
+
+# ---------------------------------------------------------------- 5. command line
+say "== 5. command line"
+FWPATH=/vendor/firmware_mnt/image,/vendor/firmware
+# MODEM=1: modem.mdt/.bNN are in /vendor/firmware-modem/image (the phone's own modem partition): loaded
+# directly instead of through force_sysfs_fallback + ueventd (5.4's way; the second recovery of run
+# ab-s18 got -ENOENT from that path, unexplained); last entry, so nothing else is looked up there first
+[ "$MODEM" = 1 ] && FWPATH=$FWPATH,/vendor/firmware-modem/image
+VC="console=null androidboot.hardware=qcom androidboot.memcg=1 androidboot.usbcontroller=a600000.dwc3 loop.max_part=7 firmware_class.path=$FWPATH iptable_raw.raw_before_defrag=1 ip6table_raw.raw_before_defrag=1 printk.devkmsg=on"
+[ "$IGNORE_UNUSED" = 1 ] && VC="$VC clk_ignore_unused pd_ignore_unused regulator_ignore_unused"
+VC="$VC androidboot.a52sxq.$KT=1"
+# first-stage init loads modules.load strictly: the first module whose init fails ends in
+# LOG(FATAL) -> reboot to the bootloader, every boot. "2" (IGNORE_FAILURE, userdebug init only)
+# logs the failure and goes on; the ROM is userdebug. MODULE_FAILURES=fatal leaves it out.
+[ "${MODULE_FAILURES:-ignore}" = ignore ] && VC="$VC androidboot.first_stage_console=2"
+[ "$SELINUX" = permissive ] && VC="$VC androidboot.selinux=permissive"
+[ -n "${EXTRA_CMDLINE:-}" ] && VC="$VC $EXTRA_CMDLINE"
+printf '%s\n' "$VC" > "$W/vendor-cmdline.txt"
+case " $VC $QCOM_BOOTARGS " in *" a52."*|*" a52sxq-"*|*" loglevel=7 "*|*" earlycon"*|*" log_buf_len="*) fail "test-only argument in the cmdline";; esac
+say "vendor_boot cmdline (${#VC}): $VC"
+say "dtb /chosen/bootargs (${#DT_BOOTARGS}): $DT_BOOTARGS"
+python3 -I - "$W/vb/dtb" "$W/stock-base.dtb" <<'EOF'
+import struct, sys
+d = open(sys.argv[1], 'rb').read(); i = 0; last = None
+while i < len(d):
+    assert d[i:i + 4] == b'\xd0\x0d\xfe\xed'; n = struct.unpack('>I', d[i + 4:i + 8])[0]; last = d[i:i + n]; i += n
+open(sys.argv[2], 'wb').write(last)
+EOF
+set +e
+python3 -I "$HERE/tools/cmdline-sim.py" --live "$DUMP/live.dtb" --stock-vendor-cmdline "$W/stock-vendor-cmdline.txt" \
+	--stock-dtb "$W/stock-base.dtb" --dt-bootargs "$W/dt-bootargs.txt" --vendor-cmdline "$W/vendor-cmdline.txt" \
+	--config-cmdline "$CONFIG_CMDLINE" --cmdline-size "$CLS_EFF" -o "$O/cmdline-predicted.txt" | tee -a "$R"
+SIM=${PIPESTATUS[0]}
+python3 -I "$HERE/tools/cmdline-sim.py" --live "$DUMP/live.dtb" --stock-vendor-cmdline "$W/stock-vendor-cmdline.txt" \
+	--stock-dtb "$W/stock-base.dtb" --dt-bootargs "$W/dt-bootargs.txt" --vendor-cmdline "$W/vendor-cmdline.txt" \
+	--config-cmdline "$CONFIG_CMDLINE" --cmdline-size 4096 -o "$O/cmdline-predicted-4096.txt" | sed 's/^/with COMMAND_LINE_SIZE 4096: /' | tee -a "$R"
+# worst case: the bootloader appends 2.8 KiB (measured on phone 2: ~2.7 KB)
+python3 -I "$HERE/tools/cmdline-sim.py" --live "$DUMP/live.dtb" --stock-vendor-cmdline "$W/stock-vendor-cmdline.txt" \
+	--stock-dtb "$W/stock-base.dtb" --dt-bootargs "$W/dt-bootargs.txt" --vendor-cmdline "$W/vendor-cmdline.txt" \
+	--config-cmdline "$CONFIG_CMDLINE" --cmdline-size "$CLS_EFF" --abl-min 2868 -o "$O/cmdline-predicted-abl2.8k.txt" | sed 's/^/with a 2.8 KiB ABL append: /' | tee -a "$R"
+SIM28=${PIPESTATUS[0]}
+set -e
+[ "$SIM28" = 0 ] || blocker "a 2.8 KiB bootloader append would not fit COMMAND_LINE_SIZE $CLS_EFF ($O/cmdline-predicted-abl2.8k.txt)"
+[ "$SIM" = 3 ] && blocker "COMMAND_LINE_SIZE $CLS_EFF cuts off bootloader arguments (androidboot.bootloader, em.model, sales_code, ...: $O/cmdline-predicted.txt). Rebuild bsp612 with patches/bsp612-kernel-0001-arm64-COMMAND_LINE_SIZE-4096.patch"
+[ "$SIM" = 0 ] || [ "$SIM" = 3 ] || fail "cmdline simulation failed"
+
+# ---------------------------------------------------------------- 6. ramdisks
+say "== 6. ramdisks"
+# boot: the ROM's generic ramdisk, unchanged
+cp "$W/b/ramdisk" "$W/boot-ramdisk"
+# vendor: the ROM's vendor ramdisk (first_stage_ramdisk/fstab.qcom), unchanged, + our cpio
+python3 -I "$HERE/tools/cpiox.py" "$W/vb/vendor_ramdisk" "$W/rom-vr" >> "$R"
+[ "$(cd "$W/rom-vr" && find . -type f ! -name .cpiox-nodes.txt | sort)" = "./first_stage_ramdisk/fstab.qcom" ] || fail "ROM vendor ramdisk is not just the fstab: re-check the layout"
+grep -q 'by-name/userdata' "$W/rom-vr/first_stage_ramdisk/fstab.qcom" || fail "ROM fstab has no userdata (wrong file?)"
+# /force_debuggable: AOSP's debug-ramdisk hook (first_stage_init.cpp); with an unlocked
+# bootloader second-stage init loads /adb_debug.prop after every build.prop. Used for ONE
+# property: the ROM sets ro.bpf.kver_override=5.10.239 for its 5.4 kernel, which makes netd
+# abort on 6.12 (netd1shot -> reboot_on_failure -> reboot loop, run ab-s4). On the 5.4 kernel
+# this vendor_boot is not used, so the ROM's value stays right there.
+# /cache as first_stage_mount (only in THIS vendor_boot): the vendor add-on is installed with
+# `adb remount`, whose overlayfs upper dirs live in /cache/overlay (no scratch partition on this ROM).
+# fs_mgr mounts those overlays in first stage only when /cache is mounted there; the ROM's fstab mounts
+# /cache later (mount_all), so on the 5.4 kernel the add-on stays invisible (as intended) and on the 6.x
+# kernel this line makes it appear before second-stage init parses /vendor/etc/init.
+# OFF by default since rb9 (2026-11-15): with /cache mounted in first stage, fs_mgr also applies the adb-remount
+# overlays in /cache/overlay and the enforcing second-stage overlay_remounter cannot reach them -> init exits ->
+# panic (rb9). The add-on is installed into the vendor ext4 directly instead (README section 3). CACHE_FSM=1
+# brings the old behaviour back.
+if [ "${CACHE_FSM:-0}" = 1 ]; then
+	mkdir -p "$VR/first_stage_ramdisk"
+	# In FIRST stage only /dev/block/by-name/<part> exists (the bootdevice symlink comes from ueventd in second
+	# stage): a first_stage_mount entry with the ROM's /dev/block/bootdevice/by-name/cache path never appears ->
+	# "Failed to mount required partitions early" -> reboot,bootloader = Download mode (rb4 on 2026-11-14).
+	python3 -I -c 'import re,sys; s=open(sys.argv[1]).read(); n=re.subn(r"^/dev/block/bootdevice/by-name/cache(\t/cache\t.*\t)wait,check$", r"/dev/block/by-name/cache\1wait,check,first_stage_mount", s, flags=re.M); assert n[1]==1, "cache line not found"; open(sys.argv[2],"w").write(n[0])' "$W/rom-vr/first_stage_ramdisk/fstab.qcom" "$VR/first_stage_ramdisk/fstab.qcom"
+	grep -qP '^/dev/block/by-name/cache\t.*wait,check,first_stage_mount$' "$VR/first_stage_ramdisk/fstab.qcom" || fail "cache first_stage_mount edit failed"
+	# every first_stage_mount entry must use a /dev/block/by-name/ path or a logical partition name
+	awk -F'\t' '$0 !~ /^#/ && $3 != "emmc" && $NF ~ /first_stage_mount/ && $1 ~ /^\// && $1 !~ /^\/dev\/block\/by-name\// {print "bad first-stage device: " $1; bad=1} END {exit bad}' "$VR/first_stage_ramdisk/fstab.qcom" || fail "first-stage fstab entry with a path first stage cannot resolve"
+fi
+: > "$VR/force_debuggable"
+printf '# drivers612/realboot: loaded by init after all build.prop files (unlocked bootloader only)\nro.bpf.kver_override=%s\n' "$KVER" > "$VR/adb_debug.prop"
+find "$VR" -exec touch -h -d @0 {} +   # reproducible cpio (no build-time mtimes)
+( cd "$VR" && find . | LC_ALL=C sort | cpio -o -H newc -R 0:0 --reproducible --quiet ) | lz4 -l -12 --favor-decSpeed -q > "$W/vr-add.cpio.lz4"
+cat "$W/vb/vendor_ramdisk" "$W/vr-add.cpio.lz4" > "$W/vendor-ramdisk"
+RB=$(stat -c %s "$W/boot-ramdisk"); RV=$(stat -c %s "$W/vendor-ramdisk")
+BUDGET=$((0x5600000 - 0x482000)); NEED=$(( ISZ + ((RB + RV + 4095) / 4096) * 4096 ))
+say "boot ramdisk $RB, vendor ramdisk $RV bytes; image_size + ramdisks = $(printf %#x $NEED) (ABL fallback budget $(printf %#x $BUDGET))"
+[ "$NEED" -le "$BUDGET" ] || fail "kernel + ramdisks exceed the ABL's fallback load region"
+
+# ---------------------------------------------------------------- 7. images
+say "== 7. images"
+mkbootimg --header_version 3 --os_version "$OSV" --os_patch_level "$OSP" --kernel "$IMAGE" \
+	--ramdisk "$W/boot-ramdisk" --cmdline '' -o "$O/boot.img"
+eval mkbootimg $VB_ARGS --vendor_cmdline "'$VC'" --dtb "$D" --vendor_ramdisk "$W/vendor-ramdisk" --vendor_boot "$O/vendor_boot.img"
+cp "$W/dtbo-raw.img" "$O/dtbo.img"
+footer boot "$O/boot.img" $BOOT_PART
+footer vendor_boot "$O/vendor_boot.img" $VENDOR_BOOT_PART
+footer dtbo "$O/dtbo.img" $DTBO_PART
+for i in boot vendor_boot dtbo; do
+	avbtool info_image --image "$O/$i.img" > "$W/$i.avb" || fail "$i footer unreadable"
+done
+[ "$(stat -c %s "$O/boot.img")" = $BOOT_PART ] && [ "$(stat -c %s "$O/vendor_boot.img")" = $VENDOR_BOOT_PART ] && [ "$(stat -c %s "$O/dtbo.img")" = $DTBO_PART ] || fail "image sizes are not the partition sizes"
+# read back what the bootloader will see
+unpack_bootimg --boot_img "$O/boot.img" --out "$W/chk-b" > "$W/chk-b.info"
+unpack_bootimg --boot_img "$O/vendor_boot.img" --out "$W/chk-vb" > "$W/chk-vb.info"
+cmp -s "$W/chk-b/kernel" "$IMAGE" && cmp -s "$W/chk-b/ramdisk" "$W/boot-ramdisk" || fail "boot.img read-back differs"
+cmp -s "$W/chk-vb/dtb" "$D" && cmp -s "$W/chk-vb/vendor_ramdisk" "$W/vendor-ramdisk" || fail "vendor_boot.img read-back differs"
+grep -q "^os patch level: $OSP$" "$W/chk-b.info" || fail "patch level not kept"
+python3 -I "$HERE/tools/cpiox.py" "$W/chk-vb/vendor_ramdisk" "$W/chk-vr" >> "$R"
+[ "$(sort "$W/chk-vr/lib/modules/modules.load" | md5sum)" = "$(sort "$LM/modules.load" | md5sum)" ] || fail "vendor ramdisk read-back: modules.load differs"
+[ -f "$W/chk-vr/first_stage_ramdisk/fstab.qcom" ] && [ -f "$W/chk-vr/force_debuggable" ] || fail "vendor ramdisk read-back incomplete"
+[ "$(sed -n 's/^vendor command line args: //p' "$W/chk-vb.info")" = "$VC" ] || fail "vendor_boot read-back: cmdline differs"
+[ "$(fdtget "$W/chk-vb/dtb" /chosen bootargs)" = "$DT_BOOTARGS" ] || fail "vendor_boot read-back: dtb bootargs differ"
+[ "$(sed -n 's/^ro.bpf.kver_override=//p' "$W/chk-vr/adb_debug.prop")" = "$KVER" ] || fail "adb_debug.prop kver"
+# the headers must still be the ROM's (only cmdline, dtb, ramdisk, kernel changed)
+diff <(grep -v '^vendor command line args\|^vendor ramdisk total size\|^vendor ramdisk size\|^dtb size' "$W/vb.info") \
+	<(grep -v '^vendor command line args\|^vendor ramdisk total size\|^vendor ramdisk size\|^dtb size' "$W/chk-vb.info") > "$W/vb-header.diff" || fail "vendor_boot header differs from the ROM's beyond cmdline/sizes ($W/vb-header.diff)"
+diff <(grep -v '^kernel_size\|^ramdisk size' "$W/b.info") <(grep -v '^kernel_size\|^ramdisk size' "$W/chk-b.info") > "$W/b-header.diff" || fail "boot header differs from the ROM's beyond the sizes ($W/b-header.diff)"
+say "read-back OK: kernel, ramdisks, dtb, cmdline, dtb bootargs, other header fields = ROM's, patch level $OSP, footers (unsigned, as the ROM's)"
+# no firmware image may ever be part of these outputs (2026-11-13 incident)
+find "$O" -path "$W" -prune -o -type f -regextype posix-extended -regex '.*\.(mdt|mbn|b[0-9][0-9])$' -print | grep -q . && fail "firmware image in the output"
+find "$W/chk-vr" "$VA" -type f -regextype posix-extended -regex '.*\.(mdt|mbn|b[0-9][0-9])$' | grep -q . && fail "firmware image in the vendor ramdisk / add-on"
+# info dumps
+mkdir -p "$O/info"
+for i in boot vendor_boot dtbo; do cp "$W/$i.avb" "$O/info/$i.avbtool-info.txt"; done
+cp "$W/chk-b.info" "$O/info/boot.unpack_bootimg.txt"; cp "$W/chk-vb.info" "$O/info/vendor_boot.unpack_bootimg.txt"
+cp "$W/b.info" "$O/info/rom-boot.unpack_bootimg.txt"; cp "$W/vb.info" "$O/info/rom-vendor_boot.unpack_bootimg.txt"
+cp "$W/dtbo-table.txt" "$O/info/dtbo-table.txt"
+unpack_bootimg --boot_img "$O/boot.img" --out "$W/fmt-b" --format mkbootimg > "$O/info/boot.mkbootimg-args.txt"
+unpack_bootimg --boot_img "$O/vendor_boot.img" --out "$W/fmt-vb" --format mkbootimg > "$O/info/vendor_boot.mkbootimg-args.txt"
+rm -rf "$W/fmt-b" "$W/fmt-vb"
+
+# ---------------------------------------------------------------- 8. summary
+( cd "$O" && sha256sum boot.img vendor_boot.img dtbo.img > SHA256SUMS
+  find vendor-addon -type f | LC_ALL=C sort | xargs sha256sum > vendor-addon.SHA256SUMS )
+cp "$W/vendor_boot.dtb" "$O/vendor_boot.dtb"; cp "$W/realboot.dtbo" "$O/realboot.dtbo"
+cp "$W/vendor-cmdline.txt" "$W/dt-bootargs.txt" "$O/"; cp "$LM/modules.load" "$O/first-stage.modules.load"
+[ -f "$T/vs-tested.diff" ] && cp "$T/vs-tested.diff" "$O/dtb-vs-tested.diff"
+printf 'name=%s kernel=%s krel=%s ref=%s image=%s tree=%s diag=%s modem=%s sdcard=%s wlan=%s\n' "$NAME" "$KV" "$KREL" "$REFRD" "$IMAGE" "$TREF" "$DIAG" "$MODEM" "$SDCARD" "$WLD" > "$O/BUILDINFO"
+if [ "$DIAG_KERNEL" = 1 ]; then cp "$(dirname "$IMAGE")/BUILDINFO" "$O/diag-kernel.BUILDINFO"; fi
+say "== summary"
+sed 's/^/  /' "$O/SHA256SUMS" | tee -a "$R"
+if [ ${#BLOCKERS[@]} -gt 0 ]; then
+	say "NOT READY TO FLASH: ${#BLOCKERS[@]} blocker(s):"; for b in "${BLOCKERS[@]}"; do say "  - $b"; done
+else say "no blockers found by the offline checks (CHECKLIST.md still applies)"; fi
+say "NOTHING WAS FLASHED. Flashing needs the owner's explicit OK, and only on the test phones PHONE2 / PHONE1 (README.md, 2d)."

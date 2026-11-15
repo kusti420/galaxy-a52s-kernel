@@ -1,0 +1,17 @@
+# a52sxq on the @KDESC@ kernel (drivers612/realboot, build @NAME@). Installed as
+# /vendor/etc/init/a52sxq-@KT@.rc. Does nothing on the LineageOS 5.4 kernel or on the other 6.x
+# kernel: ro.boot.a52sxq.@KT@ is set only by this kernel's vendor_boot command line
+# (androidboot.a52sxq.@KT@=1). The 6.12 and 6.18 rc files can both be installed.
+#
+# The audio modules must load AFTER the ADSP runs (the WCD938x codecs only enumerate on
+# SoundWire with the LPASS up; loaded earlier they defer forever, 2026-11-13). The ADSP and the
+# CDSP are booted by a52sxq_dsp_boot.ko (first stage) as soon as /vendor/firmware_mnt is
+# mounted; it creates /sys/kernel/a52sxq_dsp/adsp_running 2 s after the ADSP runs. init may stat
+# any sysfs file, and vendor_modprobe may load modules from /vendor (the same way init.target.rc
+# loads the 5.4 audio modules), so no SELinux policy change is needed.
+# `wait` blocks init for at most 20 s; on the tested boots the ADSP ran ~4 s after the firmware
+# partition was mounted. -s: libmodprobe's messages (each "Loading module", every error) also go
+# to the kernel log as "modprobe: ..." (init discards a service's stdout/stderr).
+on early-boot && property:ro.boot.a52sxq.@KT@=1
+    wait /sys/kernel/a52sxq_dsp/adsp_running 20
+    exec_background u:r:vendor_modprobe:s0 -- /vendor/bin/modprobe -s -a -d /vendor/lib/modules/@KV@ @AUDIO_MODULES@

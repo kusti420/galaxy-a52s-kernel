@@ -1,0 +1,533 @@
+--- a/sec_nfc.c
++++ b/sec_nfc.c
+@@ -45,6 +45,8 @@
+ #include <linux/sched.h>
+ #include <linux/i2c.h>
+ #include <linux/ktime.h>
++/* a52sxq 6.12: devm_pinctrl_get_select() is no longer pulled in by the headers above */
++#include <linux/pinctrl/consumer.h>
+ 
+ 
+ #if defined(CONFIG_ESE_SECURE) && defined(CONFIG_ESE_USE_TZ_API)
+@@ -97,6 +99,16 @@
+ 	bool clk_ctl;
+ 	bool clk_state;
+ 	struct platform_device *pdev;
++	/*
++	 * a52sxq 6.12: what probe actually acquired, so that remove and the error paths only
++	 * release that (5.4 freed a never-requested clk_req IRQ and never released the PVDD
++	 * regulator, the clk_req GPIO or the classes: a second insmod failed, rmmod WARNed).
++	 */
++	bool clk_irq_requested;
++	bool clk_req_gpio_requested;
++	bool pvdd_enabled;
++	struct class *test_class;
++	struct class *sec_class;
+ };
+ 
+ #ifdef CONFIG_ESE_COLDRESET
+@@ -184,7 +196,7 @@
+ 	return 0;
+ }
+ 
+-void sec_nfc_print_status(void)
++static void sec_nfc_print_status(void)
+ {
+ 	if (g_nfc_info)
+ 		nfc_state_print(g_nfc_info);
+@@ -320,7 +332,7 @@
+ 	/* Skip interrupt during power switching
+ 	 * It is released after first write
+ 	 */
+-	NFC_LOG_REC("write(%d)\n", count);
++	NFC_LOG_REC("write(%zu)\n", count);
+ 	mutex_lock(&info->i2c_info.read_mutex);
+ 	ret = i2c_master_send(info->i2c_info.i2c_dev, info->i2c_info.buf, count);
+ 	if (info->i2c_info.read_irq == SEC_NFC_SKIP)
+@@ -351,19 +363,24 @@
+ 	return ret;
+ }
+ 
+-static unsigned int sec_nfc_poll(struct file *file, poll_table *wait)
++/*
++ * a52sxq 6.12: fops->poll returns __poll_t (same integer type as 5.4's unsigned int, so the
++ * kCFI type hash matches either way). The -ENODEV "mask" for a closed device is kept as on
++ * 5.4: it has every bit set, so the HAL's select() wakes up and its read() then gets -ENODEV.
++ */
++static __poll_t sec_nfc_poll(struct file *file, poll_table *wait)
+ {
+ 	struct sec_nfc_info *info = container_of(file->private_data,
+ 						struct sec_nfc_info, miscdev);
+ 	enum sec_nfc_irq irq;
+ 
+-	int ret = 0;
++	__poll_t ret = 0;
+ 
+ 	mutex_lock(&info->mutex);
+ 
+ 	if (info->mode == SEC_NFC_MODE_OFF) {
+ 		NFC_LOG_ERR("poll() nfc is not enabled\n");
+-		ret = -ENODEV;
++		ret = (__force __poll_t)-ENODEV;
+ 		goto out;
+ 	}
+ 
+@@ -372,7 +389,7 @@
+ 	mutex_lock(&info->i2c_info.read_mutex);
+ 	irq = info->i2c_info.read_irq;
+ 	if (irq == SEC_NFC_READ_TIMES)
+-		ret = (POLLIN | POLLRDNORM);
++		ret = (EPOLLIN | EPOLLRDNORM);
+ 	mutex_unlock(&info->i2c_info.read_mutex);
+ 
+ out:
+@@ -413,7 +430,7 @@
+ 	return rc;
+ }
+ 
+-void sec_nfc_i2c_irq_clear(struct sec_nfc_info *info)
++static void __maybe_unused sec_nfc_i2c_irq_clear(struct sec_nfc_info *info)
+ {
+ 	/* clear interrupt. Interrupt will be occurred at power off */
+ 	mutex_lock(&info->i2c_info.read_mutex);
+@@ -421,7 +438,7 @@
+ 	mutex_unlock(&info->i2c_info.read_mutex);
+ }
+ 
+-int sec_nfc_i2c_probe(struct i2c_client *client)
++static int sec_nfc_i2c_probe(struct i2c_client *client)
+ {
+ 	struct device *dev = &client->dev;
+ 	struct sec_nfc_info *info = dev_get_drvdata(dev);
+@@ -445,7 +462,7 @@
+ 	ret = gpio_request(pdata->irq, "nfc_int");
+ 	if (ret) {
+ 		NFC_LOG_ERR("probe() GPIO request is failed to register IRQ\n");
+-		goto err_irq_req;
++		goto err_gpio_req;
+ 	}
+ 	gpio_direction_input(pdata->irq);
+ 
+@@ -458,8 +475,7 @@
+ 			info);
+ 	if (ret < 0) {
+ 		NFC_LOG_ERR("probe() failed to register IRQ handler\n");
+-		kfree(info->i2c_info.buf);
+-		return ret;
++		goto err_irq_req;
+ 	}
+ 
+ 	if (of_get_property(dev->of_node, "sec-nfc,ldo_control", NULL)) {
+@@ -469,11 +485,19 @@
+ #elif IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
+ 			if (!lpcharge) {
+ #else
+-			if (1/*!lpcharge*/) {
++			/*
++			 * a52sxq 6.12: 5.4 (CONFIG_BATTERY_SAMSUNG=y) skipped PVDD in power-off
++			 * charging via sec-battery's built-in "lpcharge". The 6.12 power stack
++			 * is modules with a private lpcharge parameter each, so this module
++			 * takes the flag from its own nfc_param_lpcharge (1 = LPM, skip PVDD).
++			 */
++			if (nfc_param_lpcharge != LPM_TRUE) {
+ #endif
+ 				ret = sec_nfc_regulator_onoff(pdata, NFC_I2C_LDO_ON);
+ 				if (ret < 0)
+ 					NFC_LOG_ERR("regulator on failed: %d\n", ret);
++				else
++					info->pvdd_enabled = true;
+ 
+ 				if (of_find_property(dev->of_node, "sec-nfc,sw-gpio", NULL)) {
+ 					if (gpio_is_valid(pdata->i2c_switch)) {
+@@ -509,7 +533,12 @@
+ 	NFC_LOG_INFO("probe() success\n");
+ 	return 0;
+ 
++	/* a52sxq 6.12: unwind (5.4 leaked the buffer and the IRQ GPIO here) */
+ err_irq_req:
++	gpio_free(pdata->irq);
++err_gpio_req:
++	kfree(info->i2c_info.buf);
++	info->i2c_info.buf = NULL;
+ 	return ret;
+ }
+ 
+@@ -549,7 +578,7 @@
+ 	return IRQ_HANDLED;
+ }
+ 
+-void sec_nfc_clk_ctl_enable(struct sec_nfc_info *info)
++static void sec_nfc_clk_ctl_enable(struct sec_nfc_info *info)
+ {
+ 	struct sec_nfc_platform_data *pdata = info->pdata;
+ 
+@@ -563,7 +592,7 @@
+ 	info->clk_ctl = true;
+ }
+ 
+-void sec_nfc_clk_ctl_disable(struct sec_nfc_info *info)
++static void sec_nfc_clk_ctl_disable(struct sec_nfc_info *info)
+ {
+ 	struct sec_nfc_platform_data *pdata = info->pdata;
+ 
+@@ -1043,7 +1072,6 @@
+ 	struct sec_nfc_platform_data *pdata)
+ {
+ 	struct device_node *np = dev->of_node;
+-	static int retry_count = 3;
+ 
+ 	pdata->ven = of_get_named_gpio(np, "sec-nfc,ven-gpio", 0);
+ 	pdata->firm = of_get_named_gpio(np, "sec-nfc,firm-gpio", 0);
+@@ -1061,12 +1089,19 @@
+ 	if (of_get_property(dev->of_node, "sec-nfc,ldo_control", NULL)) {
+ 		pdata->nfc_pvdd = regulator_get(dev, "nfc_pvdd");
+ 		if (IS_ERR(pdata->nfc_pvdd)) {
+-			NFC_LOG_ERR("get nfc_pvdd error\n");
++			/*
++			 * a52sxq 6.12: 5.4 gave up after three deferrals (static retry_count),
++			 * which loses the race against a late regulator for good on a module
++			 * build. Defer for as long as the core says the supply may still come;
++			 * any other error fails as before.
++			 */
++			int err = PTR_ERR(pdata->nfc_pvdd);
++
+ 			pdata->nfc_pvdd = NULL;
+-			if (--retry_count > 0)
+-				return -EPROBE_DEFER;
+-			else
+-				return -ENODEV;
++			if (err == -EPROBE_DEFER)
++				return dev_err_probe(dev, err, "sec_nfc: nfc_pvdd not ready\n");
++			NFC_LOG_ERR("get nfc_pvdd error %d\n", err);
++			return -ENODEV;
+ 		}
+ 	} else {
+ 		pdata->pvdd = of_get_named_gpio(np, "sec-nfc,pvdd-gpio", 0);
+@@ -1204,8 +1239,8 @@
+ 	return ret;
+ }
+ 
+-static ssize_t test_show(struct class *class,
+-					struct class_attribute *attr,
++static ssize_t test_show(const struct class *class,
++					const struct class_attribute *attr,
+ 					char *buf)
+ {
+ 	enum sec_nfc_mode old_mode = g_nfc_info->mode;
+@@ -1259,8 +1294,8 @@
+ #endif
+ 
+ #if defined(CONFIG_NFC_PVDD_LATE_ENABLE)
+-static ssize_t pvdd_store(struct class *class,
+-	struct class_attribute *attr, const char *buf, size_t size)
++static ssize_t pvdd_store(const struct class *class,
++	const struct class_attribute *attr, const char *buf, size_t size)
+ {
+ 	int ret = 0;
+ 
+@@ -1291,8 +1326,8 @@
+ static CLASS_ATTR_WO(pvdd);
+ #endif
+ 
+-static ssize_t nfc_support_show(struct class *class,
+-		struct class_attribute *attr, char *buf)
++static ssize_t nfc_support_show(const struct class *class,
++		const struct class_attribute *attr, char *buf)
+ {
+ 	NFC_LOG_INFO("\n");
+ 	return 0;
+@@ -1361,7 +1396,9 @@
+ 			else
+ 				devm_pinctrl_put(pinctrl);
+ 			NFC_LOG_INFO("nfc not support: %d\n", nfc_support);
+-			return -ENXIO;
++			/* a52sxq 6.12: 5.4 returned here without freeing info */
++			ret = -ENXIO;
++			goto err_dev_reg;
+ 		}
+ 	}
+ 
+@@ -1384,16 +1421,20 @@
+ 		ret = gpio_request(pdata->clk_req, "nfc_clk_req");
+ 		if (ret)
+ 			NFC_LOG_ERR("probe() failed to get clk_req\n");
++		else
++			info->clk_req_gpio_requested = true;
+ 
+ 		gpio_direction_input(pdata->clk_req);
+ 		pdata->clk_irq = gpio_to_irq(pdata->clk_req);
+ 
+ 		ret = request_threaded_irq(pdata->clk_irq, NULL, sec_nfc_clk_irq_thread,
+ 				irq_flag, "sec-nfc_clk", info);
+-		if (ret < 0)
++		if (ret < 0) {
+ 			NFC_LOG_ERR("probe() failed to register CLK REQ IRQ handler\n");
+-		else
++		} else {
++			info->clk_irq_requested = true;
+ 			enable_irq_wake(pdata->clk_irq);
++		}
+ 	}
+ 
+ 	ret = gpio_request(pdata->ven, "nfc_ven");
+@@ -1424,20 +1465,27 @@
+ #endif
+ 
+ 	g_nfc_info = info;
++	/*
++	 * a52sxq 6.12: class_create() lost its owner argument (6.4). 5.4 tested
++	 * IS_ERR(&nfc_class) (always false) and never destroyed the classes; they are kept
++	 * in info now and destroyed in __sec_nfc_remove(). Class creation stays non-fatal.
++	 */
+ #ifdef FEATURE_SEC_NFC_TEST
+-	nfc_class = class_create(THIS_MODULE, "nfc_test");
+-	if (IS_ERR(&nfc_class))
++	nfc_class = class_create("nfc_test");
++	if (IS_ERR(nfc_class)) {
+ 		NFC_LOG_ERR("NFC: failed to create nfc_test class\n");
+-	else {
++	} else {
++		info->test_class = nfc_class;
+ 		ret = class_create_file(nfc_class, &class_attr_test);
+ 		if (ret)
+ 			NFC_LOG_ERR("NFC: failed to create attr_test\n");
+ 	}
+ #endif
+-	nfc_class = class_create(THIS_MODULE, "nfc_sec");
+-	if (IS_ERR(&nfc_class))
++	nfc_class = class_create("nfc_sec");
++	if (IS_ERR(nfc_class)) {
+ 		NFC_LOG_ERR("NFC: failed to create nfc class\n");
+-	else {
++	} else {
++		info->sec_class = nfc_class;
+ 		ret = class_create_file(nfc_class, &class_attr_nfc_support);
+ 		if (ret)
+ 			NFC_LOG_ERR("NFC: failed to create attr_nfc_support\n");
+@@ -1463,18 +1511,32 @@
+ err_gpio_firm:
+ 	gpio_free(pdata->ven);
+ err_gpio_ven:
+-	free_irq(pdata->clk_irq, info);
++	if (info->clk_irq_requested)
++		free_irq(pdata->clk_irq, info);
++	if (info->clk_req_gpio_requested)
++		gpio_free(pdata->clk_req);
+ 	misc_deregister(&info->miscdev);
+ err_dev_reg:
++	wake_lock_destroy(&info->nfc_wake_lock);
++	wake_lock_destroy(&info->nfc_clk_wake_lock);
+ 	mutex_destroy(&info->mutex);
++	dev_set_drvdata(dev, NULL);
+ 	kfree(info);
+ err_info_alloc:
++	if (pdata->nfc_pvdd)
++		regulator_put(pdata->nfc_pvdd);
+ 	devm_kfree(dev, pdata);
+ err_pdata:
+ 	return ret;
+ }
+ 
+-static int __sec_nfc_remove(struct device *dev)
++/*
++ * a52sxq 6.12: one teardown for remove() and for a failed sec_nfc_i2c_probe(). 5.4 called
++ * the remove path after a failed i2c half too (freeing an IRQ that was never requested,
++ * then returning 0 with freed drvdata), and leaked the clk_req GPIO/IRQ, the second wakeup
++ * source, the I2C buffer, the classes and the PVDD regulator (left enabled).
++ */
++static void __sec_nfc_remove(struct device *dev, bool i2c_ready)
+ {
+ 	struct sec_nfc_info *info = dev_get_drvdata(dev);
+ 	struct i2c_client *client = info->i2c_info.i2c_dev;
+@@ -1482,28 +1544,55 @@
+ 
+ 	NFC_LOG_DBG("remove\n");
+ 
++	if (info->sec_class)
++		class_destroy(info->sec_class);
++	if (info->test_class)
++		class_destroy(info->test_class);
+ 	misc_deregister(&info->miscdev);
+-	sec_nfc_set_mode(info, SEC_NFC_MODE_OFF);
+-	free_irq(client->irq, info);
+-	free_irq(pdata->clk_irq, info);
+-	gpio_free(pdata->irq);
+-	gpio_set_value_cansleep(pdata->firm, 0);
++	if (i2c_ready) {
++		/* sec_nfc_set_mode() uses the I2C half (read_mutex, IRQ wake) */
++		sec_nfc_set_mode(info, SEC_NFC_MODE_OFF);
++		free_irq(client->irq, info);
++		gpio_free(pdata->irq);
++	}
++	if (info->clk_irq_requested) {
++		disable_irq_wake(pdata->clk_irq);
++		free_irq(pdata->clk_irq, info);
++	}
++	if (info->clk_req_gpio_requested)
++		gpio_free(pdata->clk_req);
++	if (pdata->firm)
++		gpio_set_value_cansleep(pdata->firm, 0);
+ 	gpio_free(pdata->ven);
+ 	if (pdata->firm)
+ 		gpio_free(pdata->firm);
++#ifdef CONFIG_ESE_COLDRESET
++	gpio_free(pdata->coldreset);
++#endif
++	if (pdata->nfc_pvdd) {
++		if (info->pvdd_enabled)
++			sec_nfc_regulator_onoff(pdata, NFC_I2C_LDO_OFF);
++		regulator_put(pdata->nfc_pvdd);
++		pdata->nfc_pvdd = NULL;
++	}
++	if (pdata->clk)
++		clk_put(pdata->clk);
+ 
+ 	wake_lock_destroy(&info->nfc_wake_lock);
++	wake_lock_destroy(&info->nfc_clk_wake_lock);
+ 
++	if (g_nfc_info == info)
++		g_nfc_info = NULL;
++	kfree(info->i2c_info.buf);
++	dev_set_drvdata(dev, NULL);
+ 	kfree(info);
+-
+-	return 0;
+ }
+ 
+ #define SEC_NFC_INIT(driver)	i2c_add_driver(driver)
+ #define SEC_NFC_EXIT(driver)	i2c_del_driver(driver)
+ 
+-static int sec_nfc_probe(struct i2c_client *client,
+-		const struct i2c_device_id *id)
++/* a52sxq 6.12: i2c_driver.probe lost the i2c_device_id argument (6.3) */
++static int sec_nfc_probe(struct i2c_client *client)
+ {
+ 	int ret = 0;
+ 
+@@ -1513,18 +1602,23 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	if (sec_nfc_i2c_probe(client))
+-		__sec_nfc_remove(&client->dev);
++	ret = sec_nfc_i2c_probe(client);
++	if (ret) {
++		/* a52sxq 6.12: 5.4 tore down but still returned 0 (bound with freed drvdata) */
++		__sec_nfc_remove(&client->dev, false);
++		return ret;
++	}
+ 
+-	return ret;
++	return 0;
+ }
+ 
+-static int sec_nfc_remove(struct i2c_client *client)
++/* a52sxq 6.12: i2c_driver.remove returns void (6.1) */
++static void sec_nfc_remove(struct i2c_client *client)
+ {
+-	return __sec_nfc_remove(&client->dev);
++	__sec_nfc_remove(&client->dev, true);
+ }
+ 
+-static struct i2c_device_id sec_nfc_id_table[] = {
++static const struct i2c_device_id sec_nfc_id_table[] = {
+ 	{ SEC_NFC_DRIVER_NAME, 0 },
+ 	{ }
+ };
+@@ -1534,6 +1628,8 @@
+ 	{ .compatible = SEC_NFC_DRIVER_NAME,},
+ 	{},
+ };
++/* a52sxq 6.12: OF alias too, so udev/modprobe can autoload on "of:N*Csec-nfc" */
++MODULE_DEVICE_TABLE(of, nfc_match_table);
+ 
+ static struct i2c_driver sec_nfc_driver = {
+ 	.probe = sec_nfc_probe,
+@@ -1586,6 +1682,8 @@
+ 	spip3_dev_exit();
+ #endif
+ 	SEC_NFC_EXIT(&sec_nfc_driver);
++	/* a52sxq 6.12: 5.4 left /proc/nfclog pointing into the unloaded module */
++	nfc_logger_deinit();
+ }
+ #else
+ static int __init sec_nfc_init(void)
+--- a/sec_nfc.h
++++ b/sec_nfc.h
+@@ -42,6 +42,7 @@
+ #define nfc_logger_init()		do { } while (0)
+ #define nfc_logger_set_max_count(a)	do { } while (0)
+ #define nfc_logger_register_nfc_stauts_func(a)	do { } while (0)
++#define nfc_logger_deinit()		do { } while (0)	/* a52sxq 6.12: used by module exit */
+ #endif
+ 
+ /* size */
+--- a/nfc_wakelock.h
++++ b/nfc_wakelock.h
+@@ -63,6 +63,7 @@
+ {
+ 	if (lock->ws)
+ 		wakeup_source_unregister(lock->ws);
++	lock->ws = NULL;	/* a52sxq 6.12: destroy may run twice on the error paths */
+ }
+ 
+ static inline void nfc_wake_lock(struct nfc_wake_lock *lock)
+@@ -85,7 +86,8 @@
+ 
+ static inline int nfc_wake_lock_active(struct nfc_wake_lock *lock)
+ {
+-	return lock->ws->active;
++	/* a52sxq 6.12: 5.4 dereferenced a NULL ws if wakeup_source_register() failed */
++	return lock->ws ? lock->ws->active : 0;
+ }
+ 
+ #endif
+--- a/nfc_logger/nfc_logger.c
++++ b/nfc_logger/nfc_logger.c
+@@ -47,7 +47,7 @@
+ static int is_buf_full;
+ static int g_log_max_count = -1;
+ static void (*print_nfc_status)(void);
+-struct proc_dir_entry *g_entry;
++static struct proc_dir_entry *g_entry;	/* a52sxq 6.12: was global */
+ 
+ /* set max log count, if count is -1, no limit */
+ void nfc_logger_set_max_count(int count)
+@@ -151,7 +151,7 @@
+ 		len = snprintf(ptmp, 4, "%02x ", *ptr++);
+ 		ptmp = ptmp + len;
+ 		if (((i+1)%16) == 0) {
+-			nfc_logger_print("%s%s\n", pref, tmp);
++			nfc_logger_print("%s%s\n", (char *)pref, tmp);
+ 			ptmp = tmp;
+ 		}
+ 	}
+@@ -159,7 +159,7 @@
+ 	if (i % 16) {
+ 		len = ptmp - tmp;
+ 		tmp[len] = 0x0;
+-		nfc_logger_print("%s%s\n", pref, tmp);
++		nfc_logger_print("%s%s\n", (char *)pref, tmp);
+ 	}
+ }
+ 
+@@ -236,6 +236,7 @@
+ 
+ 	proc_remove(g_entry);
+ 	g_entry = NULL;
++	is_nfc_logger_init = 0;	/* a52sxq 6.12: no logging into a removed entry */
+ }
+ 
+ #ifdef CONFIG_SEC_NFC_LOGGER_ADD_ACPM_LOG
+--- a/nfc_logger/nfc_logger.h
++++ b/nfc_logger/nfc_logger.h
+@@ -31,7 +31,8 @@
+ 
+ void nfc_logger_set_max_count(int count);
+ void nfc_logger_get_date_time(char *date_time, int size);
+-void nfc_logger_print(char *fmt, ...);
++/* a52sxq 6.12: __printf so -Wformat checks every NFC_LOG_* call (5.4 had no checking) */
++__printf(1, 2) void nfc_logger_print(char *fmt, ...);
+ void nfc_print_hex_dump(void *buf, void *pref, size_t len);
+ int nfc_logger_init(void);
+ void nfc_logger_deinit(void);

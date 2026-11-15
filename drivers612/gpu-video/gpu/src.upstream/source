@@ -1,0 +1,3 @@
+path=donors/graphics-kernel
+url=https://git.codelinaro.org/clo/la/platform/vendor/qcom/opensource/graphics-kernel.git
+commit=1418e583ed185d59ede8144913adea0031584c81

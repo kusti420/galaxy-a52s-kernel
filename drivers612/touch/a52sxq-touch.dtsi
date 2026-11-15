@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Samsung Galaxy A52s 5G (a52sxq): touchscreen, keys and hall sensor for the Qualcomm 6.12 BSP
+ * base (bsp612/out/dist/dtb/yupik.dtb, downstream bindings).
+ *
+ * Include from the a52sxq board overlay / dts, after the base. Every value below is from the
+ * tree the phone boots (downstream-dt/a52sxq-r02.dts); node paths and labels are the phone's,
+ * so this file can sit next to drivers612/boarddt's generated files (same node, same label).
+ *
+ * Touch IC: ST FTS5CU56A, I2C address 0x49 on QUP SE13 (i2c@a94000, TLMM 52 SDA / 53 SCL,
+ * function qup15). Driver: drivers612/touch/src (stm_ts.ko + sec_input framework).
+ *
+ *   attention / IRQ  TLMM 81   level low (the driver requests IRQF_TRIGGER_LOW itself through
+ *                              gpio_to_irq(); there is no "interrupts" property on the phone)
+ *                              on_state: no pull, input.  off_state: pull-down, input.
+ *   reset            none      the IC has no reset line on this board; reset is by cutting AVDD
+ *   AVDD             PM8350C L7 (L7C) 3.0 V, min == max == 3000000, regulator-boot-on
+ *                              (phone: qcom,init-voltage 3000000). Only consumer: the touch IC.
+ *   DVDD / IO        no regulator in the tree for hw rev >= 1 ("sec,unuse_dvdd_power": the IO
+ *                              rail is always on). The driver still asks for "tsp_io_ldo" and
+ *                              gets the regulator core's dummy, as on 5.4.
+ *
+ * Hardware revisions (Samsung dts sources, arch/arm64/boot/dts/samsung/a52/a52sxq):
+ *   r00 (hw rev 0)        the touch node additionally has tsp_io_ldo-supply (a GPIO fixed
+ *                         regulator). Not on the bench, not described here.
+ *   r01 (hw rev 1), r02 (hw rev 2..0x20)   identical touch nodes (checked with diff).
+ *   Bench phones are rev 3 and rev 4: both use r02. No rev 3 / rev 4 difference.
+ *
+ * Properties of the phone's nodes that no driver reads (kept out on purpose):
+ *   i2c bus: samsung,stop-after-trans, samsung,reset-before-trans (no user in the phone's 5.4
+ *   kernel either), qcom,i2c-touch-active = "novatek,NVT-ts" (Qualcomm reference panel
+ *   selection for the disabled novatek@62 node).
+ *
+ * Firmware: sec,firmware_name is loaded with request_firmware(); the blob is
+ *   $ANDROID_TREE/vendor/samsung/a52sxq/proprietary/vendor/firmware/tsp_stm/fts5cu56a_a52sxq.bin
+ *   (on the phone: /vendor/firmware/tsp_stm/fts5cu56a_a52sxq.bin). A missing file is not an
+ *   error; the IC then runs the firmware it already has in flash.
+ */
+
+/* ------------------------------------------------------------------ touch rail */
+
+/*
+ * RULE: RPMh regulators cannot be read back, the core programs the lowest allowed voltage at
+ * registration. The 6.12 base allows 3.0 .. 3.544 V; the phone pins 3.0 V. Same values as
+ * drivers612/boarddt/a52sxq-regulators.dtsi (repeated so this fragment stands alone).
+ */
+&pm8350c_l7 {
+	regulator-min-microvolt = <3000000>;
+	regulator-max-microvolt = <3000000>;
+	regulator-boot-on;
+};
+
+/* ------------------------------------------------------------------ pins */
+
+&tlmm {
+	stm_attn_irq: stm_attn_irq {
+		mux {
+			pins = "gpio81";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio81";
+			input-enable;
+			bias-disable;
+		};
+	};
+
+	stm_attn_input: stm_attn_input {
+		mux {
+			pins = "gpio81";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio81";
+			input-enable;
+			bias-pull-down;
+		};
+	};
+
+	/*
+	 * Hall sensor output, TLMM 101. The phone's node lists bias-pull-up AND bias-disable.
+	 * pinconf-generic parses properties in its own table order (bias-disable before
+	 * bias-pull-up) and the msm pinctrl driver applies them one after the other to the
+	 * same register field, so the effective setting on the phone is pull-up.
+	 */
+	hall_irq: hall_irq {
+		mux {
+			pins = "gpio101";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio101";
+			drive-strength = <2>;
+			input-enable;
+			bias-pull-up;
+		};
+	};
+};
+
+/* ------------------------------------------------------------------ I2C bus + touch IC */
+
+/*
+ * SE13 I2C. The base already has the node with the phone's reg, interrupt, clock, GPI DMA
+ * channels (GPI instance 5, protocol 3 = I2C) and the same pin configuration as the phone
+ * (TLMM 52/53 qup15, 2 mA, pull-up; sleep: gpio, 2 mA, no pull). Only enabled here.
+ * Driver: i2c-msm-geni.ko (CONFIG_I2C_MSM_GENI=m; needs msm_gpi.ko and qcom_ipc_logging.ko).
+ */
+&qupv3_se13_i2c {
+	status = "ok";
+	#address-cells = <1>;	/* as in the base; repeated for dtc when built as an overlay */
+	#size-cells = <0>;
+
+	tsp_stm: touchscreen@49 {
+		status = "ok";
+		compatible = "stm,stm_ts";
+		reg = <0x49>;
+		pinctrl-names = "on_state", "off_state";
+		pinctrl-0 = <&stm_attn_irq>;
+		pinctrl-1 = <&stm_attn_input>;
+		tsp_avdd_ldo-supply = <&pm8350c_l7>;
+		sec,irq_gpio = <&tlmm 81 0>;
+		sec,project_name = "a52sxq", "a52sxq";
+		sec,bringup = <0>;
+		sec,ss_touch_num = <1>;
+		sec,tclm_level = <2>;
+		sec,afe_base = <0x27>;
+		sec,area-size = <133 266 341>;		/* indicator, navigation bar, edge */
+		sec,max_coords = <4096 4096>;
+		enable_settings_aot;
+		support_fod;
+		support_fod_lp_mode;
+		support_mis_calibration_test;
+		support_ear_detect_mode;
+		support_open_short_test;
+		sec,firmware_name = "tsp_stm/fts5cu56a_a52sxq.bin";
+		sec,regulator_boot_on;
+		sec,unuse_dvdd_power;
+	};
+};
+
+/* ------------------------------------------------------------------ Samsung name nodes */
+
+&soc {
+	/* sec_secure_touch.ko: /sys/class/sec/ss_touch (phone: /soc/ss_touch) */
+	ss_touch {
+		compatible = "samsung,ss_touch";
+		ss_touch,numbers = <1>;
+	};
+};
+
+/* ------------------------------------------------------------------ keys */
+
+/*
+ * Power key and volume down: PMK8350 PON (kpdpwr = KEY_POWER 116, resin = KEY_VOLUMEDOWN 114).
+ * Volume up: PM7325 GPIO 6, active low, pull-up, 15 ms debounce, wake-up, KEY_VOLUMEUP 115.
+ *
+ * These are ALREADY in bsp612/dts/a52sxq-bringup-overlay.dts (a52_pon, a52_gpio_keys, written
+ * on the 6.12 bindings: qcom,pmk8350-pon + pmk8350-pwrkey/-resin, gpio-keys) and were checked
+ * against the phone's tree for this task: addresses, SPMI interrupts <0 0x13 0x7> / <0 0x13 0x6>,
+ * key codes, GPIO, polarity, debounce and wake-up match. They are not repeated here, a second
+ * copy would create a second input device. Differences from the phone, all harmless:
+ *   - "linux,can-disable" on vol_up is not carried over (only adds the disabled_keys sysfs);
+ *   - "qcom,kpdpwr-sw-debounce" has no counterpart: pm8941-pwrkey has its own software
+ *     debounce for PMK8350 (gen3 PON).
+ * Drivers: qcom-pon.ko, pm8941-pwrkey.ko, pinctrl-spmi-gpio.ko; gpio-keys is built in.
+ */
+
+/* ------------------------------------------------------------------ hall sensor (flip cover) */
+
+/*
+ * Phone: /samsung_mobile_device/hall_ic, compatible "hall_ic" (Samsung driver,
+ * drivers/input/misc/hall, 800 lines, own sysfs + notifier), hall { gpios = <&tlmm 101
+ * GPIO_ACTIVE_LOW>; event = <0x15>; }. That driver is NOT ported: it is not part of sec_input,
+ * and its switch code 0x15 is above SW_MAX (0x10), so the input core drops the event on 5.4
+ * as well; Samsung's own source uses 0x10 (SW_MACHINE_COVER) from 5.10 on.
+ *
+ * Replacement with no new code: gpio-keys switch on the same pin. Left disabled until someone
+ * decides which switch code the ROM should see (0x10 = SW_MACHINE_COVER as newer Samsung
+ * kernels, or 0x00 = SW_LID as AOSP expects for covers). Losing it costs: no flip-cover
+ * wake/sleep and no "cover closed" hint to the touch IC (the stm driver's hall notifier is
+ * compiled out).
+ */
+&soc {
+	a52_hall_keys: hall_keys {
+		compatible = "gpio-keys";
+		label = "hall_ic";
+		pinctrl-names = "default";
+		pinctrl-0 = <&hall_irq>;
+		status = "disabled";
+
+		hall {
+			label = "flip";
+			gpios = <&tlmm 101 1>;		/* GPIO_ACTIVE_LOW */
+			linux,input-type = <5>;		/* EV_SW */
+			linux,code = <0x10>;		/* SW_MACHINE_COVER */
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+	};
+};

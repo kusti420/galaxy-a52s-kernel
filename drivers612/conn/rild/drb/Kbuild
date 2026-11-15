@@ -1,0 +1,5 @@
+# Samsung dev RIL bridge (/dev/drb), from the A52s 5.4 kernel drivers/misc/drb
+# Consumers include <linux/dev_ril_bridge.h> from ./include and must be built
+# with -DCONFIG_DEV_RIL_BRIDGE_MODULE=1 (or they get the empty inline stubs).
+ccflags-y += -I$(src)/include -DCONFIG_DEV_RIL_BRIDGE_MODULE=1
+obj-m += dev_ril_bridge.o

@@ -1,0 +1,359 @@
+--- a/fingerprint_sysfs.c
++++ b/fingerprint_sysfs.c
+@@ -31,13 +31,25 @@
+ 			pr_err("%s: fail device_create_file! %d\n", __func__, i);
+ }
+ 
+-int fingerprint_register(struct device *dev, void *drvdata,
++int fingerprint_register(struct device **devp, void *drvdata,
+ 	struct device_attribute *attributes[], char *name)
+ {
+ 	int ret = 0;
++	struct device *dev;
+ 
++	/* a52sxq 6.12: the 5.4 code assigned the new device to its by-value
++	 * parameter, so the caller never got it and the device was never
++	 * destroyed: after rmmod of the sensor driver the sysfs files pointed
++	 * at freed driver data and a second insmod failed (name exists). The
++	 * caller now gets the device back and fingerprint_unregister() frees it.
++	 */
++	*devp = NULL;
+ 	if (!fingerprint_class) {
++#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
++		fingerprint_class = class_create("fingerprint");
++#else
+ 		fingerprint_class = class_create(THIS_MODULE, "fingerprint");
++#endif
+ 		if (IS_ERR(fingerprint_class))
+ 			return PTR_ERR(fingerprint_class);
+ 	}
+@@ -51,6 +63,7 @@
+ 	}
+ 
+ 	set_fingerprint_attr(dev, attributes);
++	*devp = dev;
+ 
+ 	return 0;
+ }
+@@ -61,8 +74,11 @@
+ {
+ 	int i;
+ 
++	if (!dev)
++		return;
+ 	for (i = 0; attributes[i] != NULL; i++)
+ 		device_remove_file(dev, attributes[i]);
++	device_unregister(dev);
+ }
+ EXPORT_SYMBOL_GPL(fingerprint_unregister);
+ 
+@@ -78,7 +94,11 @@
+ static int __init fingerprint_class_init(void)
+ {
+ 	pr_info("%s\n", __func__);
++#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
++	fingerprint_class = class_create("fingerprint");
++#else
+ 	fingerprint_class = class_create(THIS_MODULE, "fingerprint");
++#endif
+ 
+ 	if (IS_ERR(fingerprint_class)) {
+ 		pr_err("%s, create fingerprint_class is failed.(err=%d)\n",
+--- a/fingerprint_sysfs.h
++++ b/fingerprint_sysfs.h
+@@ -22,10 +22,11 @@
+ #include <linux/device.h>
+ #include <linux/fs.h>
+ #include <linux/err.h>
++#include <linux/version.h>
+ 
+ void set_fingerprint_attr(struct device *dev,
+ 	struct device_attribute *attributes[]);
+-int fingerprint_register(struct device *dev, void *drvdata,
++int fingerprint_register(struct device **devp, void *drvdata,
+ 	struct device_attribute *attributes[], char *name);
+ void fingerprint_unregister(struct device *dev,
+ 	struct device_attribute *attributes[]);
+--- a/et7xx.h
++++ b/et7xx.h
+@@ -28,7 +28,6 @@
+ 
+ #include <linux/regulator/consumer.h>
+ #include <linux/pinctrl/consumer.h>
+-#include "../pinctrl/core.h"
+ #include "fingerprint_common.h"
+ 
+ #define VENDOR							"EGISTEC"
+@@ -168,6 +167,7 @@
+ 	const char *btp_vdd;
+ 	const char *sensor_position;
+ 	struct regulator *regulator_3p3;
++	bool regulator_from_dt;	/* a52sxq 6.12: etspi-btp-supply phandle used */
+ 	struct pinctrl *p;
+ 	struct pinctrl_state *pins_poweron;
+ 	struct pinctrl_state *pins_poweroff;
+--- a/et7xx-spi.c
++++ b/et7xx-spi.c
+@@ -48,22 +48,33 @@
+ {
+ 	int retval = 0;
+ 
+-	if (IS_ERR(etspi->p))
++	if (IS_ERR_OR_NULL(etspi->p))
+ 		return;
+ 
+-	etspi->p->state = NULL;
++	/*
++	 * a52sxq 6.12: 5.4 cleared etspi->p->state here (struct pinctrl is
++	 * private to drivers/pinctrl/core.h, no longer reachable from a module).
++	 * In the secure build both states stay NULL (never looked up), and with
++	 * ->state == NULL pinctrl_select_state(p, NULL) returned 0 without
++	 * touching any pin: the NULL checks below do the same, and the
++	 * "idle"/"sleep" log lines stay as on 5.4.
++	 */
+ 	if (pin_set) {
+ 		if (!IS_ERR(etspi->pins_poweron)) {
+-			retval = pinctrl_select_state(etspi->p, etspi->pins_poweron);
+-			if (retval)
+-				pr_err("can't set pin default state : %d\n", retval);
++			if (etspi->pins_poweron) {
++				retval = pinctrl_select_state(etspi->p, etspi->pins_poweron);
++				if (retval)
++					pr_err("can't set pin default state : %d\n", retval);
++			}
+ 			pr_info("idle\n");
+ 		}
+ 	} else {
+ 		if (!IS_ERR(etspi->pins_poweroff)) {
+-			retval = pinctrl_select_state(etspi->p, etspi->pins_poweroff);
+-			if (retval)
+-				pr_err("can't set pin sleep state : %d\n", retval);
++			if (etspi->pins_poweroff) {
++				retval = pinctrl_select_state(etspi->p, etspi->pins_poweroff);
++				if (retval)
++					pr_err("can't set pin sleep state : %d\n", retval);
++			}
+ 			pr_info("sleep\n");
+ 		}
+ 	}
+@@ -405,13 +416,20 @@
+ 		pr_info("spi_value: 0x%x\n", etspi->spi_value);
+ 		break;
+ 
+-	case FP_MODEL_INFO:
++	case FP_MODEL_INFO: {
++		/* a52sxq 6.12: 5.4 copied 10 bytes straight from the DT string
++		 * ("A528" = 5 bytes), i.e. 5 bytes of whatever followed it. Same
++		 * 10 bytes to userspace, zero-padded. */
++		char mi[10];
++
++		strncpy(mi, etspi->model_info, sizeof(mi));
+ 		pr_info("modelinfo is %s\n", etspi->model_info);
+ 		retval = copy_to_user((u8 __user *) (uintptr_t)ioc->rx_buf,
+-												etspi->model_info, 10);
++												mi, sizeof(mi));
+ 		if (retval != 0)
+ 			pr_err("FP_IOCTL_MODEL_INFO copy_to_user failed: %d\n", retval);
+ 		break;
++	}
+ 
+ 	case FP_IOCTL_RESERVED_01:
+ 	case FP_IOCTL_RESERVED_02:
+@@ -525,12 +543,30 @@
+ 	pr_info("Entry\n");
+ 	/* gpio setting for ldo, sleep pin */
+ 	if (etspi != NULL) {
+-		if (etspi->btp_vdd) {
+-			etspi->regulator_3p3 = regulator_get(NULL, etspi->btp_vdd);
++		if (etspi->regulator_from_dt || etspi->btp_vdd) {
++			/*
++			 * a52sxq 6.12: with "etspi-btp-supply" in the node the rail is
++			 * looked up by phandle, so probe defers until the rpmh-regulator
++			 * driver is there. The 5.4 lookup by regulator name (no device)
++			 * silently returns the dummy regulator when the provider is not
++			 * registered yet: the sensor would then never get power.
++			 */
++			if (etspi->regulator_from_dt)
++				etspi->regulator_3p3 = regulator_get(etspi->dev, "etspi-btp");
++			else
++				etspi->regulator_3p3 = regulator_get(NULL, etspi->btp_vdd);
+ 			if (IS_ERR(etspi->regulator_3p3)) {
+-				pr_err("regulator get failed\n");
++				retval = PTR_ERR(etspi->regulator_3p3);
+ 				etspi->regulator_3p3 = NULL;
+-				goto et7xx_platformInit_ldo_failed;
++				if (retval == -EPROBE_DEFER)
++					goto et7xx_platformInit_ldo_failed;
++				/*
++				 * 5.4 returned 0 here and skipped the sleep pin and the
++				 * wakeup source, so the device probed half set up. Keep
++				 * probing without the rail, but finish the rest.
++				 */
++				pr_err("regulator get failed %d, no BTP rail\n", retval);
++				retval = 0;
+ 			} else {
+ 				regulator_set_load(etspi->regulator_3p3, 100000);
+ 				pr_info("btp_regulator ok\n");
+@@ -586,10 +622,14 @@
+ 	return retval;
+ 
+ et7xx_platformInit_sleep_failed:
+-	if (etspi->sleepPin)
+-		gpio_free(etspi->sleepPin);
+-	if (etspi->ldo_pin)
++	/* a52sxq 6.12: 5.4 freed the never-requested sleepPin here and kept
++	 * the regulator; release what was actually taken. */
++	if (etspi->regulator_3p3) {
++		regulator_put(etspi->regulator_3p3);
++		etspi->regulator_3p3 = NULL;
++	} else if (etspi->ldo_pin) {
+ 		gpio_free(etspi->ldo_pin);
++	}
+ et7xx_platformInit_ldo_failed:
+ 	pr_err("is failed. %d\n", retval);
+ 	return retval;
+@@ -600,6 +640,10 @@
+ 	pr_info("Entry\n");
+ 
+ 	if (etspi != NULL) {
++		/* a52sxq 6.12: unbind with the sensor still on (HAL killed) put an
++		 * enabled regulator (WARN in _regulator_put) and left TLMM 35 high */
++		if (etspi->ldo_enabled)
++			et7xx_power_control(etspi, 0);
+ 		et7xx_pin_control(etspi, false);
+ 		if (etspi->regulator_3p3)
+ 			regulator_put(etspi->regulator_3p3);
+@@ -616,11 +660,10 @@
+ static int et7xx_parse_dt(struct device *dev, struct et7xx_data *etspi)
+ {
+ 	struct device_node *np = dev->of_node;
+-	enum of_gpio_flags flags;
+ 	int retval = 0;
+ 	int gpio;
+ 
+-	gpio = of_get_named_gpio_flags(np, "etspi-sleepPin", 0, &flags);
++	gpio = of_get_named_gpio(np, "etspi-sleepPin", 0);
+ 	if (gpio < 0) {
+ 		retval = gpio;
+ 		pr_err("fail to get sleepPin\n");
+@@ -630,7 +673,7 @@
+ 		pr_info("sleepPin=%d\n", etspi->sleepPin);
+ 	}
+ 
+-	gpio = of_get_named_gpio_flags(np, "etspi-ldoPin", 0, &flags);
++	gpio = of_get_named_gpio(np, "etspi-ldoPin", 0);
+ 	if (gpio < 0) {
+ 		etspi->ldo_pin = 0;
+ 		pr_info("not use ldo_pin\n");
+@@ -639,7 +682,9 @@
+ 		pr_info("ldo_pin=%d\n", etspi->ldo_pin);
+ 	}
+ 
+-	if (of_property_read_string(np, "etspi-regulator", &etspi->btp_vdd) < 0) {
++	etspi->regulator_from_dt = of_property_present(np, "etspi-btp-supply");
++	if (of_property_read_string(np, "etspi-regulator", &etspi->btp_vdd) < 0 &&
++	    !etspi->regulator_from_dt) {
+ 		pr_info("not use btp_regulator\n");
+ 		etspi->btp_vdd = NULL;
+ 		if (gpio < 0) {
+@@ -678,7 +723,7 @@
+ 	}
+ 	pr_info("rb: %s\n", etspi->rb);
+ 
+-	etspi->p = pinctrl_get_select_default(dev);
++	etspi->p = devm_pinctrl_get_select_default(dev);
+ #if !defined(ENABLE_SENSORS_FPRINT_SECURE) || defined(DISABLED_GPIO_PROTECTION)
+ 	if (!IS_ERR(etspi->p)) {
+ 		etspi->pins_poweroff = pinctrl_lookup_state(etspi->p, "pins_poweroff");
+@@ -713,7 +758,6 @@
+ 	.compat_ioctl = et7xx_compat_ioctl,
+ 	.open = et7xx_open,
+ 	.release = et7xx_release,
+-	.llseek = no_llseek,
+ };
+ 
+ #ifndef ENABLE_SENSORS_FPRINT_SECURE
+@@ -960,8 +1004,10 @@
+ 		list_add(&etspi->device_entry, &device_list);
+ 	}
+ 	mutex_unlock(&device_list_lock);
++	if (retval)	/* a52sxq 6.12: 5.4 went on with a failed esfp0 */
++		goto et7xx_device_create_failed;
+ 
+-	retval = fingerprint_register(etspi->fp_device,
++	retval = fingerprint_register(&etspi->fp_device,
+ 		etspi, fp_attrs, "fingerprint");
+ 	if (retval) {
+ 		pr_err("sysfs register failed\n");
+@@ -978,9 +1024,16 @@
+ 
+ et7xx_sysfs_failed:
+ 	fingerprint_unregister(etspi->fp_device, fp_attrs);
++	etspi->fp_device = NULL;
+ et7xx_register_failed:
++	/* a52sxq 6.12: 5.4 also destroyed the module's et7xx_class here
++	 * (destroyed again at module exit) and kept the minor and the list
++	 * entry of the freed device. */
++	mutex_lock(&device_list_lock);
++	list_del(&etspi->device_entry);
++	clear_bit(MINOR(etspi->devt), minors);
++	mutex_unlock(&device_list_lock);
+ 	device_destroy(et7xx_class, etspi->devt);
+-	class_destroy(et7xx_class);
+ et7xx_device_create_failed:
+ 	spi_clk_unregister(etspi->clk_setting);
+ et7xx_probe_spi_clk_register_failed:
+@@ -1068,6 +1121,10 @@
+ 	pr_info("Entry\n");
+ 	if (etspi != NULL) {
+ 		disable_fp_debug_timer(etspi->logger);
++		if (etspi->logger->wq_dbg) {	/* a52sxq 6.12: leaked on 5.4 */
++			destroy_workqueue(etspi->logger->wq_dbg);
++			etspi->logger->wq_dbg = NULL;
++		}
+ 		et7xx_platformUninit(etspi);
+ 		spi_clk_unregister(etspi->clk_setting);
+ 		/* make sure ops on existing fds can abort cleanly */
+@@ -1078,6 +1135,7 @@
+ 		/* prevent new opens */
+ 		mutex_lock(&device_list_lock);
+ 		fingerprint_unregister(etspi->fp_device, fp_attrs);
++		etspi->fp_device = NULL;
+ 		list_del(&etspi->device_entry);
+ 		device_destroy(et7xx_class, etspi->devt);
+ 		clear_bit(MINOR(etspi->devt), minors);
+@@ -1088,15 +1146,18 @@
+ 	return 0;
+ }
+ 
++/* a52sxq 6.12: spi and platform .remove return void (6.1 / 6.11) */
+ #ifndef ENABLE_SENSORS_FPRINT_SECURE
+-static int et7xx_remove(struct spi_device *spi) {
++static void et7xx_remove(struct spi_device *spi)
++{
+ 	et7xx_remove_common(&spi->dev);
++}
+ #else
+-static int et7xx_remove(struct platform_device *pdev) {
++static void et7xx_remove(struct platform_device *pdev)
++{
+ 	et7xx_remove_common(&pdev->dev);
+-#endif
+-	return 0;
+ }
++#endif
+ 
+ static int et7xx_pm_suspend(struct device *dev)
+ {
+@@ -1160,7 +1221,11 @@
+ 		return retval;
+ 	}
+ 
++#if (KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE)
++	et7xx_class = class_create("egis_fingerprint");
++#else
+ 	et7xx_class = class_create(THIS_MODULE, "egis_fingerprint");
++#endif
+ 	if (IS_ERR(et7xx_class)) {
+ 		pr_err("class_create error.\n");
+ 		unregister_chrdev(ET7XX_MAJOR, et7xx_spi_driver.driver.name);

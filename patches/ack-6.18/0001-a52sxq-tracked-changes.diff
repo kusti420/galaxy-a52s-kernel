@@ -1,0 +1,199 @@
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 296688f7c..e3bb1b44f 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -274,6 +274,7 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm7125-xiaomi-curtana.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7125-xiaomi-joyeuse.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7225-fairphone-fp4.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-nothing-spacewar.dtb
++dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-microsoft-surface-duo.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-mtp.dtb
+diff --git a/arch/arm64/include/uapi/asm/setup.h b/arch/arm64/include/uapi/asm/setup.h
+index 5d703888f..85e34aa78 100644
+--- a/arch/arm64/include/uapi/asm/setup.h
++++ b/arch/arm64/include/uapi/asm/setup.h
+@@ -22,6 +22,6 @@
+ 
+ #include <linux/types.h>
+ 
+-#define COMMAND_LINE_SIZE	2048
++#define COMMAND_LINE_SIZE	4096
+ 
+ #endif
+diff --git a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+index 76f32e424..76d0644ef 100644
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -85,3 +85,6 @@ endif
+ 
+ # for cleaning
+ subdir- += vdso vdso32
++
++# a52sxq bring-up: early console into reserved RAM (see a52ram.c)
++obj-$(CONFIG_SERIAL_EARLYCON)		+= a52ram.o
+diff --git a/arch/arm64/kernel/machine_kexec.c b/arch/arm64/kernel/machine_kexec.c
+index 28df62051..451f3009f 100644
+--- a/arch/arm64/kernel/machine_kexec.c
++++ b/arch/arm64/kernel/machine_kexec.c
+@@ -159,7 +159,15 @@ int machine_kexec_post_load(struct kimage *kimage)
+  *
+  * Called from the core kexec code for a sys_reboot with LINUX_REBOOT_CMD_KEXEC.
+  */
+-void machine_kexec(struct kimage *kimage)
++/*
++ * __nocfi: both jumps below are indirect calls to PHYSICAL addresses (the idmap copy of
++ * cpu_soft_restart, the relocation trampoline copied to kimage->arch.kern_reloc). With kCFI
++ * the compiler reads the type hash from the word in front of the target; that word is not
++ * mapped in the trampoline page tables, so the check itself faults ("Unable to handle kernel
++ * paging request at ...ffc" right after "Bye!", seen on the A52s 2026-11-12). ACK builds with
++ * CONFIG_CFI=y.
++ */
++__nocfi void machine_kexec(struct kimage *kimage)
+ {
+ 	bool in_kexec_crash = (kimage == kexec_crash_image);
+ 	bool stuck_cpus = cpus_are_stuck_in_kernel();
+diff --git a/drivers/of/kexec.c b/drivers/of/kexec.c
+index c4cf3552c..d8ecedd39 100644
+--- a/drivers/of/kexec.c
++++ b/drivers/of/kexec.c
+@@ -18,6 +18,9 @@
+ #include <linux/of_fdt.h>
+ #include <linux/random.h>
+ #include <linux/slab.h>
++#include <linux/sysfs.h>
++#include <linux/mutex.h>
++#include <linux/vmalloc.h>
+ #include <linux/types.h>
+ 
+ #define RNG_SEED_SIZE		128
+@@ -28,6 +31,92 @@
+  */
+ #define FDT_EXTRA_SPACE 0x1000
+ 
++/*
++ * a52sxq: alternative base FDT for the next kexec_file_load().
++ * Root writes a complete dtb to /sys/firmware/kexec_fdt (sequentially, from offset 0); the
++ * next kexec_file_load() then starts from that blob instead of initial_boot_params, so a
++ * kernel with different bindings can be started. /chosen is still filled in as usual.
++ * A write of fewer than 8 bytes at offset 0 clears it. An invalid blob fails the load.
++ */
++#define KEXEC_ALT_FDT_MAX	(4 * 1024 * 1024)
++static DEFINE_MUTEX(kexec_alt_fdt_lock);
++static void *kexec_alt_fdt;
++static size_t kexec_alt_fdt_len;
++
++static ssize_t kexec_fdt_write(struct file *file, struct kobject *kobj,
++			       const struct bin_attribute *attr, char *buf,
++			       loff_t off, size_t count)
++{
++	ssize_t ret = count;
++
++	mutex_lock(&kexec_alt_fdt_lock);
++	if (off == 0) {
++		kexec_alt_fdt_len = 0;
++		if (count < 8)
++			goto out;
++	}
++	if (off != kexec_alt_fdt_len || off + count > KEXEC_ALT_FDT_MAX) {
++		kexec_alt_fdt_len = 0;
++		ret = -EFBIG;
++		goto out;
++	}
++	if (!kexec_alt_fdt) {
++		kexec_alt_fdt = vzalloc(KEXEC_ALT_FDT_MAX);
++		if (!kexec_alt_fdt) {
++			ret = -ENOMEM;
++			goto out;
++		}
++	}
++	memcpy(kexec_alt_fdt + off, buf, count);
++	kexec_alt_fdt_len = off + count;
++out:
++	mutex_unlock(&kexec_alt_fdt_lock);
++	return ret;
++}
++
++static ssize_t kexec_fdt_read(struct file *file, struct kobject *kobj,
++			      const struct bin_attribute *attr, char *buf,
++			      loff_t off, size_t count)
++{
++	ssize_t ret = 0;
++
++	mutex_lock(&kexec_alt_fdt_lock);
++	if (off < kexec_alt_fdt_len) {
++		ret = min_t(size_t, count, kexec_alt_fdt_len - off);
++		memcpy(buf, kexec_alt_fdt + off, ret);
++	}
++	mutex_unlock(&kexec_alt_fdt_lock);
++	return ret;
++}
++
++static const BIN_ATTR_ADMIN_RW(kexec_fdt, 0);
++
++/* fdt_check_full() is not built into the kernel's libfdt: header, size and a full node walk. */
++static int kexec_alt_fdt_check(const void *fdt, size_t len)
++{
++	int node;
++
++	if (len < sizeof(struct fdt_header) || fdt_check_header(fdt) ||
++	    fdt_totalsize(fdt) > len)
++		return -EINVAL;
++	/*
++	 * No depth pointer: with one, fdt_next_node() returns the offset behind the root's
++	 * END_NODE (not -FDT_ERR_NOTFOUND) when the depth drops below zero, and the next call
++	 * then fails with BADOFFSET, which made every valid dtb look invalid here.
++	 */
++	for (node = 0; node >= 0; node = fdt_next_node(fdt, node, NULL))
++		;
++	if (node != -FDT_ERR_NOTFOUND || fdt_path_offset(fdt, "/memory") < 0)
++		return -EINVAL;
++	return 0;
++}
++
++static int __init kexec_alt_fdt_init(void)
++{
++	return sysfs_create_bin_file(firmware_kobj, &bin_attr_kexec_fdt);
++}
++late_initcall(kexec_alt_fdt_init);
++
+ /**
+  * fdt_find_and_del_mem_rsv - delete memory reservation with given address and size
+  *
+@@ -314,15 +403,32 @@ void *of_kexec_alloc_and_setup_fdt(const struct kimage *image,
+ 	const void *prop;
+ 	size_t fdt_size;
+ 
+-	fdt_size = fdt_totalsize(initial_boot_params) +
++	const void *base = initial_boot_params;
++
++	mutex_lock(&kexec_alt_fdt_lock);
++	if (kexec_alt_fdt_len) {
++		if (kexec_alt_fdt_check(kexec_alt_fdt, kexec_alt_fdt_len)) {
++			pr_err("kexec_fdt: the alternative FDT is not a valid dtb, refusing.\n");
++			mutex_unlock(&kexec_alt_fdt_lock);
++			return NULL;
++		}
++		base = kexec_alt_fdt;
++		pr_info("kexec_fdt: using the alternative base FDT (%u bytes)\n",
++			fdt_totalsize(base));
++	}
++
++	fdt_size = fdt_totalsize(base) +
+ 		   (cmdline ? strlen(cmdline) : 0) +
+ 		   FDT_EXTRA_SPACE +
+ 		   extra_fdt_size;
+ 	fdt = kvmalloc(fdt_size, GFP_KERNEL);
+-	if (!fdt)
++	if (!fdt) {
++		mutex_unlock(&kexec_alt_fdt_lock);
+ 		return NULL;
++	}
+ 
+-	ret = fdt_open_into(initial_boot_params, fdt, fdt_size);
++	ret = fdt_open_into(base, fdt, fdt_size);
++	mutex_unlock(&kexec_alt_fdt_lock);
+ 	if (ret < 0) {
+ 		pr_err("Error %d setting up the new device tree.\n", ret);
+ 		goto out;

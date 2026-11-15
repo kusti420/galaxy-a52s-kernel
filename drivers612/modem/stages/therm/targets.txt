@@ -1,0 +1,5 @@
+# Test T1 only (kernel-only pack, m1.sh argument "therm"; drivers612/power/THERMISTOR-ADC.md):
+# the PMIC VADC driver (PMK8350 vadc@3100, qcom,spmi-adc7). build.sh adds its dependencies
+# (qcom-vadc-common) and drops what the bsp612 first stage already loads. The IIO core is built
+# in (CONFIG_IIO=y). Not part of the Android "modem" stage.
+qcom-spmi-adc5.ko

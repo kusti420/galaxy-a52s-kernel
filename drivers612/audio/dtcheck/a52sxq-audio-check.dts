@@ -1,0 +1,4 @@
+/* compile check only: Qualcomm 6.12 yupik base + the audio fragment (not an image) */
+#include "yupik.dts"
+#include "../dts/yupik-audio.dtsi"
+#include "../a52sxq-audio.dtsi"

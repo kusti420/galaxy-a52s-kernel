@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * WCN6750 Wi-Fi (icnss2 + WPSS) for the Galaxy A52s 5G on the Qualcomm 6.12
+ * base (bsp612/out/dist/dtb/yupik.dtb, downstream bindings). To be included
+ * from a52sxq-conn.dtsi.
+ *
+ * Source of every value: the tree the phone boots, downstream-dt/a52sxq-r02.dts
+ * (node "icnss2: qcom,wcn6750", line 2756 ff.). The 6.12 yupik.dtsi has NO
+ * icnss2 node (Qualcomm moved yupik Wi-Fi to nothing on this branch), so the
+ * whole node is added here. Differences from the 5.4 node, each marked below:
+ *   [612-a] qcom,iommu-dma-addr-pool -> iommu-addresses (6.12 qcom-iommu-util
+ *           WARNs on and ignores the old property; icnss2 then defers forever).
+ *   [612-b] qcom,rproc-handle: 6.12 icnss2 boots the WPSS through remoteproc.
+ *   [612-c] soc-wake / ep-power-save smp2p entries: taken from the redwood
+ *           6.12 port (same SoC, same chip). The phone's 5.4 tree does not have
+ *           them. VERIFY ON HARDWARE that the phone's WPSS firmware answers
+ *           "wlan_soc_wake"; if icnss2 logs soc wake timeouts, drop the two
+ *           extra smem states and qcom,smp2p_map_wlan_2_in.
+ *
+ * Hardware revisions: the Samsung overlays (a52sxq_*_r0x) do not touch this
+ * node or its regulators; r02 (rev 3) and rev 4 are the same here. The board
+ * difference is in firmware (wpss.* per bootloader revision, bdwlan.elf<ant>),
+ * not in DT.
+ *
+ * Regulators (phone values, pm7325 = PMIC "b"; identical to yupik-regulators
+ * on 6.12 except S1B min, where the phone has 1856000 and the base 1840000:
+ * the a52sxq regulator fragment must pin that, not this file):
+ *   S7B pm7325_s7  vdd-cx-mx   request 824000..1120000 uV, rail 535000..1120000
+ *   S1B pm7325_s1  vdd-1.8-xo  request 1872000..2040000 uV, rail 1856000..2040000
+ *   S8B pm7325_s8  vdd-1.3-rfa request 1256000..1500000 uV, rail 1200000..1500000
+ * The <min max load delay idle> tuples are the phone's own
+ * (0xc92c0 0x111700 / 0x1c9080 0x1f20c0 / 0x132a40 0x16e360).
+ */
+
+&soc {
+	/* [612-c] */
+	qcom,smp2p-wpss {
+		smp2p_wlan_2_in: qcom,smp2p-wlan-2-in {
+			qcom,entry-name = "wlan_soc_wake";
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+
+		smp2p_wlan_2_out: qcom,smp2p-wlan-2-out {
+			qcom,entry-name = "wlan_soc_wake";
+			#qcom,smem-state-cells = <1>;
+		};
+
+		smp2p_wlan_3_out: qcom,smp2p-wlan-3-out {
+			qcom,entry-name = "wlan_ep_power_save";
+			#qcom,smem-state-cells = <1>;
+		};
+	};
+
+	icnss2: qcom,wcn6750 {
+		compatible = "qcom,wcn6750";
+		qcom,rproc-handle = <&wpss_pas>;			/* [612-b] */
+		reg = <0x17a10040 0x0>,
+		      <0xb0000000 0x10000>,
+		      <0xb2e5510 0x5c0>;
+		reg-names = "msi_addr", "smmu_iova_ipa", "tcs_cmd";
+		iommus = <&apps_smmu 0x1c00 0x1>;
+		interrupts = <GIC_SPI 768 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 769 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 770 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 771 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 772 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 773 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 774 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 775 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 776 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 777 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 778 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 779 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 780 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 781 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 782 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 783 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 784 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 785 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 786 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 787 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 788 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 789 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 790 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 791 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 792 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 793 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 794 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 795 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 796 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 797 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 798 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 799 IRQ_TYPE_EDGE_RISING>;
+
+		qcom,iommu-dma = "fastmap";
+		qcom,iommu-faults = "stall-disable", "HUPCF", "non-fatal";
+		memory-region = <&icnss2_iova>;				/* [612-a] */
+		qcom,iommu-geometry = <0xa0000000 0x10010000>;
+		qcom,wlan-msa-fixed-region = <&wlan_fw_mem>;	/* 0x80c00000 + 0xc00000, as on the phone */
+		qcom,cmd_db_name = "smpb7";
+		cnss-daemon-support;
+		/* no use-nv-mac on the A52s: the MAC comes from macloader via /sys/wifi/mac_addr */
+		dma-coherent;
+		qcom,fw-prefix;
+
+		vdd-cx-mx-supply = <&S7B>;
+		qcom,vdd-cx-mx-config = <824000 1120000 0 0 1>;
+		vdd-1.8-xo-supply = <&S1B>;
+		qcom,vdd-1.8-xo-config = <1872000 2040000 0 0 0>;
+		vdd-1.3-rfa-supply = <&S8B>;
+		qcom,vdd-1.3-rfa-config = <1256000 1500000 0 0 0>;
+
+		/* the phone has only the first state; 2 and 3 are [612-c] */
+		qcom,smem-states = <&smp2p_wlan_1_out 0>,
+				   <&smp2p_wlan_2_out 0>,
+				   <&smp2p_wlan_3_out 0>;
+		qcom,smem-state-names = "wlan-smp2p-out",
+					"wlan-soc-wake-smp2p-out",
+					"wlan-ep-powersave-smp2p-out";
+
+		/*
+		 * [612-a] 5.4: qcom,iommu-dma-addr-pool = <0xa0000000 0x10000000>.
+		 * 6.12 wants the reserved ranges AROUND the usable window:
+		 * [0, 0xa0000000) and [0xb0000000, 4G). &soc has one address
+		 * and one size cell.
+		 */
+		icnss2_iova: icnss2_iommu_region_partition {
+			iommu-addresses = <&icnss2 0x0 0xa0000000>,
+					  <&icnss2 0xb0000000 0x50000000>;
+		};
+
+		icnss_cdev_apss: qcom,icnss_cdev1 {
+			#cooling-cells = <2>;
+		};
+
+		icnss_cdev_wpss: qcom,icnss_cdev2 {
+			#cooling-cells = <2>;
+		};
+
+		qcom,smp2p_map_wlan_1_in {
+			interrupts-extended = <&smp2p_wlan_1_in 0 0>,
+					      <&smp2p_wlan_1_in 1 0>;
+			interrupt-names = "qcom,smp2p-force-fatal-error",
+					  "qcom,smp2p-early-crash-ind";
+		};
+
+		/* [612-c] */
+		qcom,smp2p_map_wlan_2_in {
+			interrupts-extended = <&smp2p_wlan_2_in 0 0>;
+			interrupt-names = "qcom,smp2p-soc-wake-ack";
+		};
+	};
+};
+
+/*
+ * The phone's 5.4 PIL node has qcom,firmware-name = "wpss": the image is
+ * /vendor/firmware/wpss.mdt (+ .b00...b07), bind-mounted per bootloader
+ * revision from /vendor/firmware/wlan/a528b/revN by wifi_firmware.rc.
+ * yupik.dtsi on 6.12 asks for "qca6750/wpss.mdt", which the vendor does not
+ * have.
+ */
+&wpss_pas {
+	firmware-name = "wpss.mdt";
+};

@@ -1,0 +1,190 @@
+wlan (qcacld-3.0): cfg80211 6.18 key/station ops take a wireless_dev
+
+cfg80211 6.18 passes add/get/del_key, set_default_mgmt/beacon_key, add/del/change/get/
+dump_station a struct wireless_dev instead of the net_device, remain_on_channel gets an
+optional rx_addr, and cfg80211_new_sta()/cfg80211_del_sta() take the wdev. Thin wrappers in
+front of the ops table hand qcacld's unchanged handlers wdev->netdev (-EOPNOTSUPP for a
+wdev without one; nl80211 needed a netdev for these ops on 6.12, so qcacld never saw such a
+call). rx_addr is only passed for drivers with NL80211_EXT_FEATURE_ROC_ADDR_FILTER, which
+qcacld does not set. The other 6.18 op changes (radio_idx for wiphy params / tx power /
+antenna) are already covered by qcacld's own version checks.
+
+--- a/drivers612/conn/wlan/work/qcacld-3.0/core/hdd/src/wlan_hdd_cfg80211.c
++++ b/drivers612/conn/wlan/work/qcacld-3.0/core/hdd/src/wlan_hdd_cfg80211.c
+@@ -25733,18 +25733,112 @@
+  * @key_mgmt_set_pmk = Set pmk key management
+  * @update_connect_params = Update connect params
+  */
++/*
++ * bsp618/port: cfg80211 6.18 passes the key and station ops a struct wireless_dev
++ * (v6.17/v6.18: wdev-only interfaces such as NAN can carry stations and keys), and
++ * remain_on_channel an optional rx_addr. qcacld's handlers keep their net_device form; these
++ * wrappers hand them wdev->netdev. Every qcacld interface that can reach these ops has a
++ * netdev (the wdev-only P2P device never had key/station ops called on 6.12 either: nl80211
++ * required a netdev for them); a wdev without one gets -EOPNOTSUPP. rx_addr is only set by
++ * userspace for drivers that advertise NL80211_EXT_FEATURE_ROC_ADDR_FILTER, which qcacld
++ * does not, so it is NULL here.
++ */
++#define HDD618_NDEV(wdev) ((wdev) ? (wdev)->netdev : NULL)
++
++static int hdd618_change_station(struct wiphy *wiphy, struct wireless_dev *wdev,
++				 const u8 *mac, struct station_parameters *params)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_change_station(wiphy, wdev->netdev, mac, params)
++				 : -EOPNOTSUPP;
++}
++
++static int hdd618_add_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id,
++			  u8 key_index, bool pairwise, const u8 *mac_addr,
++			  struct key_params *params)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_add_key(wiphy, wdev->netdev, link_id,
++				 key_index, pairwise, mac_addr, params) : -EOPNOTSUPP;
++}
++
++static int hdd618_get_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id,
++			  u8 key_index, bool pairwise, const u8 *mac_addr, void *cookie,
++			  void (*callback)(void *cookie, struct key_params *))
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_get_key(wiphy, wdev->netdev, link_id,
++				 key_index, pairwise, mac_addr, cookie, callback) : -EOPNOTSUPP;
++}
++
++static int hdd618_del_key(struct wiphy *wiphy, struct wireless_dev *wdev, int link_id,
++			  u8 key_index, bool pairwise, const u8 *mac_addr)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_del_key(wiphy, wdev->netdev, link_id,
++				 key_index, pairwise, mac_addr) : -EOPNOTSUPP;
++}
++
++static int hdd618_remain_on_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
++				    struct ieee80211_channel *chan, unsigned int duration,
++				    u64 *cookie, const u8 *rx_addr)
++{
++	return wlan_hdd_cfg80211_remain_on_channel(wiphy, wdev, chan, duration, cookie);
++}
++
++static int hdd618_set_default_mgmt_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++				       int link_id, u8 key_index)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_set_default_mgmt_key(wiphy, wdev->netdev, link_id,
++				 key_index) : -EOPNOTSUPP;
++}
++
++#if defined (CFG80211_BIGTK_CONFIGURATION_SUPPORT) || \
++	    (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0))
++static int hdd618_set_default_beacon_key(struct wiphy *wiphy, struct wireless_dev *wdev,
++					 int link_id, u8 key_index)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_set_default_beacon_key(wiphy,
++				 wdev->netdev, link_id, key_index) : -EOPNOTSUPP;
++}
++#endif
++
++static int hdd618_dump_station(struct wiphy *wiphy, struct wireless_dev *wdev, int idx,
++			       u8 *mac, struct station_info *sinfo)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_dump_station(wiphy, wdev->netdev, idx,
++				 mac, sinfo) : -EOPNOTSUPP;
++}
++
++static int hdd618_get_station(struct wiphy *wiphy, struct wireless_dev *wdev,
++			      const u8 *mac, struct station_info *sinfo)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_get_station(wiphy, wdev->netdev, mac,
++				 sinfo) : -EOPNOTSUPP;
++}
++
++static int hdd618_del_station(struct wiphy *wiphy, struct wireless_dev *wdev,
++			      struct station_del_parameters *params)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_del_station(wiphy, wdev->netdev, params)
++				 : -EOPNOTSUPP;
++}
++
++static int hdd618_add_station(struct wiphy *wiphy, struct wireless_dev *wdev,
++			      const u8 *mac, struct station_parameters *params)
++{
++	return HDD618_NDEV(wdev) ? wlan_hdd_cfg80211_add_station(wiphy, wdev->netdev, mac,
++				 params) : -EOPNOTSUPP;
++}
++
+ static struct cfg80211_ops wlan_hdd_cfg80211_ops = {
+ 	.add_virtual_intf = wlan_hdd_add_virtual_intf,
+ 	.del_virtual_intf = wlan_hdd_del_virtual_intf,
+ 	.change_virtual_intf = wlan_hdd_cfg80211_change_iface,
+-	.change_station = wlan_hdd_change_station,
++	.change_station = hdd618_change_station,
+ 	.start_ap = wlan_hdd_cfg80211_start_ap,
+ 	.change_beacon = wlan_hdd_cfg80211_change_beacon,
+ 	.stop_ap = wlan_hdd_cfg80211_stop_ap,
+ 	.change_bss = wlan_hdd_cfg80211_change_bss,
+-	.add_key = wlan_hdd_cfg80211_add_key,
+-	.get_key = wlan_hdd_cfg80211_get_key,
+-	.del_key = wlan_hdd_cfg80211_del_key,
++	.add_key = hdd618_add_key,
++	.get_key = hdd618_get_key,
++	.del_key = hdd618_del_key,
+ 	.set_default_key = wlan_hdd_cfg80211_set_default_key,
+ 	.scan = wlan_hdd_cfg80211_scan,
+ 	.connect = wlan_hdd_cfg80211_connect,
+@@ -25752,21 +25846,21 @@
+ 	.set_wiphy_params = wlan_hdd_cfg80211_set_wiphy_params,
+ 	.set_tx_power = wlan_hdd_cfg80211_set_txpower,
+ 	.get_tx_power = wlan_hdd_cfg80211_get_txpower,
+-	.remain_on_channel = wlan_hdd_cfg80211_remain_on_channel,
++	.remain_on_channel = hdd618_remain_on_channel,
+ 	.cancel_remain_on_channel = wlan_hdd_cfg80211_cancel_remain_on_channel,
+ 	.mgmt_tx = wlan_hdd_mgmt_tx,
+ 	.mgmt_tx_cancel_wait = wlan_hdd_cfg80211_mgmt_tx_cancel_wait,
+-	.set_default_mgmt_key = wlan_hdd_set_default_mgmt_key,
++	.set_default_mgmt_key = hdd618_set_default_mgmt_key,
+ #if defined (CFG80211_BIGTK_CONFIGURATION_SUPPORT) || \
+ 	    (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0))
+-	.set_default_beacon_key = wlan_hdd_cfg80211_set_default_beacon_key,
++	.set_default_beacon_key = hdd618_set_default_beacon_key,
+ #endif
+ 	.set_txq_params = wlan_hdd_set_txq_params,
+-	.dump_station = wlan_hdd_cfg80211_dump_station,
+-	.get_station = wlan_hdd_cfg80211_get_station,
++	.dump_station = hdd618_dump_station,
++	.get_station = hdd618_get_station,
+ 	.set_power_mgmt = wlan_hdd_cfg80211_set_power_mgmt,
+-	.del_station = wlan_hdd_cfg80211_del_station,
+-	.add_station = wlan_hdd_cfg80211_add_station,
++	.del_station = hdd618_del_station,
++	.add_station = hdd618_add_station,
+ 	.set_pmksa = wlan_hdd_cfg80211_set_pmksa,
+ 	.del_pmksa = wlan_hdd_cfg80211_del_pmksa,
+ 	.flush_pmksa = wlan_hdd_cfg80211_flush_pmksa,
+--- a/drivers612/conn/wlan/work/qcacld-3.0/core/hdd/src/wlan_hdd_hostapd.c
++++ b/drivers612/conn/wlan/work/qcacld-3.0/core/hdd/src/wlan_hdd_hostapd.c
+@@ -2658,7 +2658,7 @@
+ 							  event->staMac.bytes);
+ 
+ 			if (notify_new_sta)
+-				cfg80211_new_sta(dev,
++				cfg80211_new_sta(dev->ieee80211_ptr,	/* bsp618/port: wdev in 6.18 */
+ 						 (const u8 *)&event->
+ 						 staMac.bytes[0],
+ 						 sta_info, GFP_KERNEL);
+@@ -2822,7 +2822,7 @@
+ 		 */
+ 		if ((adapter->device_mode != QDF_P2P_GO_MODE) ||
+ 		     (!cds_is_driver_recovering())) {
+-			cfg80211_del_sta(dev,
++			cfg80211_del_sta(dev->ieee80211_ptr,	/* bsp618/port: wdev in 6.18 */
+ 					 (const u8 *)&sta_addr.bytes[0],
+ 					 GFP_KERNEL);
+ 			hdd_debug("indicate sta deletion event");
+--- a/drivers612/conn/wlan/work/qcacld-3.0/core/hdd/src/wlan_hdd_main.c
++++ b/drivers612/conn/wlan/work/qcacld-3.0/core/hdd/src/wlan_hdd_main.c
+@@ -9164,7 +9164,7 @@
+ 
+ 	hdd_debug("[SSR] send restart supplicant");
+ 	/* event supplicant to restart */
+-	cfg80211_del_sta(adapter->dev,
++	cfg80211_del_sta(adapter->dev->ieee80211_ptr,	/* bsp618/port: wdev in 6.18 */
+ 			 (const u8 *)&bcast_mac.bytes[0],
+ 			 GFP_KERNEL);
+ }

@@ -1,0 +1,40 @@
+msm_drm sde_rm: do not pass an uninitialised pp_cfg into _sde_rm_reserve_pp()
+
+_sde_rm_check_lm_and_get_connected_blks() passed its never-initialised local pp_cfg by value;
+the callee overwrote its copy before reading it, so the value was never used, but reading an
+uninitialised variable is undefined behaviour (clang 22: -Wuninitialized, fatal with
+CONFIG_WERROR). pp_cfg is now a local of _sde_rm_reserve_pp(), the only user.
+
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_rm.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_rm.c
+@@ -1132,12 +1132,12 @@
+ 		struct sde_rm_rsvp *rsvp,
+ 		struct sde_rm_requirements *reqs,
+ 		const struct sde_lm_cfg *lm_cfg,
+-		const struct sde_pingpong_cfg *pp_cfg,
+ 		struct sde_rm_hw_blk *lm,
+ 		struct sde_rm_hw_blk **dspp,
+ 		struct sde_rm_hw_blk **ds,
+ 		struct sde_rm_hw_blk **pp)
+ {
++	const struct sde_pingpong_cfg *pp_cfg;
+ 	struct sde_rm_hw_iter iter;
+ 
+ 	sde_rm_init_hw_iter(&iter, 0, SDE_HW_BLK_PINGPONG);
+@@ -1201,7 +1201,6 @@
+ 		u32 conn_lm_mask)
+ {
+ 	const struct sde_lm_cfg *lm_cfg = to_sde_hw_mixer(lm->hw)->cap;
+-	const struct sde_pingpong_cfg *pp_cfg;
+ 	bool ret, is_conn_primary, is_conn_secondary;
+ 	u32 lm_primary_pref, lm_secondary_pref, cwb_pref, dcwb_pref;
+ 
+@@ -1289,7 +1288,7 @@
+ 		return ret;
+ 
+ 	/* Reserve pp */
+-	ret = _sde_rm_reserve_pp(rm, rsvp, reqs, lm_cfg, pp_cfg, lm,
++	ret = _sde_rm_reserve_pp(rm, rsvp, reqs, lm_cfg, lm,
+ 			dspp, ds, pp);
+ 	if (!ret)
+ 		return ret;

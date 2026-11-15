@@ -1,0 +1,206 @@
+a52sxq: memlat: drop the sampling votes when the CPUs go idle
+
+memlat samples only from android_vh_jiffies_update, i.e. from the timekeeping CPU's tick. With
+NOHZ idle a mostly idle system therefore re-evaluates only when some CPU stays busy for a full
+tick, and the vote computed from that busy window is then held through the tickless idle that
+follows (measured on a52sxq: L3 vote 1.19-1.52 GHz at screen-off idle). On 5.4 the L3 memlat
+ran on RIMPS with its own 3 ms timer and decayed during idle; DDR/LLCC memlat polled from
+deferrable work and voted 0 (devfreq min) for a window without CPU cycles.
+
+1. Idle decay: at the end of every sampling update, while any sampling mon votes above its
+   idle level, a one-shot CLOCK_MONOTONIC hrtimer (memlat.idle_decay_ms, default 32 ms, at
+   least 2 x sample_ms, 50 % slack) is (re)armed. Every regular sample pushes it back, so it
+   never fires while CPUs tick; when it fires it takes one sample through the regular sampling
+   timer on the waking CPU (samples stay serialised). Idle CPUs are accounted from their
+   idle-entry counters as before, so within two such samples every vote reaches its idle
+   level, and then nothing is armed any more (no wakeups in steady idle). idle_decay_ms=0 off.
+2. Idle vote: a mon none of whose CPUs ran a cycle in the window (all freq_mhz 0) votes its
+   min_freq instead of cpufreq_to_memfreq()'s first table row (memlat.idle_min_vote, default
+   1), as the 5.4 governor_memlat (max_freq 0 -> devfreq min = lowest OPP). Any window with
+   CPU activity is computed exactly as before. idle_min_vote=0 = Qualcomm behaviour.
+
+Both module parameters are 0644 for A/B tests; with both off the driver behaves as before.
+
+--- a/drivers/soc/qcom/dcvs/memlat.c
++++ b/drivers/soc/qcom/dcvs/memlat.c
+@@ -231,6 +231,7 @@
+ 	struct workqueue_struct		*memlat_wq;
+ 	u32				sample_ms;
+ 	struct hrtimer			timer;
++	struct hrtimer			idle_timer;
+ 	ktime_t				last_update_ts;
+ 	ktime_t				last_jiffy_ts;
+ 	struct memlat_group		*groups[MAX_MEMLAT_GRPS];
+@@ -253,6 +254,26 @@
+ static DEFINE_PER_CPU(struct cpu_stats *, sampling_stats);
+ static DEFINE_MUTEX(memlat_lock);
+ 
++/*
++ * a52sxq: sampling only runs from the timekeeping CPU's tick (android_vh_jiffies_update), so
++ * with NOHZ idle the vote computed from the last busy window was held through the idle period
++ * that followed. While a mon votes above what an idle window gives, an extra one-shot sample
++ * is kept pending idle_decay_ms after the last one (re-armed by every sample, so it never fires
++ * while the regular samples run). 0 = off (Qualcomm behaviour).
++ */
++static unsigned int idle_decay_ms = 32;
++module_param(idle_decay_ms, uint, 0644);
++MODULE_PARM_DESC(idle_decay_ms, "re-sample this long after the last sample while a vote is above its idle level (0 = off)");
++
++/*
++ * a52sxq: a mon whose CPUs ran no cycles in the window votes its min_freq, as the 5.4
++ * governor_memlat did (max_freq 0 -> devfreq min), instead of the first table row. Windows
++ * with any CPU activity are unchanged. false = Qualcomm behaviour.
++ */
++static bool idle_min_vote = true;
++module_param(idle_min_vote, bool, 0644);
++MODULE_PARM_DESC(idle_min_vote, "a mon with no CPU cycles in the window votes min_freq, not table row 0");
++
+ struct qcom_memlat_attr {
+ 	struct attribute		attr;
+ 	ssize_t (*show)(struct kobject *kobj, struct attribute *attr,
+@@ -868,6 +889,15 @@
+ 	return mem_khz;
+ }
+ 
++/* a52sxq: what @mon votes for a window in which none of its CPUs ran */
++static u32 memlat_mon_idle_freq(struct memlat_mon *mon)
++{
++	u32 freq = idle_min_vote ? 0 : cpufreq_to_memfreq(mon, 0);
++
++	freq = max(freq, mon->min_freq);
++	return min(freq, mon->max_freq);
++}
++
+ static void calculate_sampling_stats(void)
+ {
+ 	int i, grp, cpu, level = 0;
+@@ -1013,12 +1043,15 @@
+ 	u32 max_memfreq, max_cpufreq = 0;
+ 	u32 max_cpufreq_scaled = 0, ipm_diff;
+ 	u32 hw = mon->memlat_grp->hw_type;
++	bool ran = false;
+ 
+ 	if (hw >= NUM_DCVS_HW_TYPES)
+ 		return;
+ 
+ 	for_each_cpu(cpu, &mon->cpus) {
+ 		stats = per_cpu(sampling_stats, cpu);
++		if (stats->freq_mhz)
++			ran = true;
+ 		if (mon->is_compute || (stats->wb_pct[hw] >= mon->wb_pct_thres
+ 		    && stats->ipm[hw] <= mon->wb_filter_ipm))
+ 			set_higher_freq(&max_cpu, cpu, &max_cpufreq,
+@@ -1041,7 +1074,10 @@
+ 		}
+ 	}
+ 
+-	max_memfreq = cpufreq_to_memfreq(mon, max_cpufreq);
++	if (ran)
++		max_memfreq = cpufreq_to_memfreq(mon, max_cpufreq);
++	else
++		max_memfreq = memlat_mon_idle_freq(mon);
+ 	max_memfreq = max(max_memfreq, mon->min_freq);
+ 	max_memfreq = min(max_memfreq, mon->max_freq);
+ 
+@@ -1117,6 +1153,53 @@
+ 	local_irq_restore(flags);
+ }
+ 
++/*
++ * a52sxq: called at the end of every sampling update. Keep one extra sample pending while any
++ * sampling mon votes above its idle level; once every vote is at its idle level nothing is
++ * armed, so a fully idle system gets no wakeups from here. The pending sample is pushed back
++ * by every regular sample (8 ms apart while CPUs tick), so it only fires after idle_decay_ms
++ * (at least 2 x sample_ms) without a tick. 50 % slack lets it share another wakeup.
++ */
++static void memlat_arm_idle_decay(void)
++{
++	struct memlat_group *memlat_grp;
++	struct memlat_mon *mon;
++	unsigned int decay_ms = READ_ONCE(idle_decay_ms);
++	bool above = false;
++	int i, grp;
++	u64 ns;
++
++	if (!decay_ms) {
++		hrtimer_try_to_cancel(&memlat_data->idle_timer);
++		return;
++	}
++
++	for (grp = 0; grp < MAX_MEMLAT_GRPS && !above; grp++) {
++		memlat_grp = memlat_data->groups[grp];
++		if (!memlat_grp || memlat_grp->sampling_path_type == NUM_DCVS_PATHS)
++			continue;
++		for (i = 0; i < memlat_grp->num_inited_mons; i++) {
++			mon = &memlat_grp->mons[i];
++			if (!(mon->type & SAMPLING_MON))
++				continue;
++			if (mon->cur_freq > memlat_mon_idle_freq(mon)) {
++				above = true;
++				break;
++			}
++		}
++	}
++
++	if (!above) {
++		hrtimer_try_to_cancel(&memlat_data->idle_timer);
++		return;
++	}
++
++	decay_ms = max(decay_ms, 2 * memlat_data->sample_ms);
++	ns = (u64)decay_ms * NSEC_PER_MSEC;
++	hrtimer_start_range_ns(&memlat_data->idle_timer, ns_to_ktime(ns), ns / 2,
++			       HRTIMER_MODE_REL);
++}
++
+ /* sampling path update work */
+ static void memlat_update_work(struct work_struct *work)
+ {
+@@ -1166,6 +1249,8 @@
+ 		if (ret < 0)
+ 			dev_err(memlat_grp->dev, "qcom dcvs err: %d\n", ret);
+ 	}
++
++	memlat_arm_idle_decay();
+ }
+ 
+ static enum hrtimer_restart memlat_hrtimer_handler(struct hrtimer *timer)
+@@ -1177,6 +1262,29 @@
+ 	return HRTIMER_NORESTART;
+ }
+ 
++/*
++ * a52sxq: no sample for idle_decay_ms while a vote is above its idle level, i.e. no CPU ticked
++ * since: take one sample now on this CPU through the regular timer (so samples stay
++ * serialised). Idle CPUs are accounted from their idle-entry counters (memlat_pmu_idle_cb).
++ */
++static enum hrtimer_restart memlat_idle_timer_handler(struct hrtimer *timer)
++{
++	ktime_t now = ktime_get();
++
++	if (!memlat_data->inited || !memlat_data->sampling_enabled)
++		return HRTIMER_NORESTART;
++	/* a regular sample ran meanwhile; its update work re-arms this timer if needed */
++	if (ktime_ms_delta(now, READ_ONCE(memlat_data->last_update_ts)) <
++	    memlat_data->sample_ms)
++		return HRTIMER_NORESTART;
++
++	/* the jiffies callback then keeps its sample_ms spacing from this sample */
++	WRITE_ONCE(memlat_data->last_jiffy_ts, now);
++	hrtimer_start(&memlat_data->timer, 0, HRTIMER_MODE_REL_PINNED);
++
++	return HRTIMER_NORESTART;
++}
++
+ static const u64 HALF_TICK_NS = (NSEC_PER_SEC / HZ) >> 1;
+ #define MEMLAT_UPDATE_DELAY (100 * NSEC_PER_USEC)
+ static void memlat_jiffies_update_cb(void *unused, void *extra)
+@@ -1386,6 +1494,8 @@
+ 
+ 	hrtimer_init(&memlat_data->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+ 	memlat_data->timer.function = memlat_hrtimer_handler;
++	hrtimer_init(&memlat_data->idle_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
++	memlat_data->idle_timer.function = memlat_idle_timer_handler;
+ 
+ 	register_trace_android_vh_jiffies_update(memlat_jiffies_update_cb, NULL);
+ 

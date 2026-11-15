@@ -1,0 +1,149 @@
+--- a/leds-sm5714-fled.c
++++ b/leds-sm5714-fled.c
+@@ -27,6 +27,18 @@
+ extern int muic_check_fled_state(int enable, int mode);   /* mode:1 = FLED_MODE_TORCH, mode:2 = FLED_MODE_FLASH */
+ extern int sm5714_usbpd_check_fled_state(bool enable, u8 mode);
+ 
++/*
++ * a52sxq 6.12/6.18: the camera techpack (cam_flash_core.c, cam_sysfs_init.c) calls these. Keep
++ * the prototypes identical to drivers612/camera/work/compat/linux/mfd/sm/sm5714/sm5714.h and
++ * drivers612/camera/deps/sm5714-fled-stub, INCLUDING the parameter names: the GKI builds use
++ * gendwarfksyms, whose CRC covers the DWARF parameter names, so "flash_data" instead of
++ * "brightness" gives a different CRC and camera.ko (linked against the stub's Module.symvers)
++ * would be refused ("disagrees about version of symbol sm5714_fled_mode_ctrl").
++ */
++int32_t sm5714_fled_mode_ctrl(int state, uint32_t brightness);
++ssize_t sm5714_store(const char *buf);
++ssize_t sm5714_show(char *buf);
++
+ static void fled_set_enable_push_event(int event_type)
+ {
+ 	int current_op_status = sm5714_charger_oper_get_current_status();
+@@ -316,12 +328,15 @@
+  *
+  */
+ 
+-int32_t sm5714_fled_mode_ctrl(int state, uint32_t flash_data)
++int32_t sm5714_fled_mode_ctrl(int state, uint32_t brightness)
+ {
+ 	struct sm5714_fled_data *fled = g_sm5714_fled;
+ 	int ret = 0;
+ 	u8 iq_cur = 0;
+-	uint32_t brightness = flash_data & 0x0FFF;
++	/* 5.4 named the argument flash_data (bits 15..12 = FLED_MODE_*, 11..0 = current in mA) */
++	uint32_t flash_data = brightness;
++
++	brightness = flash_data & 0x0FFF;
+ 
+ 	if (g_sm5714_fled == NULL) {
+ 		pr_err("sm5714_fled: %s: g_sm5714_fled is not initialized.\n", __func__);
+@@ -547,38 +562,60 @@
+ 
+ static int sm5714_fled_parse_dt(struct device *dev, struct sm5714_fled_platform_data *pdata)
+ {
+-	struct device_node *np;
++	struct device_node *np = NULL;
+ 	u32 temp;
+ 	int ret;
+ 	dev_info(dev, "%s: parse from dtsi file\n", __func__);
+ 
+-	np = of_find_node_by_name(NULL, "sm5714-fled");
++	/*
++	 * a52sxq 6.12: the settings live in a child node "sm5714-fled" of the SM5714 MFD node
++	 * (sm5714@49), our parent device. The phone's 5.4 tree has them in an I2C node next to
++	 * the MFD with the same reg (0x49); on 6.12 that node, when enabled, becomes an I2C client
++	 * before the MFD and the fuel gauge/charger never probe, so it stays disabled and is only
++	 * used as a fallback here (5.4 behaviour: first node of that name anywhere).
++	 */
++	if (dev->parent && dev->parent->of_node)
++		np = of_get_child_by_name(dev->parent->of_node, "sm5714-fled");
++	if (!np)
++		np = of_find_node_by_name(NULL, "sm5714-fled");
+ 	if (!np) {
+ 		dev_err(dev, "%s: can't find sm5714-fled np\n", __func__);
+ 		return -EINVAL;
+ 	}
++	dev_info(dev, "%s: settings from %pOF\n", __func__, np);
+ 
++	temp = 0;
+ 	of_property_read_u32(np, "flash-brightness", &temp);
+ 	pdata->led.flash_brightness = (temp & 0xff);
++	temp = 0;
+ 	of_property_read_u32(np, "preflash-brightness", &temp);
+ 	pdata->led.preflash_brightness = (temp & 0xff);
++	temp = 0;
+ 	of_property_read_u32(np, "torch-brightness", &temp);
+ 	pdata->led.torch_brightness = (temp & 0xff);
++	temp = 0;
+ 	of_property_read_u32(np, "timeout", &temp);
+ 	pdata->led.timeout = (temp & 0xff);
+-	of_property_read_u8(np, "factory_current", &pdata->led.factory_current);
++	/* a <u32> cell on the phone (<0x00>); 5.4 read its first byte with of_property_read_u8 */
++	temp = 0;
++	if (of_property_read_u32(np, "factory_current", &temp))
++		of_property_read_u8(np, "factory_current", (u8 *)&temp);
++	pdata->led.factory_current = (temp & 0xff);
+ 
+ 	ret = pdata->led.fen_pin = of_get_named_gpio(np, "flash-en-gpio", 0);
+ 	if (ret < 0) {
+ 		pr_err("%s : can't get flash-en-gpio\n", __func__);
++		of_node_put(np);
+ 		return ret;
+ 	}
+ 
+ 	ret = pdata->led.men_pin = of_get_named_gpio(np, "torch-en-gpio", 0);
+ 	if (ret < 0) {
+ 		pr_err("%s : can't get torch-en-gpio\n", __func__);
++		of_node_put(np);
+ 		return ret;
+ 	}
++	of_node_put(np);
+ 
+ 	dev_info(dev, "%s: f_cur=0x%x, pre_cur=0x%x, t_cur=0x%x, tout=%d, gpio=%d:%d\n",
+ 		__func__, pdata->led.flash_brightness, pdata->led.preflash_brightness,
+@@ -632,6 +669,7 @@
+ 	}
+ 
+ 	sm5714_fled_init(fled);
++	platform_set_drvdata(pdev, fled);	/* 5.4 never set it: remove() dereferenced NULL */
+ 	g_sm5714_fled = fled;
+ 
+ 	dev_info(&pdev->dev, "sm5714 fled probe done [%s].\n", SM5714_FLED_VERSION);
+@@ -646,18 +684,31 @@
+ 	return ret;
+ }
+ 
+-static int sm5714_fled_remove(struct platform_device *pdev)
++static void sm5714_fled_remove(struct platform_device *pdev)
+ {
+ 	struct sm5714_fled_data *fled = platform_get_drvdata(pdev);
+ 
++	if (!fled)
++		return;
++	mutex_lock(&fled->fled_mutex);
++	g_sm5714_fled = NULL;
+ 	fled_set_mode(fled, FLED_MODE_OFF);
++	if (fled->pdata->led.used_gpio_ctrl) {
++		gpio_set_value(fled->pdata->led.men_pin, 0);
++		gpio_set_value(fled->pdata->led.fen_pin, 0);
++		gpio_free(fled->pdata->led.men_pin);
++		gpio_free(fled->pdata->led.fen_pin);
++		fled->pdata->led.used_gpio_ctrl = false;
++	}
++	/* hand the charger its normal operation mode back (torch/flash boost events) */
++	if (fled->torch_on_cnt || fled->flash_prepare_cnt)
++		fled_set_disable_push_event(SM5714_CHARGER_OP_EVENT_TORCH);
++	if (fled->flash_on_cnt || fled->flash_prepare_cnt)
++		fled_set_disable_push_event(SM5714_CHARGER_OP_EVENT_FLASH);
++	mutex_unlock(&fled->fled_mutex);
+ 
+ 	platform_set_drvdata(pdev, NULL);
+-
+-	devm_kfree(&pdev->dev, fled->pdata);
+-	devm_kfree(&pdev->dev, fled);
+-
+-	return 0;
++	/* fled and pdata are devm allocations: released after remove() */
+ }
+ 
+ static struct of_device_id sm5714_fled_match_table[] = {

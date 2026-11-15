@@ -1,0 +1,99 @@
+minidump (soc-repo): 6.18 sched/mm/dma-buf names
+
+minidump is a load dependency of boot-path modules (ufs-qcom with CONFIG_QCOM_MINIDUMP,
+qcom_wdt_core, qcom-dload-mode, dcc_v2, frpc-adsprpc), so it is ported rather than left out.
+
+- cfs_rq.nr_running is nr_queued in 6.18 (runqueue dump).
+- NR_BOUNCE and NR_WRITEBACK_TEMP are gone: the meminfo dump prints 0 for both, as the 6.18
+  /proc/meminfo does.
+- page->flags is memdesc_flags_t: .f
+- ACK 6.18 dropped get_dmabuf_debugfs_data(): a local walker over the upstream
+  dma_buf_iter_begin()/dma_buf_iter_next() (namespace DMA_BUF, imported by the ns-import rule).
+
+--- a/bsp612/soc-repo/drivers/soc/qcom/minidump_log.c
++++ b/bsp612/soc-repo/drivers/soc/qcom/minidump_log.c
+@@ -736,7 +736,7 @@
+ 		md_dump_task_info(task, status, curr);
+ 		return;
+ 	}
+-	nr_running = my_q->nr_running;
++	nr_running = my_q->nr_queued;	/* bsp618/port: cfs_rq.nr_running is nr_queued in 6.18 */
+ 	md_dump_align();
+ 	seq_buf_printf(md_runq_seq_buf, "%s: %d process is grouping\n",
+ 				   status, nr_running);
+@@ -996,7 +996,7 @@
+ 			       cpu, rq->nr_running, cpu_curr(cpu)->pid);
+ 		seq_buf_printf(md_runq_seq_buf,
+ 			       "CFS has %d process\n",
+-			       cfs->nr_running);
++			       cfs->nr_queued);	/* bsp618/port: was nr_running */
+ 		md_dump_cfs_rq(cfs, cpu_curr(cpu));
+ 		seq_buf_printf(md_runq_seq_buf,
+ 			       "RT has %d process\n",
+--- a/bsp612/soc-repo/drivers/soc/qcom/minidump_memory.c
++++ b/bsp612/soc-repo/drivers/soc/qcom/minidump_memory.c
+@@ -163,10 +163,9 @@
+ #endif
+ 	show_val_kb(m, "PageTables:     ",
+ 		    global_node_page_state(NR_PAGETABLE));
+-	show_val_kb(m, "Bounce:         ",
+-		    global_zone_page_state(NR_BOUNCE));
+-	show_val_kb(m, "WritebackTmp:   ",
+-		    global_node_page_state(NR_WRITEBACK_TEMP));
++	/* bsp618/port: NR_BOUNCE and NR_WRITEBACK_TEMP are gone; 0 as in 6.18 /proc/meminfo */
++	show_val_kb(m, "Bounce:         ", 0);
++	show_val_kb(m, "WritebackTmp:   ", 0);
+ 	seq_buf_printf(m, "VmallocTotal:   %8lu kB\n",
+ 		   (unsigned long)VMALLOC_TOTAL >> 10);
+ 	show_val_kb(m, "VmallocUsed: ", vmalloc_nr_pages());
+@@ -442,7 +441,7 @@
+ 	unsigned int nr_entries;
+ 	struct accounted_call_site *call_site;
+ 
+-	if ((page->flags &
++	if ((page->flags.f &	/* bsp618/port: page->flags is memdesc_flags_t */
+ 		((1UL << PG_lru) | (1UL << PG_swapbacked))))
+ 		return false;
+ 
+@@ -493,12 +492,12 @@
+ 					goto dump;
+ 				break;
+ 			case 0x4:
+-				if (page->flags & (1UL << PG_swapbacked))
++				if (page->flags.f & (1UL << PG_swapbacked))
+ 					goto dump;
+ 				break;
+ 			case 0x8:
+-				if ((page->flags & (1UL << PG_lru)) &&
+-					~(page->flags & (1UL << PG_swapbacked)))
++				if ((page->flags.f & (1UL << PG_lru)) &&
++					~(page->flags.f & (1UL << PG_swapbacked)))
+ 					goto dump;
+ 				break;
+ 			default:
+@@ -1168,6 +1167,25 @@
+ 	return -ENOSPC;
+ }
+ 
++/*
++ * bsp618/port: ACK 6.18 dropped get_dmabuf_debugfs_data(); walk the buffers with the upstream
++ * dma_buf_iter_begin()/_next() (each step holds a reference to the current buffer).
++ */
++static int get_dmabuf_debugfs_data(int (*fn)(const struct dma_buf *, void *), void *private)
++{
++	struct dma_buf *dmabuf;
++	int ret = 0;
++
++	for (dmabuf = dma_buf_iter_begin(); dmabuf; dmabuf = dma_buf_iter_next(dmabuf)) {
++		ret = fn(dmabuf, private);
++		if (ret) {
++			dma_buf_put(dmabuf);
++			break;
++		}
++	}
++	return ret;
++}
++
+ static void md_dma_buf_info(char *m, size_t dump_size)
+ {
+ 	int ret;

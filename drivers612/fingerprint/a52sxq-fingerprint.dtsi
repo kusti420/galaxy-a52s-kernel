@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Samsung Galaxy A52s 5G (a52sxq): optical under-display fingerprint sensor for the Qualcomm
+ * 6.12 BSP base (downstream bindings). Overlay-checked onto out-ack/kx/android-r02.dtb by
+ * drivers612/fingerprint/dt-check.sh (fdtoverlay + node-by-node comparison with the phone).
+ *
+ * Source of every value: the tree the phone boots, downstream-dt/a52sxq-r02.dts
+ * (/soc/etspi,et7xx, /soc/pinctrl@f000000/et7xx_rst, L3C). Samsung's overlays r00, r01 and r02
+ * (arch/arm64/boot/dts/samsung/a52/a52sxq/a52sxq_kor_single_w00_r0[012].dts) carry the same
+ * node, pin state and rail value for value, so there is no hardware-revision difference
+ * (bench phones: rev 3 and rev 4, both on r02).
+ *
+ * Sensor: Egis ET713 (etspi-chipid "ET713"), optical, under the panel.
+ * Driver: drivers612/fingerprint (fingerprint_sysfs.ko + fingerprint.ko, compatible
+ * "etspi,et7xx"), built like the phone's kernel with CONFIG_FINGERPRINT_SECURE=y:
+ *   - it is a PLATFORM device, not an SPI device. The sensor's SPI bus is QUP SE14
+ *     (qupv3_se14_spi, spi@a98000, TLMM 56..59, function qup16) and belongs to TrustZone; the
+ *     Egis trusted app drives it. HLOS must not touch that serial engine:
+ *       * &qupv3_se14_spi and &qupv3_se14_i2c stay "disabled" (they are in the phone's tree and
+ *         in the 6.12 base; dt-check.sh asserts it);
+ *       * TLMM 56..59 are reserved (qcom,gpios-reserved, set by
+ *         drivers612/boarddt/a52sxq-bsp612-fixups.dtsi; on 5.4 pinctrl-yupik.c reserved them in
+ *         C under CONFIG_FINGERPRINT_SECURE). dt-check.sh asserts that too. Not repeated here, so
+ *         that boarddt stays the only owner of that property.
+ *     The SE clock (gcc_qupv3_wrap1_s6_clk) is a voted branch (0x52000 bit 13 is the APPS
+ *     vote); TrustZone votes for itself, so HLOS neither enables nor disables it for TZ - the
+ *     phone's 5.4 kernel did not either (fingerprint_common_qcom.c only holds a wakelock).
+ *   - what the kernel does: the 3.3 V rail (L3C), the sleep/reset line TLMM 35, /dev/esfp0 and
+ *     /sys/class/fingerprint/fingerprint/.
+ *   - reg = <0> and spi-max-frequency are leftovers of the SPI binding; the secure driver reads
+ *     neither. Kept as on the phone (reg 0 makes the device "0.etspi,et7xx" on both kernels).
+ *     So are gpio-controller / #gpio-cells (no driver, no consumer).
+ *
+ *   sleep / reset    TLMM 35 (0x23), active high = sensor running; output-low, pull-down,
+ *                    2 mA in the "default" pin state (et7xx_rst, already in the 6.12 board tree
+ *                    from boarddt's a52sxq-pinctrl.dtsi, identical to the phone)
+ *   power            PM8350C L3 (L3C) "VDD_BTP_3P3", 3.300 V fixed (min == max == init), load
+ *                    100 mA set by the driver (-> HPM above the 30 mA threshold)
+ *   interrupt        none: touch reports the finger (/sys/class/sec/tsp/input/fod_pressed)
+ */
+
+/* ------------------------------------------------------------------ rail */
+/*
+ * L3C, values from the phone's tree (regulator-name, 3300000 / 3300000 / init 3300000, mode 4).
+ * The 6.12 base had 2.8 / 3.54 / 2.8 V (bsp612/README.md rail table); boarddt's
+ * a52sxq-regulators.dtsi already writes the phone's values, these lines are identical to it and
+ * keep this fragment correct on its own. The name matters: the 5.4 driver looks the rail up by
+ * "etspi-regulator" = this regulator-name when there is no etspi-btp-supply.
+ */
+&pm8350c_l3 {
+	regulator-name = "VDD_BTP_3P3";
+	regulator-min-microvolt = <3300000>;
+	regulator-max-microvolt = <3300000>;
+	qcom,init-voltage = <3300000>;
+	qcom,init-mode = <4>;
+};
+
+/* ------------------------------------------------------------------ sensor */
+&soc {
+	etspi: etspi,et7xx {
+		compatible = "etspi,et7xx";
+		reg = <0x0>;
+		spi-max-frequency = <12500000>;		/* 0xbebc20, unused by the secure driver */
+		pinctrl-names = "default";
+		pinctrl-0 = <&et7xx_rst>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		etspi-regulator = "VDD_BTP_3P3";
+		/*
+		 * NEW on 6.12 (not in the phone's tree): the same rail by phandle. The ported
+		 * driver then uses regulator_get(dev, "etspi-btp") and defers until the
+		 * rpmh-regulator driver has registered L3C; fw_devlink also orders the probe.
+		 * Without it the driver falls back to the 5.4 lookup by name, which silently
+		 * hands out the dummy regulator if L3C is not registered yet.
+		 */
+		etspi-btp-supply = <&pm8350c_l3>;
+		etspi-sleepPin = <&tlmm 35 0>;
+		etspi-chipid = "ET713";
+		etspi-modelinfo = "A528";
+		etspi-position = "11.81,-0.02,9.10,9.10,14.80,14.80,12.00,12.00,5.00";
+		etspi-rb = "547,-1,-1,FFFFFF";
+	};
+};

@@ -1,0 +1,93 @@
+idx | 5.4 Samsung (a52s config) name / stream / FE|BE | 6.12 donor name / stream / FE|BE(parser: no .no_pcm => "FE") | same?
+  0 | MSM_DAILINK_NAME(Media1) / MultiMedia1 / FE | MultiMedia1 / MultiMedia1 / FE | same stream
+  1 | MSM_DAILINK_NAME(Media2) / MultiMedia2 / FE | MultiMedia2 / MultiMedia2 / FE | same stream
+  2 | VoiceMMode1 / VoiceMMode1 / FE | VoiceMMode1 / VoiceMMode1 / FE | same
+  3 | MSM VoIP / VoIP / FE | MSM VoIP / VoIP / FE | same
+  4 | MSM_DAILINK_NAME(ULL) / MultiMedia3 / FE | MultiMedia3 / MultiMedia3 / FE | same stream
+  5 | MSM AFE-PCM RX / AFE-PROXY RX / FE | MSM AFE-PCM RX / AFE-PROXY RX / FE | same
+  6 | MSM AFE-PCM TX / AFE-PROXY TX / FE | MSM AFE-PCM TX / AFE-PROXY TX / FE | same
+  7 | MSM_DAILINK_NAME(Compress1) / Compress1 / FE | Compress1 / Compress1 / FE | same
+  8 | AUXPCM Hostless / AUXPCM Hostless / FE | AUXPCM Hostless / AUXPCM Hostless / FE | same
+  9 | MSM_DAILINK_NAME(LowLatency) / MultiMedia5 / FE | MultiMedia5 / MultiMedia5 / FE | same stream
+ 10 | Listen 1 Audio Service / Listen 1 Audio Service / FE | Listen 1 Audio Service / Listen 1 Audio Service / FE | same
+ 11 | MSM_DAILINK_NAME(Compress2) / Compress2 / FE | Compress2 / Compress2 / FE | same
+ 12 | MSM_DAILINK_NAME(MultiMedia10) / MultiMedia10 / FE | MultiMedia10 / MultiMedia10 / FE | same
+ 13 | MSM_DAILINK_NAME(ULL_NOIRQ) / MM_NOIRQ / FE | MM_NOIRQ / MM_NOIRQ / FE | same stream
+ 14 | HDMI_RX_HOSTLESS / HDMI_RX_HOSTLESS / FE | HDMI_RX_HOSTLESS / HDMI_RX_HOSTLESS / FE | same
+ 15 | VoiceMMode2 / VoiceMMode2 / FE | VoiceMMode2 / VoiceMMode2 / FE | same
+ 16 | Listen 2 Audio Service / Listen 2 Audio Service / FE | Listen 2 Audio Service / Listen 2 Audio Service / FE | same
+ 17 | Listen 3 Audio Service / Listen 3 Audio Service / FE | Listen 3 Audio Service / Listen 3 Audio Service / FE | same
+ 18 | Listen 4 Audio Service / Listen 4 Audio Service / FE | Listen 4 Audio Service / Listen 4 Audio Service / FE | same
+ 19 | Listen 5 Audio Service / Listen 5 Audio Service / FE | Listen 5 Audio Service / Listen 5 Audio Service / FE | same
+ 20 | Listen 6 Audio Service / Listen 6 Audio Service / FE | Listen 6 Audio Service / Listen 6 Audio Service / FE | same
+ 21 | Listen 7 Audio Service / Listen 7 Audio Service / FE | Listen 7 Audio Service / Listen 7 Audio Service / FE | same
+ 22 | Listen 8 Audio Service / Listen 8 Audio Service / FE | Listen 8 Audio Service / Listen 8 Audio Service / FE | same
+ 23 | MSM_DAILINK_NAME(Media9) / MultiMedia9 / FE | MultiMedia9 / MultiMedia9 / FE | same stream
+ 24 | MSM_DAILINK_NAME(Media11) / MultiMedia11 / FE | Compress4 / Compress4 / FE | same-id
+ 25 | MSM_DAILINK_NAME(Compress5) / Compress5 / FE | Compress5 / Compress5 / FE | same
+ 26 | MSM_DAILINK_NAME(Compress6) / Compress6 / FE | Compress6 / Compress6 / FE | same
+ 27 | MSM_DAILINK_NAME(Compress7) / Compress7 / FE | Compress7 / Compress7 / FE | same
+ 28 | MSM_DAILINK_NAME(Compress8) / Compress8 / FE | Compress8 / Compress8 / FE | same
+ 29 | MSM_DAILINK_NAME(ULL_NOIRQ_2) / MM_NOIRQ_2 / FE | MM_NOIRQ_2 / MM_NOIRQ_2 / FE | same stream
+ 30 | CDC_DMA Hostless / CDC_DMA Hostless / FE | CDC_DMA Hostless / CDC_DMA Hostless / FE | same
+ 31 | TX3_CDC_DMA Hostless / TX3_CDC_DMA Hostless / FE | TX3_CDC_DMA Hostless / TX3_CDC_DMA Hostless / FE | same
+ 32 | Tertiary MI2S TX_Hostless / Tertiary MI2S_TX Hostless Capture / FE | Tertiary MI2S TX_Hostless / Tertiary MI2S_TX Hostless Capture / FE | same
+ 33 | LPASS_BE_WSA_CDC_DMA_TX_0 / WSA CDC DMA0 Capture / FE | LPASS_BE_WSA_CDC_DMA_TX_0 / WSA CDC DMA0 Capture / FE | same
+ 34 | MSM_DAILINK_NAME(ASM Loopback) / MultiMedia6 / FE | MultiMedia6 / MultiMedia6 / FE | same stream
+ 35 | USB Audio Hostless / USB Audio Hostless / FE | USB Audio Hostless / USB Audio Hostless / FE | same
+ 36 | SLIMBUS_7 Hostless / SLIMBUS_7 Hostless / FE | SLIMBUS_7 Hostless / SLIMBUS_7 Hostless / FE | same
+ 37 | Compress Capture / Compress9 / FE | Compress9 / Compress9 / FE | same stream
+ 38 | SLIMBUS_8 Hostless / SLIMBUS_8 Hostless / FE | SLIMBUS_8 Hostless / SLIMBUS_8 Hostless / FE | same
+ 39 | LPASS_BE_TX_CDC_DMA_TX_5 / TX CDC DMA5 Capture / FE | LPASS_BE_TX_CDC_DMA_TX_5 / TX CDC DMA5 Capture / FE | same
+ 40 | MSM_DAILINK_NAME(Media31) / MultiMedia31 / FE | MultiMedia31 / MultiMedia31 / FE | same stream
+ 41 | MSM_DAILINK_NAME(Media32) / MultiMedia32 / FE | MultiMedia32 / MultiMedia32 / FE | same stream
+ 42 | MSM AFE-PCM TX1 / AFE-PROXY TX1 / FE | MSM AFE-PCM TX1 / AFE-PROXY TX1 / FE | same
+ 43 | MSM_DAILINK_NAME(Compress3) / Compress3 / FE | Compress3 / Compress3 / FE | same
+ 44 | Secondary MI2S_TX Hostless / Secondary MI2S_TX Hostless Capture / FE | Secondary MI2S_TX Hostless / Secondary MI2S_TX Hostless Capture / FE | same
+ 45 | DISPLAY_PORT_RX_HOSTLESS / DISPLAY_PORT_RX_HOSTLESS / FE | DISPLAY_PORT_RX_HOSTLESS / DISPLAY_PORT_RX_HOSTLESS / FE | same
+ 46 | Audio ADAPTATION Hostless / Audio ADAPTATION Hostless / BE | LPASS_BE_AFE_PCM_RX / AFE Playback / BE | DIFF
+ 47 | LPASS_BE_AFE_PCM_RX / AFE Playback / BE | LPASS_BE_AFE_PCM_TX / AFE Capture / BE | DIFF
+ 48 | LPASS_BE_AFE_PCM_TX / AFE Capture / BE | LPASS_BE_INCALL_RECORD_TX / Voice Uplink Capture / BE | DIFF
+ 49 | LPASS_BE_INCALL_RECORD_TX / Voice Uplink Capture / BE | LPASS_BE_INCALL_RECORD_RX / Voice Downlink Capture / BE | DIFF
+ 50 | LPASS_BE_INCALL_RECORD_RX / Voice Downlink Capture / BE | LPASS_BE_VOICE_PLAYBACK_TX / Voice Farend Playback / BE | DIFF
+ 51 | LPASS_BE_VOICE_PLAYBACK_TX / Voice Farend Playback / BE | LPASS_BE_VOICE2_PLAYBACK_TX / Voice2 Farend Playback / BE | DIFF
+ 52 | LPASS_BE_VOICE2_PLAYBACK_TX / Voice2 Farend Playback / BE | LPASS_BE_PROXY_TX / Proxy Capture / BE | DIFF
+ 53 | LPASS_BE_PROXY_TX / Proxy Capture / BE | LPASS_BE_PROXY_RX / Proxy Playback / BE | DIFF
+ 54 | LPASS_BE_PROXY_RX / Proxy Playback / BE | LPASS_BE_USB_AUDIO_RX / USB Audio Playback / BE | DIFF
+ 55 | LPASS_BE_USB_AUDIO_RX / USB Audio Playback / BE | LPASS_BE_USB_AUDIO_TX / USB Audio Capture / BE | DIFF
+ 56 | LPASS_BE_USB_AUDIO_TX / USB Audio Capture / BE | LPASS_BE_PRI_TDM_RX_0 / Primary TDM0 Playback / BE | DIFF
+ 57 | LPASS_BE_RX_CDC_DMA_RX_0 / RX CDC DMA0 Playback / BE | LPASS_BE_PRI_TDM_TX_0 / Primary TDM0 Capture / BE | DIFF
+ 58 | LPASS_BE_RX_CDC_DMA_RX_1 / RX CDC DMA1 Playback / BE | LPASS_BE_SEC_TDM_RX_0 / Secondary TDM0 Playback / BE | DIFF
+ 59 | LPASS_BE_RX_CDC_DMA_RX_2 / RX CDC DMA2 Playback / BE | LPASS_BE_SEC_TDM_TX_0 / Secondary TDM0 Capture / BE | DIFF
+ 60 | LPASS_BE_RX_CDC_DMA_RX_3 / RX CDC DMA3 Playback / BE | LPASS_BE_TERT_TDM_RX_0 / Tertiary TDM0 Playback / BE | DIFF
+ 61 | LPASS_BE_RX_CDC_DMA_RX_5 / RX CDC DMA5 Playback / BE | LPASS_BE_TERT_TDM_TX_0 / Tertiary TDM0 Capture / BE | DIFF
+ 62 | LPASS_BE_RX_CDC_DMA_RX_6 / RX CDC DMA6 Playback / BE | LPASS_BE_QUAT_TDM_RX_0 / Quaternary TDM0 Playback / BE | DIFF
+ 63 | LPASS_BE_TX_CDC_DMA_TX_3 / TX CDC DMA3 Capture / BE | LPASS_BE_QUAT_TDM_TX_0 / Quaternary TDM0 Capture / BE | DIFF
+ 64 | LPASS_BE_TX_CDC_DMA_TX_4 / TX CDC DMA4 Capture / BE | LPASS_BE_QUIN_TDM_RX_0 / Quinary TDM0 Playback / BE | DIFF
+ 65 | LPASS_BE_VA_CDC_DMA_TX_0 / VA CDC DMA0 Capture / BE | LPASS_BE_QUIN_TDM_TX_0 / Quinary TDM0 Capture / BE | DIFF
+ 66 | LPASS_BE_VA_CDC_DMA_TX_1 / VA CDC DMA1 Capture / BE | LPASS_BE_SEN_TDM_RX_0 / Senary TDM0 Playback / BE | DIFF
+ 67 | LPASS_BE_VA_CDC_DMA_TX_2 / VA CDC DMA2 Capture / BE | LPASS_BE_SEN_TDM_TX_0 / Senary TDM0 Capture / BE | DIFF
+ 68 | LPASS_BE_PRI_MI2S_RX / Primary MI2S Playback / BE | LPASS_BE_AFE_PCM_RX1 / AFE Playback1 / BE | DIFF
+ 69 | LPASS_BE_PRI_MI2S_TX / Primary MI2S Capture / BE | LPASS_BE_RX_CDC_DMA_RX_0 / LPASS_BE_RX_CDC_DMA_RX_0 / BE | DIFF
+ 70 | LPASS_BE_SEC_MI2S_RX / Secondary MI2S Playback / BE | LPASS_BE_RX_CDC_DMA_RX_1 / LPASS_BE_RX_CDC_DMA_RX_1 / FE | DIFF
+ 71 | LPASS_BE_SEC_MI2S_TX / Secondary MI2S Capture / BE | LPASS_BE_RX_CDC_DMA_RX_2 / LPASS_BE_RX_CDC_DMA_RX_2 / FE | DIFF
+ 72 | LPASS_BE_TERT_MI2S_RX / Tertiary MI2S Playback / BE | LPASS_BE_RX_CDC_DMA_RX_3 / LPASS_BE_RX_CDC_DMA_RX_3 / FE | DIFF
+ 73 | LPASS_BE_TERT_MI2S_TX / Tertiary MI2S Capture / BE | LPASS_BE_RX_CDC_DMA_RX_5 / LPASS_BE_RX_CDC_DMA_RX_5 / FE | DIFF
+ 74 | LPASS_BE_QUAT_MI2S_RX / Quaternary MI2S Playback / BE | LPASS_BE_RX_CDC_DMA_RX_6 / LPASS_BE_RX_CDC_DMA_RX_6 / FE | DIFF
+ 75 | LPASS_BE_QUAT_MI2S_TX / Quaternary MI2S Capture / BE | LPASS_BE_TX_CDC_DMA_TX_3 / LPASS_BE_TX_CDC_DMA_TX_3 / BE | DIFF
+ 76 | LPASS_BE_QUIN_MI2S_RX / Quinary MI2S Playback / BE | LPASS_BE_TX_CDC_DMA_TX_4 / TX CDC DMA4 Capture / BE | DIFF
+ 77 | LPASS_BE_QUIN_MI2S_TX / Quinary MI2S Capture / BE | LPASS_BE_VA_CDC_DMA_TX_0 / LPASS_BE_VA_CDC_DMA_TX_0 / BE | DIFF
+ 78 | LPASS_BE_SENARY_MI2S_RX / Senary MI2S Playback / BE | LPASS_BE_VA_CDC_DMA_TX_1 / LPASS_BE_VA_CDC_DMA_TX_1 / BE | DIFF
+ 79 | LPASS_BE_SENARY_MI2S_TX / Senary MI2S Capture / BE | LPASS_BE_VA_CDC_DMA_TX_2 / LPASS_BE_VA_CDC_DMA_TX_2 / BE | DIFF
+ 80 | LPASS_BE_SLIMBUS_7_RX / Slimbus7 Playback / BE | LPASS_BE_PRI_MI2S_RX / Primary MI2S Playback / BE | DIFF
+ 81 | LPASS_BE_SLIMBUS_7_TX / Slimbus7 Capture / BE | LPASS_BE_PRI_MI2S_TX / Primary MI2S Capture / BE | DIFF
+ 82 | - | LPASS_BE_SEC_MI2S_RX / Secondary MI2S Playback / BE | DIFF
+ 83 | - | LPASS_BE_SEC_MI2S_TX / Secondary MI2S Capture / BE | DIFF
+ 84 | - | LPASS_BE_TERT_MI2S_RX / Tertiary MI2S Playback / BE | DIFF
+ 85 | - | LPASS_BE_TERT_MI2S_TX / Tertiary MI2S Capture / BE | DIFF
+ 86 | - | LPASS_BE_QUAT_MI2S_RX / Quaternary MI2S Playback / BE | DIFF
+ 87 | - | LPASS_BE_QUAT_MI2S_TX / Quaternary MI2S Capture / BE | DIFF
+ 88 | - | LPASS_BE_QUIN_MI2S_RX / Quinary MI2S Playback / BE | DIFF
+ 89 | - | LPASS_BE_QUIN_MI2S_TX / Quinary MI2S Capture / BE | DIFF
+ 90 | - | LPASS_BE_SENARY_MI2S_RX / Senary MI2S Playback / BE | DIFF
+ 91 | - | LPASS_BE_SENARY_MI2S_TX / Senary MI2S Capture / BE | DIFF

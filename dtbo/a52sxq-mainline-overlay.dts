@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * The Samsung bootloader on the A52s always applies an overlay from the dtbo table (the dtbo
+ * partition for a normal boot, the table embedded in the image for a recovery boot). The stock
+ * entries carry the whole board description; with our base tree that is all in the dtb
+ * already, so this overlay only has to be selected and apply cleanly in the ABL's old libufdt.
+ * That library refuses a base dtb without /__symbols__ and an overlay without /__fixups__
+ * (research/bootloader-acceptance.md). This overlay therefore has the full shape of a real one:
+ * label targets (__fixups__), a labelled node (__symbols__) and a reference to it
+ * (__local_fixups__).
+ */
+/dts-v1/;
+/plugin/;
+
+/ {
+	model = "Samsung A52SXQ PROJECT (ack)";
+	qcom,msm-id = <0x1db 0x10000 0x203 0x10000>;
+	qcom,board-id = <0x22 0x02>;
+	dtbo-version = <0x00>;
+	compatible = "qcom,yupik-idp", "qcom,yupik", "qcom,idp";
+	dtbo-hw_rev = <0x00>;
+	dtbo-hw_rev_end = <0xff>;
+
+	fragment@0 {
+		target = <&soc>;
+
+		__overlay__ {
+			a52sxq_overlay_marker: samsung-overlay-marker {
+				samsung,overlay-applied;
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&soc>;
+
+		__overlay__ {
+			samsung,overlay-marker = <&a52sxq_overlay_marker>;
+		};
+	};
+};

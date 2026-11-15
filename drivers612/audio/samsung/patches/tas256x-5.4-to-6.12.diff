@@ -1,0 +1,66 @@
+diff --color -urN -x '*.o' -x '*.ko' -x '.*' -x '*.mod*' -x Module.symvers -x modules.order -x build.log -x Kbuild -x Makefile -x include -x PORTING-NOTES.md $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/algo/src/tas25xx-calib-validation.c tas256x/algo/src/tas25xx-calib-validation.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/algo/src/tas25xx-calib-validation.c	2026-07-17 18:14:47.220363005 +0300
++++ tas256x/algo/src/tas25xx-calib-validation.c	2026-11-11 20:39:35.491235545 +0200
+@@ -1040,7 +1040,7 @@
+ 			tas25xx_bd_attr_r, sizeof(tas25xx_bd_attr_r));
+ 	}
+ 
+-	algo->algo_class = class_create(THIS_MODULE, TAS25XX_SYSFS_CLASS_NAME);
++	algo->algo_class = class_create(TAS25XX_SYSFS_CLASS_NAME);
+ 	if (IS_ERR(algo->algo_class)) {
+ 		ret = PTR_ERR(algo->algo_class);
+ 		pr_err("[TI-SmartPA:%s] err class create\n", __func__);
+diff --color -urN -x '*.o' -x '*.ko' -x '.*' -x '*.mod*' -x Module.symvers -x modules.order -x build.log -x Kbuild -x Makefile -x include -x PORTING-NOTES.md $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/os_layer/src/tas256x-codec.c tas256x/os_layer/src/tas256x-codec.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/os_layer/src/tas256x-codec.c	2026-07-17 18:14:47.220940148 +0300
++++ tas256x/os_layer/src/tas256x-codec.c	2026-11-11 20:39:49.771484409 +0200
+@@ -596,7 +596,7 @@
+ 			.formats    = TAS256X_FORMATS,
+ 		},
+ 		.ops = &tas256x_dai_ops,
+-		.symmetric_rates = 1,
++		.symmetric_rate = 1,
+ 	},
+ };
+ 
+diff --color -urN -x '*.o' -x '*.ko' -x '.*' -x '*.mod*' -x Module.symvers -x modules.order -x build.log -x Kbuild -x Makefile -x include -x PORTING-NOTES.md $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c tas256x/os_layer/src/tas256x-regmap.c
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/os_layer/src/tas256x-regmap.c	2026-07-17 18:14:47.221047892 +0300
++++ tas256x/os_layer/src/tas256x-regmap.c	2026-11-11 20:39:49.771138260 +0200
+@@ -1309,8 +1309,7 @@
+ 	return rc;
+ }
+ 
+-static int tas256x_i2c_probe(struct i2c_client *p_client,
+-			const struct i2c_device_id *id)
++static int tas256x_i2c_probe(struct i2c_client *p_client)
+ {
+ 	struct tas256x_priv *p_tas256x;
+ 	struct linux_platform *plat_data;
+@@ -1488,7 +1487,7 @@
+ 	return n_result;
+ }
+ 
+-static int tas256x_i2c_remove(struct i2c_client *p_client)
++static void tas256x_i2c_remove(struct i2c_client *p_client)
+ {
+ 	int i = 0;
+ 	struct tas256x_priv *p_tas256x = i2c_get_clientdata(p_client);
+@@ -1528,7 +1527,6 @@
+ 
+ 	kfree(p_tas256x->devs);
+ 
+-	return 0;
+ }
+ 
+ 
+diff --color -urN -x '*.o' -x '*.ko' -x '.*' -x '*.mod*' -x Module.symvers -x modules.order -x build.log -x Kbuild -x Makefile -x include -x PORTING-NOTES.md $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/physical_layer/inc/tas256x-device.h tas256x/physical_layer/inc/tas256x-device.h
+--- $ANDROID_TREE/kernel/samsung/sm7325/techpack/audio/asoc/codecs/tas256x/physical_layer/inc/tas256x-device.h	2026-07-17 18:14:47.221196644 +0300
++++ tas256x/physical_layer/inc/tas256x-device.h	2026-11-11 20:39:35.492408473 +0200
+@@ -2,7 +2,7 @@
+ #define __TAS256X_DEVICE_
+ 
+ #include "tas256x.h"
+-#include <stdbool.h>
++#include <linux/types.h>
+ #define DEVICE_TAS2558	0x2558
+ #define DEVICE_TAS2562	0x2562
+ #define DEVICE_TAS2564	0x2564

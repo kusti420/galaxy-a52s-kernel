@@ -1,0 +1,78 @@
+diff --git a/dsp/msm_audio_ion.c b/dsp/msm_audio_ion.c
+index 64b83c2..0d1996c 100644
+--- a/dsp/msm_audio_ion.c
++++ b/dsp/msm_audio_ion.c
+@@ -411,7 +411,8 @@ static int msm_audio_protect_memory_region(struct platform_device *pdev)
+ 	struct reserved_mem *rmem = NULL;
+ 	u64 size = 0;
+ 	struct device_node *node = NULL;
+-	u64 srcVM[1] = {VMID_HLOS};
++	/* a52sxq: qcom_scm_assign_mem() takes a BITMAP of the current owners, not a VMID list */
++	u64 srcVM[1] = {BIT_ULL(VMID_HLOS)};
+ 	struct qcom_scm_vmperm destVM[2] = {{VMID_MSS_MSA, PERM_READ | PERM_WRITE},
+ 		{VMID_HLOS, PERM_READ | PERM_WRITE}};
+ 	node = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
+diff --git a/dsp/q6adm.c b/dsp/q6adm.c
+index a38f56d..a79ce7c 100644
+--- a/dsp/q6adm.c
++++ b/dsp/q6adm.c
+@@ -2545,9 +2545,15 @@ static void send_adm_cal_type(int fedai_id, int cal_index, int path, int port_id
+ {
+ 	struct cal_block_data		*cal_block = NULL;
+ 	int ret;
+-	u64 src_vmid_list = BIT(VMID_LPASS) | BIT_ULL(VMID_ADSP_HEAP);
+-	struct qcom_scm_vmperm dst_vmids[] = {{QCOM_SCM_VMID_HLOS,
+-		PERM_READ | PERM_WRITE | PERM_EXEC}};
++	/*
++	 * a52sxq: lend HLOS -> LPASS + ADSP_HEAP (5.4: hyp_assign_phys source {HLOS}, dest
++	 * {LPASS, ADSP_HEAP} RW). The donor had the reclaim direction here, as in voice_get_cal().
++	 */
++	u64 src_vmid_list = BIT_ULL(QCOM_SCM_VMID_HLOS);
++	struct qcom_scm_vmperm dst_vmids[] = {
++		{ QCOM_SCM_VMID_LPASS, QCOM_SCM_PERM_RW },
++		{ QCOM_SCM_VMID_ADSP_HEAP, QCOM_SCM_PERM_RW },
++	};
+ 
+ 	pr_debug("%s: cal index %d\n", __func__, cal_index);
+ 
+diff --git a/dsp/q6voice.c b/dsp/q6voice.c
+index 0ec1f14..3042299 100644
+--- a/dsp/q6voice.c
++++ b/dsp/q6voice.c
+@@ -2774,9 +2774,18 @@ static int voice_get_cal(struct cal_block_data **cal_block,
+ 			 int col_data_idx, int session_id)
+ {
+ 	int ret = 0;
+-	u64 src_vmid_list = BIT(VMID_LPASS) | BIT_ULL(VMID_ADSP_HEAP);
+-	struct qcom_scm_vmperm dst_vmids[] = {{QCOM_SCM_VMID_HLOS,
+-		PERM_READ | PERM_WRITE | PERM_EXEC}};
++	/*
++	 * a52sxq: lend the CMA cal buffer HLOS -> LPASS + ADSP_HEAP, as hyp_assign_phys() did on
++	 * 5.4 (source {HLOS}, dest {LPASS, ADSP_HEAP} RW). The donor copied the RECLAIM vmids of
++	 * the unmap paths here (source {LPASS, ADSP_HEAP}, dest HLOS RWX): the buffer is owned by
++	 * HLOS, so TZ rejected the call (-EINVAL, "qcom_scm_assign_mem failed ret = -22"), the
++	 * VOCPROC cal (cal 2) was never registered and the call ran on uncalibrated CVP.
++	 */
++	u64 src_vmid_list = BIT_ULL(QCOM_SCM_VMID_HLOS);
++	struct qcom_scm_vmperm dst_vmids[] = {
++		{ QCOM_SCM_VMID_LPASS, QCOM_SCM_PERM_RW },
++		{ QCOM_SCM_VMID_ADSP_HEAP, QCOM_SCM_PERM_RW },
++	};
+ 	*cal_block = cal_utils_get_only_cal_block(
+ 		common.cal_data[cal_block_idx]);
+ 	if (*cal_block == NULL) {
+@@ -10122,7 +10131,13 @@ static int voice_set_cvp_param(struct voice_data *v,
+ 	if (mem_hdr != NULL) {
+ 		set_param->mem_hdr = *mem_hdr;
+ 	} else if (param_data != NULL) {
+-		memcpy(set_param->param_data, param_data, param_size);
++		/*
++		 * a52sxq: param_data[0] is the packet's trailing payload, allocated above
++		 * (pkt_size includes param_size); plain memcpy() WARNs "field-spanning write"
++		 * on every call start (voice_send_cvp_media_format_cmd, rb16 2026-11-15).
++		 */
++		unsafe_memcpy(set_param->param_data, param_data, param_size,
++			      /* sized by the kzalloc above */);
+ 	} else {
+ 		pr_err("%s: Both memory header and param data are NULL\n",
+ 		       __func__);

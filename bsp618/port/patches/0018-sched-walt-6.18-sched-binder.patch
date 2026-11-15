@@ -1,0 +1,132 @@
+sched-walt (soc-repo): build on the 6.18 scheduler and binder
+
+sched-walt.ko is a load dependency of ufs-qcom (sched_set_boost,
+walt_{,un}set_enforce_high_irq_cpus), msm_performance, thermal_pause, bwmon and qcom_lpm.
+All 58 vendor hooks it registers still exist in ACK 6.18 and are still called (hook audit in
+bsp618/PORT-STATUS.md); two changed:
+
+- android_vh_binder_restore_priority lost its task argument: both remaining call sites passed
+  current on 6.12, so the hook uses current.
+- binder_transaction.need_reply is gone: it was set for exactly the synchronous non-reply
+  transactions, i.e. !is_reply && !is_async.
+
+Scheduler internals:
+- pick_task(rq) -> pick_task(rq, rf); it may return RETRY_TASK (sched_ext balance only):
+  the CPU drain loop (core_ctl halt) picks again.
+- set_next_entity() gained `bool first` (the extern is unused; prototype fixed).
+- cfs_rq.h_nr_running -> h_nr_queued is done by the port618.py rule cfs-h-nr-queued.
+
+Per-task data guard: WALT stores struct walt_task_struct (456 bytes on 6.18) right after
+task_struct; the area exists only with the boot argument android_arch_task_struct_size=512.
+Without it walt_init() corrupted every neighbouring task_struct on 6.12 (ab-s60..s62). The
+module now checks ksize(current) at load and stays inert (no hooks, no walt_init) with a
+pr_crit instead.
+
+--- a/bsp612/soc-repo/kernel/sched/walt/walt.c
++++ b/bsp612/soc-repo/kernel/sched/walt/walt.c
+@@ -17,6 +17,7 @@
+ #include <linux/of_platform.h>
+ #include <linux/delay.h>
+ #include <linux/time64.h>
++#include <linux/slab.h>
+ 
+ #include <trace/hooks/sched.h>
+ #include <trace/hooks/cpufreq.h>
+@@ -6227,10 +6228,37 @@
+ 	BUILD_BUG_ON(sizeof(wstruct) > (sizeof(u64) *		\
+ 		ARRAY_SIZE(((kstruct *)0)->android_vendor_data1)))
+ 
++/*
++ * bsp618/port: WALT keeps a struct walt_task_struct right after every task_struct
++ * (android_task_vendor_data() = p + 1). That area exists only when the kernel is booted with
++ * android_arch_task_struct_size=<n>, n >= sizeof(struct walt_task_struct) (Qualcomm's yupik
++ * DT bootargs: 512). Without it, walt_init() writes every task's WALT data into the next
++ * task_struct of the slab (6.12 runs ab-s60..s62, bsp612/CPUFREQ-ANALYSIS.md). The slab object
++ * size of a live task shows whether the area is there (ksize() >= the size the kernel asked
++ * for; a missing area leaves at most the 64-byte alignment slack). If it is not, WALT stays
++ * inert, as on 6.12 before cpufreq came up: its exported calls see walt_disabled and return.
++ */
++static bool walt_task_vendor_area_ok(void)
++{
++	size_t have = ksize(current);
++	size_t need = sizeof(struct task_struct) + sizeof(struct walt_task_struct);
++
++	if (have >= need)
++		return true;
++
++	pr_crit("sched-walt: task_struct objects are %zu bytes, WALT needs %zu (task_struct %zu + walt_task_struct %zu): boot with android_arch_task_struct_size=512; WALT stays disabled\n",
++		have, need, sizeof(struct task_struct), sizeof(struct walt_task_struct));
++	return false;
++}
++
+ static int walt_module_init(void)
+ {
+ 	/* compile time checks for vendor data size */
+ 	WALT_VENDOR_DATA_SIZE_TEST(struct walt_task_group, struct task_group);
++	BUILD_BUG_ON(sizeof(struct walt_task_struct) > CONFIG_GKI_TASK_STRUCT_VENDOR_SIZE_MAX);
++
++	if (!walt_task_vendor_area_ok())
++		return 0;
+ 
+ 	register_trace_android_vh_update_topology_flags_workfn(
+ 			android_vh_update_topology_flags_workfn, NULL);
+--- a/bsp612/soc-repo/kernel/sched/walt/walt_cfs.c
++++ b/bsp612/soc-repo/kernel/sched/walt/walt_cfs.c
+@@ -1212,7 +1212,12 @@
+ 		return;
+ 
+ 	get_entry_instr(BINDER_SET_PRIORITY_HOOK);
+-	if (bndrtrans && bndrtrans->need_reply && current_wts->boost == TASK_BOOST_STRICT_MAX) {
++	/*
++	 * bsp618/port: binder_transaction.need_reply is gone in 6.18; it was set for exactly
++	 * the synchronous, non-reply transactions (binder_transaction(): !reply && !TF_ONE_WAY)
++	 */
++	if (bndrtrans && !bndrtrans->is_reply && !bndrtrans->is_async &&
++	    current_wts->boost == TASK_BOOST_STRICT_MAX) {
+ 		bndrtrans->android_vendor_data1  = wts->boost;
+ 		wts->boost = TASK_BOOST_STRICT_MAX;
+ 	}
+@@ -1241,9 +1246,16 @@
+ 	update_instruction_data(BINDER_RESTORE_PRIORITY_HOOK);
+ }
+ 
++/*
++ * bsp618/port: 6.18 dropped the task argument of android_vh_binder_restore_priority; both
++ * call sites (binder_transaction() reply and error paths) passed current on 6.12. The
++ * third 6.12 call (NULL transaction, binder_thread_read) is android_vh_binder_before_
++ * restore_priority now; this hook did nothing for a NULL transaction.
++ */
+ static void binder_restore_priority_hook(void *data,
+-				struct binder_transaction *bndrtrans, struct task_struct *task)
++				struct binder_transaction *bndrtrans)
+ {
++	struct task_struct *task = current;
+ 	struct walt_task_struct *wts = (struct walt_task_struct *)android_task_vendor_data(task);
+ 
+ 	if (unlikely(walt_disabled))
+@@ -1560,7 +1572,7 @@
+ 		for (; se; se = NULL)
+ #endif
+ 
+-extern void set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se);
++extern void set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se, bool first);
+ static void walt_cfs_replace_next_task_fair(void *unused, struct rq *rq, struct task_struct **p,
+ 					    struct task_struct *prev)
+ {
+--- a/bsp612/soc-repo/kernel/sched/walt/walt_halt.c
++++ b/bsp612/soc-repo/kernel/sched/walt/walt_halt.c
+@@ -119,7 +119,13 @@
+ 		if (rq->nr_running == 1)
+ 			break;
+ 
+-		next = pick_task(rq);
++		/*
++		 * bsp618/port: 6.18 pick_task() takes the rq_flags (a class may drop the
++		 * rq lock to balance) and can return RETRY_TASK (sched_ext only): pick again.
++		 */
++		next = pick_task(rq, rf);
++		if (unlikely(next == RETRY_TASK))
++			continue;
+ 
+ 		if (walt_is_idle_task(next))
+ 			break;

@@ -1,0 +1,35 @@
+--- a/sec_thermistor.c
++++ b/sec_thermistor.c
+@@ -63,7 +63,7 @@
+ 	}
+ 
+ 	if (!of_property_read_string(info->np, "thermistor_name", &name)) {
+-		strlcpy(info->name, name, sizeof(info->name));
++		strscpy(info->name, name, sizeof(info->name));
+ 	} else {
+ 		dev_err(info->dev, "failed to get thermistor name\n");
+ 		return -EINVAL;
+@@ -333,12 +333,12 @@
+ 	return ret;
+ }
+ 
+-static int sec_therm_remove(struct platform_device *pdev)
++static void sec_therm_remove(struct platform_device *pdev)
+ {
+ 	struct sec_therm_info *info = platform_get_drvdata(pdev);
+ 
+ 	if (!info)
+-		return 0;
++		return;
+ 
+ 	if (info->id == 0)
+ 		g_ap_therm_info = NULL;
+@@ -348,8 +348,6 @@
+ 	sec_device_destroy(info->sec_dev->devt);
+ #endif
+ 	platform_set_drvdata(pdev, NULL);
+-
+-	return 0;
+ }
+ 
+ static struct platform_driver sec_thermistor_driver = {

@@ -1,0 +1,29 @@
+--- a/pca9468_charger.c
++++ b/pca9468_charger.c
+@@ -6804,8 +6804,7 @@
+ }
+ 
+ 
+-static int pca9468_charger_probe(struct i2c_client *client,
+-			const struct i2c_device_id *id)
++static int pca9468_charger_probe(struct i2c_client *client)
+ {
+ 	struct power_supply_config chager_cfg = {};
+ 	struct pca9468_platform_data *pdata;
+@@ -6968,7 +6967,7 @@
+ #endif
+ }
+ 
+-static int pca9468_charger_remove(struct i2c_client *client)
++static void pca9468_charger_remove(struct i2c_client *client)
+ {
+ 	struct pca9468_charger *pca9468_chg = i2c_get_clientdata(client);
+ 
+@@ -6995,7 +6994,6 @@
+ 	debugfs_remove(pca9468_chg->debug_root);
+ 	pr_info("%s: --\n", __func__);
+ 
+-	return 0;
+ }
+ 
+ static void pca9468_charger_shutdown(struct i2c_client *client)

@@ -1,0 +1,12 @@
+#!/bin/busybox sh
+# Clean way out of a test boot: mark the log, then reboot into Download mode (the PC's
+# `heimdall print-pit` then clears the bootloader's recovery flag and Android starts).
+echo "a52sxq-init: clean exit" > /dev/kmsg
+echo "a52sxq-harness: clean exit" > /dev/kmsg
+/bin/busybox sync
+# Belt and braces: the reboot helper proven on 2026-11-11 is kept as /extra/rb.prev and takes
+# over if the current /rb has not rebooted the phone within 10 s.
+/rb download &
+/bin/busybox sleep 10
+echo "a52sxq-init: /rb download did not reboot, trying /extra/rb.prev" > /dev/kmsg
+[ -x /extra/rb.prev ] && exec /extra/rb.prev download

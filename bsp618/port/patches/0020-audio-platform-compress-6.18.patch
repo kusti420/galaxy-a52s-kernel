@@ -1,0 +1,78 @@
+audio platform_dlkm: 6.18 compress API (64-bit timestamps, compress_new(rtd))
+
+- snd_compress_ops.pointer fills struct snd_compr_tstamp64 (v6.16): msm_compr_pointer()
+  builds the same values in the 64-bit struct; the core converts them for the legacy
+  SNDRV_COMPRESS_TSTAMP ioctl the HAL uses, and serves SNDRV_COMPRESS_TSTAMP64 too.
+- snd_soc_dai_ops.compress_new and snd_soc_new_compress() take only the runtime (v6.16;
+  the device number is rtd->id, the value 6.12 passed as num).
+
+--- a/drivers612/audio/audio-kernel/asoc/msm-compress-q6-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-compress-q6-v2.c
+@@ -3090,12 +3090,12 @@
+ 
+ static int msm_compr_pointer(struct snd_soc_component *component,
+ 			    struct snd_compr_stream *cstream,
+-			    struct snd_compr_tstamp *arg)
++			    struct snd_compr_tstamp64 *arg)	/* bsp618/port: 64-bit tstamp in 6.18 */
+ {
+ 	struct snd_compr_runtime *runtime = cstream->runtime;
+ 	struct msm_compr_audio *prtd = runtime->private_data;
+ 	struct msm_compr_pdata *pdata = NULL;
+-	struct snd_compr_tstamp tstamp;
++	struct snd_compr_tstamp64 tstamp;
+ 	uint64_t timestamp = 0;
+ 	int rc = 0, first_buffer;
+ 	unsigned long flags;
+@@ -3112,7 +3112,7 @@
+ 	}
+ 
+ 	pr_debug("%s\n", __func__);
+-	memset(&tstamp, 0x0, sizeof(struct snd_compr_tstamp));
++	memset(&tstamp, 0x0, sizeof(struct snd_compr_tstamp64));
+ 
+ 	spin_lock_irqsave(&prtd->lock, flags);
+ 	tstamp.sampling_rate = prtd->sample_rate;
+@@ -3130,7 +3130,7 @@
+ 		pr_err_ratelimited("%s Got RESET EVENTS notification, return error\n",
+ 				   __func__);
+ 		tstamp.pcm_io_frames = 0;
+-		memcpy(arg, &tstamp, sizeof(struct snd_compr_tstamp));
++		memcpy(arg, &tstamp, sizeof(struct snd_compr_tstamp64));
+ 		spin_unlock_irqrestore(&prtd->lock, flags);
+ 		return -ENETRESET;
+ 	}
+@@ -3172,7 +3172,7 @@
+ 	pr_debug("%s: timestamp = %lld usec\n", __func__, timestamp);
+ 	timestamp *= prtd->sample_rate;
+ 	tstamp.pcm_io_frames = (snd_pcm_uframes_t)div64_u64(timestamp, 1000000);
+-	memcpy(arg, &tstamp, sizeof(struct snd_compr_tstamp));
++	memcpy(arg, &tstamp, sizeof(struct snd_compr_tstamp64));
+ 
+ 	return 0;
+ }
+@@ -5680,7 +5680,7 @@
+ 	return ret;
+ }
+ 
+-int msm_compr_new(struct snd_soc_pcm_runtime *rtd, int num)
++int msm_compr_new(struct snd_soc_pcm_runtime *rtd)	/* bsp618/port: device = rtd->id in 6.18 */
+ {
+ 	int rc = 0;
+ 
+@@ -5688,7 +5688,7 @@
+ 		pr_err("%s: RTD is NULL\n", __func__);
+ 		return 0;
+ 	}
+-	rc = snd_soc_new_compress(rtd, num);
++	rc = snd_soc_new_compress(rtd);
+ 	if (rc)
+ 		pr_err("%s: Fail to create pcm for compress\n", __func__);
+ 
+--- a/drivers612/audio/audio-kernel/asoc/msm-compress-q6-v2.h
++++ b/drivers612/audio/audio-kernel/asoc/msm-compress-q6-v2.h
+@@ -1,4 +1,4 @@
+ /* SPDX-License-Identifier: GPL-2.0-only */
+ /* Copyright (c) 2020 The Linux Foundation. All rights reserved.
+ */
+-int msm_compr_new(struct snd_soc_pcm_runtime *rtd, int num);
++int msm_compr_new(struct snd_soc_pcm_runtime *rtd);

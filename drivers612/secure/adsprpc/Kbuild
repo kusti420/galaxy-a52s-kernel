@@ -1,0 +1,13 @@
+# Legacy FastRPC driver (5.4 ABI: /dev/adsprpc-smd, /dev/adsprpc-smd-secure) for
+# the Qualcomm 6.12 BSP. Base: redwood-6.12 modules/adsprpc; a52sxq changes in NOTES.md.
+# SOCINCLUDE = -I<soc-repo>/include -I<soc-repo>/include/uapi (build.sh sets it):
+# the soc-repo headers must come before the ACK ones.
+LINUXINCLUDE := $(SOCINCLUDE) $(LINUXINCLUDE)
+
+obj-m += frpc-adsprpc.o
+frpc-adsprpc-y := adsprpc.o
+ccflags-y += -I$(src) -I$(src)/trace -Wno-format
+
+# 5.4 code: HFI and RPC structs end in one-element arrays used as flexible
+# ones, which GKI's UBSAN bounds traps turn into panics
+UBSAN_SANITIZE := n

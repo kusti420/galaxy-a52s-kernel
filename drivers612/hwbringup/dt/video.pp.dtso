@@ -1,0 +1,91 @@
+/dts-v1/; /plugin/;
+&reserved_memory {
+ pil_video_mem: cvp@8b200000 {
+  no-map;
+  reg = <0x0 0x8b200000 0x0 0x500000>;
+ };
+};
+&soc {
+ venus_iova: venus_iommu_region_partition {
+  iommu-addresses = <&venus_ns_cb 0x0 0x25800000>,
+      <&venus_ns_cb 0xe0000000 0x20000000>,
+      <&venus_sec_non_pixel_cb 0x0 0x1000000>,
+      <&venus_sec_non_pixel_cb 0x25800000 0xda800000>,
+      <&venus_sec_bitstream_cb 0x0 0x500000>,
+      <&venus_sec_bitstream_cb 0xe0000000 0x20000000>,
+      <&venus_sec_pixel_cb 0x0 0x500000>,
+      <&venus_sec_pixel_cb 0xe0000000 0x20000000>;
+ };
+ msm_vidc: qcom,vidc@aa00000 {
+  compatible = "qcom,msm-vidc", "qcom,yupik-vidc";
+  status = "okay";
+  reg = <0x0aa00000 0x100000>;
+  interrupts = <0 174 4>;
+  memory-region = <&pil_video_mem>;
+  #address-cells = <1>;
+  #size-cells = <1>;
+  iris-ctl-supply = <&video_cc_mvsc_gdsc>;
+  vcodec-supply = <&video_cc_mvs0_gdsc>;
+  clock-names = "video_cc_mvsc_ctl_axi", "video_cc_mvs0_ctl_axi",
+         "core_clk", "vcodec_clk", "iface_clk";
+  clocks = <&videocc 6>,
+    <&videocc 3>,
+    <&videocc 5>,
+    <&videocc 4>,
+    <&videocc 9>;
+  qcom,proxy-clock-names = "video_cc_mvsc_ctl_axi",
+      "video_cc_mvs0_ctl_axi", "core_clk",
+      "vcodec_clk", "iface_clk";
+  qcom,clock-configs = <0x0 0x0 0x1 0x1 0x0>;
+  qcom,allowed-clock-rates = <133330000 240000000 335000000
+         424000000 460000000>;
+  qcom,reg-presets = <0xb0088 0x0 0x11>;
+  vidc,firmware-name = "vpu20_1v";
+  interconnect-names = "venus-cnoc", "venus-ddr";
+  interconnects = <&gem_noc 2 &cnoc2 559>,
+    <&mmss_noc 30 &mc_virt 512>;
+  qcom,bus-range-kbps = <1000 1000>, <1000 8000000>;
+  venus_ns_cb: non_secure_cb {
+   compatible = "qcom,msm-vidc,context-bank";
+   label = "venus_ns";
+   iommus = <&apps_smmu 0x2180 0x0020>;
+   memory-region = <&venus_iova>;
+   qcom,iommu-faults = "non-fatal";
+   buffer-types = <0xfff>;
+   virtual-addr-pool = <0x25800000 0xba800000>;
+  };
+  venus_sec_non_pixel_cb: secure_non_pixel_cb {
+   compatible = "qcom,msm-vidc,context-bank";
+   label = "venus_sec_non_pixel";
+   iommus = <&apps_smmu 0x2184 0x0020>;
+   memory-region = <&venus_iova>;
+   qcom,iommu-faults = "non-fatal";
+   qcom,iommu-vmid = <0xb>;
+   buffer-types = <0x480>;
+   virtual-addr-pool = <0x01000000 0x24800000>;
+   qcom,secure-context-bank;
+  };
+  venus_sec_bitstream_cb: secure_bitstream_cb {
+   compatible = "qcom,msm-vidc,context-bank";
+   label = "venus_sec_bitstream";
+   iommus = <&apps_smmu 0x2181 0x0004>;
+   memory-region = <&venus_iova>;
+   qcom,iommu-faults = "non-fatal";
+   qcom,iommu-vmid = <0x9>;
+   buffer-types = <0x241>;
+   virtual-addr-pool = <0x00500000 0xdfb00000>;
+   qcom,secure-context-bank;
+  };
+  venus_sec_pixel_cb: secure_pixel_cb {
+   compatible = "qcom,msm-vidc,context-bank";
+   label = "venus_sec_pixel";
+   iommus = <&apps_smmu 0x2183 0x0000>;
+   memory-region = <&venus_iova>;
+   qcom,iommu-faults = "non-fatal";
+   qcom,iommu-vmid = <0xa>;
+   buffer-types = <0x106>;
+   virtual-addr-pool = <0x00500000 0xdfb00000>;
+   qcom,secure-context-bank;
+  };
+ };
+};

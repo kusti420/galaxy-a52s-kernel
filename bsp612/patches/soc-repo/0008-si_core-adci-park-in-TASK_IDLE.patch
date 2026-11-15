@@ -1,0 +1,14 @@
+--- a/drivers/firmware/qcom/si_core/si_core_adci.c
++++ b/drivers/firmware/qcom/si_core/si_core_adci.c
+@@ -12,7 +12,10 @@
+ static void wait_to_die(void)
+ {
+ 	for (;;) {
+-		set_current_state(TASK_UNINTERRUPTIBLE);
++		/* a52sxq: TASK_IDLE, not TASK_UNINTERRUPTIBLE: this finished thread parks here until
++		 * kthread_stop(), possibly forever; uninterruptible it trips hung_task_panic (6.12 run
++		 * ab-s66) and counts towards the load average. Same semantics otherwise. */
++		set_current_state(TASK_IDLE);
+ 		if (kthread_should_stop())
+ 			break;
+ 

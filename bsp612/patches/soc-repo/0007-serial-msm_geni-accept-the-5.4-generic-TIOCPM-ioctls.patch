@@ -1,0 +1,20 @@
+--- a/drivers/tty/serial/msm_geni_serial.c
++++ b/drivers/tty/serial/msm_geni_serial.c
+@@ -1602,6 +1602,17 @@
+ 
+ 	UART_LOG_DBG(port->ipc_log_misc, uport->dev,
+ 		     "%s:%s cmd 0x%x\n", __func__, current->comm, cmd);
++	/*
++	 * a52sxq: the 5.4 driver also took the generic TIOCPMGET/PUT/ACT numbers (0x544D-0x544F,
++	 * asm-generic/ioctls.h of the 5.4 tree); vendor BT HALs built against 5.4 may use them.
++	 * Without this their UART clock votes fail and the port can suspend in the middle of the
++	 * BT patch download ("PatchDnldStuck", 6.12 run ab-s54).
++	 */
++	switch (cmd) {
++	case 0x544D: cmd = MSM_GENI_SERIAL_TIOCPMGET; break;
++	case 0x544E: cmd = MSM_GENI_SERIAL_TIOCPMPUT; break;
++	case 0x544F: cmd = MSM_GENI_SERIAL_TIOCPMACT; break;
++	}
+ 	if (port->pm_auto_suspend_disable)
+ 		return ret;
+ 

@@ -1,0 +1,1 @@
+android_arch_task_struct_size=512 rcupdate.rcu_expedited=1 rcu_nocbs=0-7 kpti=0 arm64.nosme sysctl.kernel.sched_pelt_multiplier=4 no-steal-acc irqaffinity=0-1 kasan=off cgroup_disable=pressure restrict_cma_redirect=false

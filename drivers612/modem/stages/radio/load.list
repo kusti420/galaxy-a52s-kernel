@@ -1,0 +1,5 @@
+# Stage "radio@adsp" (background, after the ADSP runs; pre.sh runs first: EFS RAM shim +
+# force_sysfs_fallback). Samsung's /dev/drb (dev RIL bridge): rild keeps it open; ueventd makes
+# the node (0660 system:radio) from the hotplug event. Loaded here, ~10 s, long before rild
+# (class main, ~20 s).
+dev_ril_bridge.ko

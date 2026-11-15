@@ -1,0 +1,15 @@
+# Syntax-level check: unmodified A52s 5.4 panel file against the sm8550-generation Samsung framework
+# headers (Samsung's copy of the display techpack) and the 6.12 kernel headers. soc-repo headers:
+# the Galaxy S26 6.12 copy; mm-drivers/mmrm/synx/securemsm headers: Qualcomm 6.12 donors.
+X := ./samsung612/donors/sm8550-modules/qcom/opensource/display-drivers
+S26S := ./donors/samsung-s26-6.12/Kernel/kernel_platform/soc-repo
+S26V := ./donors/samsung-s26-6.12/Kernel/vendor/qcom/opensource
+QD := ./donors
+ccflags-y += -I./bsp612/kernel/drivers/clk/qcom -I./samsung612/compile-check/shim -I$(S26S)/include -I$(S26S)/include/uapi \
+	-I$(X) -I$(X)/include -I$(X)/include/linux -I$(X)/rotator -I$(X)/msm -I$(X)/msm/dp -I$(X)/msm/dsi -I$(X)/msm/sde \
+	-I$(X)/include/uapi/display -I$(X)/msm/samsung -I$(X)/msm/samsung/SELF_DISPLAY -I$(X)/msm/samsung/MAFPC \
+	-I$(QD)/mm-drivers/hw_fence/include -I$(QD)/mm-drivers/msm_ext_display/include -I$(QD)/mm-drivers/sync_fence/include \
+	-I$(S26V)/synx-kernel/msm/synx -I$(S26V)/synx-kernel/include/uapi/synx/media -I$(S26V)/securemsm-kernel/include/linux -I$(S26V)/securemsm-kernel/include -I$(S26V)/mmrm-driver/driver/src \
+	-include $(X)/config/gki_kalamadispconf.h -include $(X)/msm/samsung/panel_common_conf.h \
+	-DCONFIG_PANEL_S6E3FC3_AMS646YD01_LO_FHD=1 -ferror-limit=0 -Wno-error
+obj-m := ss_dsi_panel_S6E3FC3_AMS646YD01_LO.o

@@ -1,0 +1,18 @@
+diff --git a/security/selinux/hooks.c b/security/selinux/hooks.c
+index ec7213e43..99569b8d1 100644
+--- a/security/selinux/hooks.c
++++ b/security/selinux/hooks.c
+@@ -4296,7 +4296,12 @@ static int selinux_kernel_read_file(struct file *file,
+ 
+ 	switch (id) {
+ 	case READING_FIRMWARE:
+-		rc = selinux_kernel_load_from_file(file, SYSTEM__FIRMWARE_LOAD);
++		/*
++		 * a52sxq: the phone's vendor sepolicy predates the 6.14 system:firmware_load
++		 * check and grants it on no firmware type, so every direct firmware read
++		 * (/vendor/firmware_mnt, firmware-modem) was denied and ueventd's fallback picked
++		 * the wrong image. Keep the 6.12 behaviour: no check on direct firmware reads.
++		 */
+ 		break;
+ 	case READING_MODULE:
+ 		rc = selinux_kernel_load_from_file(file, SYSTEM__MODULE_LOAD);

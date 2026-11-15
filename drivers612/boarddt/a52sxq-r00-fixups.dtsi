@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/* Hand-written 6.12 changes for dtbo entry r00 (hardware revision 0) only. */
+
+/* rev 0 still has the Qualcomm skin thermistor on ADC 0x146 as an adc_tm channel */
+&pmk8350_adc_tm {
+	a52_tm_sdm_skin_therm: pm7325-sdm-skin-therm@4 {
+		reg = <4>;
+		io-channels = <&pmk8350_vadc 0x146>;	/* AMUX_THM3 */
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+};
+
+&thermal_zones {
+	sdm-skin-therm-usr {
+		status = "okay";
+	};
+};

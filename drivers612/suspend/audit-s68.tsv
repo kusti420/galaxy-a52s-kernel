@@ -1,0 +1,260 @@
+stage	module	pm_cbs	wake	wsrc	notif	rpm	pm_funcs
+first	iommu-logger	0	0	0	-	0	 
+first	qcom-scm	14	1	0	-	0	perf_trace_scm_waitq_resume qcom_scm_pm_freeze qcom_scm_pm_restore qcom_scm_pm_thaw qcom_scm_restore_sec_cfg qcom_scm_restore_sec_cfg_available 
+first	qcom_iommu_util	0	0	0	-	0	 
+first	arm_smmu	8	0	0	-	7	arm_smmu_pm_freeze_late arm_smmu_pm_prepare arm_smmu_pm_restore_early arm_smmu_pm_resume arm_smmu_pm_suspend arm_tbu_resume 
+first	gic_intr_routing	0	0	0	-	0	 
+first	smem	2	0	0	-	0	qcom_smem_freeze qcom_smem_restore 
+first	socinfo	0	0	0	-	0	 
+first	llcc-qcom	0	0	0	-	0	 
+first	icc-clk	0	0	0	-	0	 
+first	deferred-free-helper	0	0	0	-	0	 
+first	msm_dma_iommu_mapping	0	0	0	-	0	 
+first	secure_buffer	0	0	0	-	0	 
+first	gh_msgq	0	1	0	-	0	 
+first	gh_dbl	0	1	0	-	0	 
+first	gh_arm_drv	0	0	0	-	0	 
+first	gh_rm_drv	0	0	0	-	0	 
+first	gh_mem_notifier	0	0	0	-	0	 
+first	mem_buf_dev	0	0	0	-	0	 
+first	qcom_dma_heaps	6	0	0	-	0	qcom_dma_heaps_freeze qcom_dma_heaps_restore qcom_secure_carveout_heap_freeze qcom_secure_carveout_heap_restore qcom_secure_system_heap_freeze qcom_secure_system_heap_restore 
+first	debug_symbol	0	0	0	-	0	 
+first	minidump	0	0	0	register_pm_notifier	0	 
+first	qcom_ipc_logging	0	0	0	-	0	 
+first	crm-v2	1	0	0	-	0	crm_restore_noirq 
+first	debug-regulator	4	0	0	-	0	reg_debug_suspend_enable_fops_open reg_debug_suspend_enable_get reg_debug_suspend_enable_set regulator_debug_suspend_trace_probe 
+first	proxy-consumer	0	0	0	-	0	 
+first	gdsc-regulator	3	0	0	-	0	gdsc_pm_restore_early gdsc_pm_resume_early restore_hw_trig_clk_dis 
+first	clk-qcom	15	0	0	-	6	clk_branch_restore_context clk_branch_restore_context_aon clk_debug_suspend_atomic_enable_fops_open clk_debug_suspend_atomic_enable_get clk_debug_suspend_atomic_enable_set clk_debug_suspend_enable_fops_open 
+first	clk-dummy	0	0	0	-	0	 
+first	cmd-db	0	0	0	-	0	 
+first	qcom_rpmh	2	0	0	cpu_pm_register_notifier,dev_pm_genpd_add_notifier	2	rpmh_rsc_poweroff_noirq rpmh_rsc_restore_noirq 
+first	clk-rpmh	0	0	0	-	0	 
+first	clk-scmi	0	0	0	-	0	 
+first	qcom-cpufreq-hw	0	0	0	-	0	 
+first	sched-walt	5	0	0	register_syscore_ops	0	binder_restore_priority_hook walt_partial_resume_cpus walt_resume walt_resume_cpus walt_suspend 
+first	qcom_cpu_vendor_hooks	0	0	0	register_syscore_ops	0	 
+first	gcc-sc7280	0	0	0	-	0	 
+first	dispcc-sc7280	0	0	0	-	2	 
+first	icc-bcm-voter	0	0	0	-	0	 
+first	icc-debug	4	0	0	-	0	icc_debug_suspend_fops_open icc_debug_suspend_get icc_debug_suspend_set icc_debug_suspend_trace_probe 
+first	icc-rpmh	0	0	0	-	0	 
+first	qcom_cpucp	0	0	0	-	0	 
+first	qcom_scmi_vendor	0	0	0	-	0	 
+first	qcom_scmi_client	0	0	0	-	0	 
+first	dcvs_fp	0	0	0	-	0	 
+first	qcom-dcvs	0	0	0	-	0	 
+first	qcom_llcc_pmu	0	0	0	-	0	 
+first	qcom-pmu-lib	0	0	0	cpu_pm_register_notifier	0	 
+first	rpmh-regulator	0	0	0	-	0	 
+first	stub-regulator	0	0	0	-	0	 
+first	spmi-pmic-arb	0	1	0	-	0	 
+first	qti-regmap-debugfs	0	0	0	-	0	 
+first	qcom-spmi-pmic	0	0	0	-	0	 
+first	nvmem_qcom-spmi-sdam	0	0	0	-	0	 
+first	rtc-pm8xxx	0	3	0	-	0	 
+first	pmic-pon-log	0	0	0	-	0	 
+first	qcom-pdc	2	0	0	register_pm_notifier,register_syscore_ops	0	pdc_resume pdc_suspend_notifier 
+first	pinctrl-msm	6	1	0	register_pm_notifier,register_syscore_ops	0	msm_pinctrl_hibernation_resume msm_pinctrl_hibernation_suspend msm_pinctrl_resume msm_pinctrl_suspend msm_ps_hold_poweroff noirq_msm_pinctrl_suspend 
+first	pinctrl-yupik	0	0	0	-	0	 
+first	qcom_tsens	10	1	0	-	0	resume_8960 suspend_8960 tsens_freeze tsens_restore tsens_resume tsens_resume_common 
+first	qcom-ipcc	1	1	0	-	0	qcom_ipcc_pm_resume 
+first	qcom-reboot-reason	0	0	0	-	0	 
+first	qcom_hwspinlock	0	0	0	-	0	 
+first	qcom_aoss	4	1	0	-	0	aoss_qmp_mbox_freeze aoss_qmp_mbox_restore aoss_qmp_mbox_resume_early aoss_qmp_mbox_suspend_noirq 
+first	qrtr	1	0	2	-	0	qrtr_tx_resume 
+first	msm_qmp	4	1	0	-	0	qmp_mbox_freeze qmp_mbox_restore qmp_mbox_resume_early qmp_mbox_suspend_noirq 
+first	qnoc-qos	0	0	0	-	0	 
+first	qnoc-yupik	0	0	0	-	0	 
+first	qcom_iommu_debug	0	0	0	-	0	 
+first	mem_buf_msgq	0	0	0	-	0	 
+first	mdt_loader	0	0	0	-	0	 
+first	gunyah_loader	0	1	2	register_pm_notifier	0	 
+first	mem_buf	0	0	0	-	0	 
+first	qseecom_proxy	0	0	0	-	0	 
+first	qcom_ice	2	0	0	-	0	qcom_ice_resume qcom_ice_suspend 
+first	ufshcd-crypto-qti	0	0	0	-	0	 
+first	phy-qcom-ufs	0	0	0	-	1	 
+first	ufs-qcom	9	0	0	-	4	ufs_qcom_resume ufs_qcom_resume_complete ufs_qcom_suspend ufs_qcom_suspend_prepare ufs_qcom_system_freeze ufs_qcom_system_restore 
+first	phy-qcom-ufs-qmp-v4-yupik	0	0	0	-	3	 
+first	sg	0	0	0	-	0	 
+first	nvmem_qfprom	0	0	0	-	4	 
+first	wcd_usbss_i2c	2	3	1	-	7	wcd_usbss_pm_resume wcd_usbss_pm_suspend 
+first	redriver	0	0	0	-	0	 
+first	dwc3-msm	6	3	2	-	12	dwc3_msm_pm_resume dwc3_msm_pm_suspend dwc3_msm_suspend dwc3_resume_work entry_dwc3_suspend_common exit_dwc3_suspend_common 
+first	phy-msm-snps-hs	3	0	0	-	4	msm_hsphy_pm_complete msm_hsphy_pm_prepare msm_hsphy_set_suspend 
+first	pinctrl-spmi-gpio	2	0	0	-	0	pmic_gpio_restore pmic_gpio_resume 
+first	reboot-mode	0	0	0	-	0	 
+first	qcom-pon	0	0	0	-	0	 
+first	pm8941-pwrkey	3	3	0	-	0	pm8941_pwrkey_restore pm8941_pwrkey_resume pm8941_pwrkey_suspend 
+first	eud	2	3	0	-	0	msm_eud_resume msm_eud_suspend 
+first	phy-generic	1	1	0	-	0	nop_set_suspend 
+debug	seaprobe	0	0	0	-	0	 
+secure	si_core_module	3	0	0	-	0	si_core_pm_freeze si_core_pm_restore si_core_pm_thaw 
+secure	ioncompat	0	0	0	-	0	 
+secure	qseecom_dlkm	2	0	0	-	0	qseecom_resume qseecom_suspend 
+secure	smcinvoke_dlkm	2	0	0	-	0	smcinvoke_resume smcinvoke_suspend 
+secure	sps_drv	0	1	0	-	0	 
+secure	qce50_dlkm	2	0	0	-	0	_qce_resume _qce_suspend 
+secure	qcedev-mod_dlkm	2	0	0	-	0	qcedev_resume qcedev_suspend 
+display	refgen	0	0	0	-	0	 
+display	qmi_helpers	0	0	0	-	0	 
+display	qcom_pdr_msg	0	0	0	-	0	 
+display	qcom_smd	0	0	0	-	0	 
+display	qcom_glink	2	0	1	-	0	qcom_glink_resume_no_irq qcom_glink_suspend_no_irq 
+display	qcom_glink_smem	0	0	0	-	0	 
+display	rproc_qcom_common	0	0	0	-	0	 
+display	pdr_interface	0	0	0	-	0	 
+display	qti_pmic_glink	0	2	1	-	0	 
+display	altmode-glink	0	0	0	-	0	 
+display	fsa4480_i2c	0	0	1	-	0	 
+display	drm_display_helper	2	0	0	-	0	drm_dp_mst_topology_mgr_resume drm_dp_mst_topology_mgr_suspend 
+display	panel_event_notifier	0	0	0	-	0	 
+display	qcom_va_minidump	0	0	0	-	0	 
+display	lcd	0	0	0	-	0	 
+display	sec_panel_notifier_v2	0	0	0	-	0	 
+display	msm_ext_display	0	0	0	-	0	 
+display	msm_drm	21	1	1	-	4	ad4_ipc_resume_setup_ipcs ad4_ipc_suspend_setup_ipcr ad4_ipc_suspend_setup_run ad4_suspend_setup ddi_spi_resume ddi_spi_suspend 
+display	qfprom-sys	0	0	0	-	0	 
+kgsl	gpucc-sc7280	0	0	0	-	0	 
+kgsl	msm_sysstats	0	0	0	-	0	 
+kgsl	msm_performance	0	0	0	-	0	 
+kgsl	msm_kgsl	35	0	0	dev_pm_genpd_add_notifier,register_pm_notifier	4	a5xx_counter_read_norestore a6xx_counter_read_norestore a6xx_gmu_pm_resume a6xx_gmu_pm_suspend a6xx_gmu_suspend a6xx_hwsched_pm_resume 
+i2c	msm_gpi	1	0	0	-	0	gpi_resume 
+i2c	i2c-msm-geni	4	0	0	-	7	geni_i2c_gpi_pause_resume geni_i2c_hib_resume_noirq geni_i2c_resume_early geni_i2c_suspend_late 
+nfc	nfc_sec	2	1	3	-	0	sec_nfc_resume sec_nfc_suspend 
+touch	sec_core	0	0	0	-	0	 
+touch	sec_tsp_log	0	0	0	-	0	 
+touch	sec_input_notifier	0	0	0	-	0	 
+touch	sec_cmd	0	0	0	-	0	 
+touch	sec_secure_touch	0	0	0	-	0	 
+touch	sec_common_fn	1	0	1	-	0	sec_input_handler_wait_resume_work 
+touch	sec_tclm_v2	0	0	0	-	0	 
+touch	sec_tsp_dumpkey	0	0	0	-	0	 
+touch	stm_ts	4	3	2	-	2	stm_ts_i2c_pm_resume stm_ts_i2c_pm_suspend stm_ts_pm_resume stm_ts_pm_suspend 
+fingerprint	fingerprint_sysfs	0	0	0	-	0	 
+fingerprint	fingerprint	2	0	2	-	0	et7xx_pm_resume et7xx_pm_suspend 
+powerpd	qcom-vadc-common	0	0	0	-	0	 
+powerpd	qcom-spmi-adc5	2	0	0	-	0	adc_freeze adc_restore 
+powerpd	a52sxq_usb_glue	0	0	0	-	0	 
+powerpd	if_cb_manager	0	0	0	-	0	 
+powerpd	switch_class	0	0	0	-	0	 
+powerpd	usb_notify_layer	0	0	2	-	0	 
+powerpd	vbus_notifier	0	0	0	-	0	 
+powerpd	sb-core	0	0	0	-	0	 
+powerpd	sec_pd	0	0	0	-	0	 
+powerpd	hwmon	0	0	0	-	0	 
+powerpd	s2mpb03	0	0	0	-	0	 
+powerpd	common_muic	0	0	0	-	0	 
+powerpd	pdic_notifier_module	0	0	0	-	0	 
+powerpd	usb_typec_manager	0	0	0	-	0	 
+powerpd	mfd_sm5714	2	3	2	-	0	sm5714_resume sm5714_suspend 
+powerpd	muic_sm5714	2	1	2	-	0	sm5714_muic_resume sm5714_muic_suspend 
+powerpd	sec-battery	3	0	3	-	0	cw_usb_suspend sec_battery_resume sec_battery_suspend 
+powerpd	sm5714_fuelgauge	2	0	2	-	0	sm5714_fuelgauge_resume sm5714_fuelgauge_suspend 
+powerpd	sm5714-charger	2	0	2	-	0	sm5714_charger_resume sm5714_charger_suspend 
+powerpd	pca9468_charger	2	0	3	-	0	pca9468_charger_resume pca9468_charger_suspend 
+powerpd	sec-direct-charger	2	0	3	-	0	sec_direct_charger_resume sec_direct_charger_suspend 
+powerpd	usb_notifier	0	0	0	-	0	 
+powerpd	pdic_sm5714	2	3	2	-	0	sm5714_usbpd_resume sm5714_usbpd_suspend 
+vibrator	sec_vibrator	0	0	0	-	0	 
+vibrator	dc_vibrator	0	0	0	-	0	 
+camera	qcom-scm	14	1	0	-	0	perf_trace_scm_waitq_resume qcom_scm_pm_freeze qcom_scm_pm_restore qcom_scm_pm_thaw qcom_scm_restore_sec_cfg qcom_scm_restore_sec_cfg_available 
+camera	qcom_iommu_util	0	0	0	-	0	 
+camera	debug_symbol	0	0	0	-	0	 
+camera	secure_buffer	0	0	0	-	0	 
+camera	gh_arm_drv	0	0	0	-	0	 
+camera	gh_dbl	0	1	0	-	0	 
+camera	gh_msgq	0	1	0	-	0	 
+camera	gh_rm_drv	0	0	0	-	0	 
+camera	gh_mem_notifier	0	0	0	-	0	 
+camera	mem_buf_dev	0	0	0	-	0	 
+camera	msm_dma_iommu_mapping	0	0	0	-	0	 
+camera	deferred-free-helper	0	0	0	-	0	 
+camera	qcom_dma_heaps	6	0	0	-	0	qcom_dma_heaps_freeze qcom_dma_heaps_restore qcom_secure_carveout_heap_freeze qcom_secure_carveout_heap_restore qcom_secure_system_heap_freeze qcom_secure_system_heap_restore 
+camera	smem	2	0	0	-	0	qcom_smem_freeze qcom_smem_restore 
+camera	minidump	0	0	0	register_pm_notifier	0	 
+camera	qcom_ipc_logging	0	0	0	-	0	 
+camera	qcom_glink	2	0	1	-	0	qcom_glink_resume_no_irq qcom_glink_suspend_no_irq 
+camera	qcom_glink_smem	0	0	0	-	0	 
+camera	qcom_smd	0	0	0	-	0	 
+camera	rproc_qcom_common	0	0	0	-	0	 
+camera	qmi_helpers	0	0	0	-	0	 
+camera	qcom_pdr_msg	0	0	0	-	0	 
+camera	pdr_interface	0	0	0	-	0	 
+camera	qti_pmic_glink	0	2	1	-	0	 
+camera	panel_event_notifier	0	0	0	-	0	 
+camera	qti-battery-charger	0	2	2	-	0	 
+camera	leds-qti-flash	0	0	0	-	0	 
+camera	proxy-consumer	0	0	0	-	0	 
+camera	debug-regulator	4	0	0	-	0	reg_debug_suspend_enable_fops_open reg_debug_suspend_enable_get reg_debug_suspend_enable_set regulator_debug_suspend_trace_probe 
+camera	gdsc-regulator	3	0	0	-	0	gdsc_pm_restore_early gdsc_pm_resume_early restore_hw_trig_clk_dis 
+camera	crm-v2	1	0	0	-	0	crm_restore_noirq 
+camera	icc-clk	0	0	0	-	0	 
+camera	clk-qcom	15	0	0	-	6	clk_branch_restore_context clk_branch_restore_context_aon clk_debug_suspend_atomic_enable_fops_open clk_debug_suspend_atomic_enable_get clk_debug_suspend_atomic_enable_set clk_debug_suspend_enable_fops_open 
+camera	camcc-sc7280	0	0	0	-	2	 
+camera	sm5714_fled_stub	0	0	0	-	0	 
+camera	camera	4	0	0	-	0	cam_bps_handle_resume cam_cpastop_poweroff cam_hfi_resume cam_ipe_handle_resume 
+dsp	smp2p	2	3	0	-	0	qcom_smp2p_freeze qcom_smp2p_restore 
+dsp	qcom_pil_info	0	0	0	-	0	 
+dsp	qmi_helpers	0	0	0	-	0	 
+dsp	qcom_smd	0	0	0	-	0	 
+dsp	qcom_glink	2	0	1	-	0	qcom_glink_resume_no_irq qcom_glink_suspend_no_irq 
+dsp	qcom_glink_smem	0	0	0	-	0	 
+dsp	rproc_qcom_common	0	0	0	-	0	 
+dsp	qcom_sysmon	0	0	0	-	0	 
+dsp	qcom_q6v5	0	0	2	-	0	 
+dsp	qcom_ramdump	0	0	0	-	0	 
+dsp	qcom_q6v5_pas	0	2	0	-	4	 
+dsp	qrtr-smd	0	0	0	-	0	 
+dsp	qcom_pdr_msg	0	0	0	-	0	 
+dsp	pdr_interface	0	0	0	-	0	 
+dsp	qcom_glink_spss	0	0	0	-	0	 
+dsp	glink_probe	0	0	0	-	0	 
+dsp	subsys_compat	0	0	0	-	0	 
+dsp	qcom_pd_mapper_a52	0	0	0	-	0	 
+dsp	frpc-adsprpc	4	0	2	-	0	perf_trace_fastrpc_context_restore trace_event_raw_event_fastrpc_context_restore trace_fastrpc_context_restore trace_raw_output_fastrpc_context_restore 
+wlanb	rfkill	3	0	0	-	0	rfkill_resume rfkill_resume_polling rfkill_suspend 
+wlanb	cfg80211	7	0	0	-	0	perf_trace_rdev_suspend rdev_suspend restore_regulatory_settings trace_event_raw_event_rdev_suspend trace_raw_output_rdev_suspend wiphy_resume 
+wlanb	cnss_nl	0	0	0	-	0	 
+wlanb	cnss_prealloc	0	0	0	-	0	 
+wlanb	cnss_utils	0	0	0	-	0	 
+wlanb	wlan_firmware_service	0	0	0	-	0	 
+wlanb	icnss2	4	2	1	-	8	icnss_pm_resume icnss_pm_resume_noirq icnss_pm_suspend icnss_pm_suspend_noirq 
+wlanb	msm_geni_serial	3	1	2	-	9	msm_geni_serial_sys_hib_resume msm_geni_serial_sys_resume msm_geni_serial_sys_suspend 
+wlanb	btpower	0	0	0	-	0	 
+audio	msm_ext_display	0	0	0	-	0	 
+audio	snd_event_dlkm	0	0	0	-	0	 
+audio	q6_pdr_dlkm	0	0	0	-	0	 
+audio	q6_notifier_dlkm	0	0	0	-	0	 
+audio	apr_dlkm	0	0	0	-	0	 
+audio	adsp_loader_dlkm	0	0	0	-	0	 
+audio	q6_dlkm	2	0	2	-	0	adm_set_ffecns_freeze_event voc_resume_voice_call 
+audio	native_dlkm	0	2	1	-	0	 
+audio	wcd_core_dlkm	0	0	0	-	0	 
+audio	wcd9xxx_dlkm	0	0	0	-	0	 
+audio	pinctrl_lpi_dlkm	2	0	0	-	7	lpi_pinctrl_resume lpi_pinctrl_suspend 
+audio	swr_dlkm	2	0	0	-	0	swr_pm_resume swr_pm_suspend 
+audio	swr_ctrl_dlkm	3	3	1	-	8	swrm_device_suspend swrm_resume swrm_suspend 
+audio	platform_dlkm	2	0	2	-	0	msm_routing_get_ffecns_freeze_event_control msm_routing_put_ffecns_freeze_event_control 
+audio	stub_dlkm	0	0	0	-	0	 
+audio	hdmi_dlkm	0	0	0	-	0	 
+audio	fsa4480_i2c	0	0	1	-	0	 
+audio	mbhc_dlkm	0	0	0	-	0	 
+audio	bolero_cdc_dlkm	0	0	0	-	3	 
+audio	va_macro_dlkm	0	0	0	-	9	 
+audio	rx_macro_dlkm	0	0	0	-	9	 
+audio	tx_macro_dlkm	0	0	0	-	9	 
+audio	wcd938x_slave_dlkm	0	0	0	-	0	 
+audio	wcd938x_dlkm	4	0	0	-	0	wcd938x_resume wcd938x_soc_codec_resume wcd938x_soc_codec_suspend wcd938x_suspend 
+audio	sec_audio_sysfs	0	0	0	-	0	 
+audio	tas256x_dlkm	2	0	0	-	0	tas256x_pm_resume tas256x_pm_suspend 
+audio	wsa883x_dlkm	4	0	0	-	0	wsa883x_soc_codec_resume wsa883x_soc_codec_suspend wsa883x_swr_resume wsa883x_swr_suspend 
+audio	wcd937x_dlkm	2	0	0	-	0	wcd937x_resume wcd937x_suspend 
+audio	pinctrl_wcd_dlkm	0	0	0	-	0	 
+audio	swr_dmic_dlkm	2	0	0	-	0	swr_dmic_resume swr_dmic_suspend 
+audio	swr_haptics_dlkm	2	0	0	-	0	swr_haptics_resume swr_haptics_suspend 
+audio	wcd937x_slave_dlkm	0	0	0	-	0	 
+audio	wsa_macro_dlkm	0	0	0	-	9	 
+audio	machine_dlkm	0	0	0	-	0	 
+wlan	wlan	194	1	4	-	7	cdp_bus_resume cdp_peer_is_vdev_restore_last_peer cds_resume_rx_thread cds_suspend_target cfg_tdls_restore_off_channel_enable cfr_allow_suspend 

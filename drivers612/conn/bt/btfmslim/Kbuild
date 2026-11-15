@@ -1,0 +1,13 @@
+# bt_fm_slim from bt-kernel-css.lnx.16.0.r6-rel slimbus/ (upstream slimbus API),
+# built the lahaina way (CONFIG_BTFM_SLIM, ASoC codec DAIs), against the
+# A52s 5.4-ABI btpower in ../btpower (btpower_register_slimdev,
+# btpower_get_chipset_version).
+ccflags-y += -I$(src)/../btpower -DCONFIG_BTFM_SLIM
+obj-m += bt_fm_slim.o
+bt_fm_slim-objs := btfm_slim.o btfm_slim_codec.o btfm_slim_slave.o
+
+# The stream API used here (slim_stream_unprepare_disconnect_port) exists only in
+# Qualcomm's slimbus.ko (soc-repo drivers/slimbus), so soc-repo's headers must
+# come before the ACK ones, as in soc-repo's own build/Makefile.
+SOC_REPO ?= $(abspath $(src)/../../../../bsp612/soc-repo-staging)
+LINUXINCLUDE := -I$(SOC_REPO)/include -I$(SOC_REPO)/include/uapi $(LINUXINCLUDE)

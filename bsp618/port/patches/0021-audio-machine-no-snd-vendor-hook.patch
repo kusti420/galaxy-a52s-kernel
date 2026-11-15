@@ -1,0 +1,143 @@
+audio machine_dlkm (lahaina.c): ACK 6.18 removed android_vh_snd_pcm_check_no_buffer
+
+<trace/hooks/sound.h> is gone. On 6.12 lahaina.c's hook handler let snd_pcm_pre_start()
+start the PLAYBACK side of the hostless FE links (VoiceMMode1/2, LSM1-7, "Secondary MI2S_TX
+Hostless Capture") with an empty host buffer (5.4: substream->hw_no_buffer). Without it, a
+voice call's playback FE START would fail with -EPIPE unless userspace sets stop_threshold
+to the boundary itself.
+
+6.18 equivalent, inside the module: those links get a dai_link .prepare op (they had none;
+a link with its own ops is reported and left alone). Prepare runs after hw_params/sw_params,
+right before START, and sets the PLAYBACK stop_threshold to the boundary, which makes
+snd_pcm_playback_data() true for the empty buffer. Same link test as 6.12
+(qcom_link_is_hostless()); capture is unaffected, as it was on 6.12.
+
+--- a/drivers612/audio/audio-kernel/asoc/lahaina.c
++++ b/drivers612/audio/audio-kernel/asoc/lahaina.c
+@@ -46,7 +46,7 @@
+ #include "lahaina-port-config.h"
+ #include "msm_dailink.h"
+ #include "msm_common.h"
+-#include <trace/hooks/sound.h>
++/* bsp618/port: <trace/hooks/sound.h> is gone from ACK 6.18 (see msm_hostless_fe_ops) */
+ 
+ #define DRV_NAME "lahaina-asoc-snd"
+ #define __CHIPSET__ "LAHAINA "
+@@ -8337,31 +8337,71 @@
+ 	pdata->common_pdata = common_pdata;
+ }
+ 
+-static void qcom_check_hostless(void *data, struct snd_pcm_substream *substream, bool *no_buffer)
++/*
++ * bsp618/port: the FE links whose PLAYBACK side may start with an empty host buffer
++ * (6.12: the same test in the android_vh_snd_pcm_check_no_buffer handler).
++ */
++static bool qcom_link_is_hostless(const struct snd_soc_dai_link *link)
+ {
+-	if (!substream || !substream->pcm) return;
++	switch (link->id) {
++	case MSM_FRONTEND_DAI_VOICEMMODE1:
++	case MSM_FRONTEND_DAI_VOICEMMODE2:
++	case MSM_FRONTEND_DAI_LSM1:
++	case MSM_FRONTEND_DAI_LSM2:
++	case MSM_FRONTEND_DAI_LSM3:
++	case MSM_FRONTEND_DAI_LSM4:
++	case MSM_FRONTEND_DAI_LSM5:
++	case MSM_FRONTEND_DAI_LSM6:
++	case MSM_FRONTEND_DAI_LSM7:
++		return true;
++	}
++	return link->stream_name &&
++	       !strcmp(link->stream_name, "Secondary MI2S_TX Hostless Capture");
++}
+ 
+-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
++/*
++ * bsp618/port: ACK 6.18 removed android_vh_snd_pcm_check_no_buffer. On 6.12 the hook made
++ * snd_pcm_pre_start() skip its "playback buffer empty -> -EPIPE" check for the links above
++ * (5.4: substream->hw_no_buffer). The 6.18 equivalent without a core hook: the links get a
++ * .prepare op (runs after hw_params/sw_params, right before START) that sets the PLAYBACK
++ * stop_threshold to the boundary, so snd_pcm_playback_data() is true for the empty buffer.
++ * It also stops the core from declaring an xrun on the never-filled buffer, which a hostless
++ * stream must not get anyway. Capture sides are unaffected, as on 6.12.
++ */
++static int msm_hostless_fe_prepare(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+ 
+-	if (!rtd)
+-		return;
++	if (rtd && qcom_link_is_hostless(rtd->dai_link) &&
++	    substream->stream == SNDRV_PCM_STREAM_PLAYBACK && substream->runtime) {
++		pr_debug("%s Enable hostless/no_buffer for stream %s\n", __func__,
++			 rtd->dai_link->stream_name);
++		substream->runtime->stop_threshold = substream->runtime->boundary;
++	}
++	return 0;
++}
++
++static const struct snd_soc_ops msm_hostless_fe_ops = {
++	.prepare = msm_hostless_fe_prepare,
++};
++
++static void msm_hostless_set_fe_ops(struct snd_soc_card *card)
++{
++	struct snd_soc_dai_link *link;
++	int i, n = 0;
+ 
+-	if (rtd->dai_link->id == MSM_FRONTEND_DAI_VOICEMMODE1 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_VOICEMMODE2 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_LSM1 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_LSM2 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_LSM3 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_LSM4 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_LSM5 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_LSM6 ||
+-		rtd->dai_link->id == MSM_FRONTEND_DAI_LSM7) {
+-		pr_debug("%s Enable hostless/no_buffer for stream %s\n", __func__, rtd->dai_link->stream_name);
+-		*no_buffer = true;
+-	}
+-	else if (!strcmp(rtd->dai_link->stream_name, "Secondary MI2S_TX Hostless Capture")) {
+-		pr_debug("%s Enable hostless/no_buffer for stream %s\n", __func__, rtd->dai_link->stream_name);
+-		*no_buffer = true;
++	for_each_card_prelinks(card, i, link) {
++		if (!qcom_link_is_hostless(link) || link->ops == &msm_hostless_fe_ops)
++			continue;	/* (a deferred probe runs this again on the static links) */
++		if (link->ops) {
++			pr_warn("%s: %s has its own ops, no hostless start\n", __func__,
++				link->stream_name);
++			continue;
++		}
++		link->ops = &msm_hostless_fe_ops;
++		n++;
+ 	}
++	pr_debug("%s: %d hostless FE links\n", __func__, n);
+ }
+ 
+ static int msm_asoc_machine_probe(struct platform_device *pdev)
+@@ -8431,6 +8471,8 @@
+ 	}
+ 
+ 
++	msm_hostless_set_fe_ops(card);	/* bsp618/port: replaces the 6.12 vendor hook */
++
+ 	ret = devm_snd_soc_register_card(&pdev->dev, card);
+ 	if (ret == -EPROBE_DEFER) {
+ 		pr_err("%s: devm_snd_soc_register_card -EPROBE_DEFER\n",__func__);
+@@ -8586,8 +8628,6 @@
+ 	dev_err(&pdev->dev, "%s: setting snd_card to ONLINE\n", __func__);
+ 	snd_card_set_card_status(SND_CARD_STATUS_ONLINE);
+ 
+-	register_trace_android_vh_snd_pcm_check_no_buffer(qcom_check_hostless, NULL);
+-
+ 	return 0;
+ err:
+ 	devm_kfree(&pdev->dev, pdata);
+@@ -8614,7 +8654,6 @@
+ 	msm_audio_remove_qos_request();
+ 	snd_event_master_deregister(&pdev->dev);
+ 	snd_soc_unregister_card(card);
+-	unregister_trace_android_vh_snd_pcm_check_no_buffer(qcom_check_hostless, NULL);
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 10, 0)
+ 	return 0;

@@ -1,0 +1,16 @@
+soc: qcom: adsp_sleepmon: find qcom_common.h
+
+adsp_sleepmon.c includes "qcom_common.h" from drivers/remoteproc. Kleaf passes that header
+as a source of the module (drivers/soc/qcom/modules.bzl); the make-path Makefile has no
+include path for it.
+
+--- a/drivers/soc/qcom/Makefile
++++ b/drivers/soc/qcom/Makefile
+@@ -17,6 +17,7 @@
+ cx-ipeak-objs += cx_ipeak.o
+ 
+ obj-$(CONFIG_QCOM_ADSP_SLEEPMON) += adsp_sleepmon.o
++CFLAGS_adsp_sleepmon.o += -I$(src)/../../remoteproc
+ 
+ obj-$(CONFIG_QTI_ALTMODE_GLINK) += altmode-glink.o
+ 
