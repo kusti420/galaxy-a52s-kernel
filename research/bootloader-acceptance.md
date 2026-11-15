@@ -174,7 +174,7 @@ Checked on the `test1` dtb:
   including `kaslr@a0001000`, which the ABL writes before the jump.
 - Root `interrupt-parent`, `/memory@80000000`, `/chosen`, `/reserved-memory`, `/firmware`,
   `/soc@0` (matches the ABL's `/soc` lookups) are present. PSCI is `smc` in both trees.
-- `gcc` `protected-clocks` is present (status log). Not re-verified against TZ here.
+- `gcc` `protected-clocks` is present. Not re-verified against TZ here.
 - Command line: the downstream kernel has `COMMAND_LINE_SIZE 4096`, ACK 6.18 has 2048. The ABL
   appends a long `androidboot.*`/`sec_debug.*` tail after the image's own arguments; anything
   past 2047 characters is cut silently. Harmless for an initramfs test, relevant for Android.

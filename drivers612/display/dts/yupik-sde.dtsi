@@ -96,7 +96,7 @@
 		/*
 		 * 6.12 (r7) encoding SDE_HW_VER(3,0,0). The 5.4 tree's <0x300> is read raw into
 		 * ubwc_rev by r7, so no IS_UBWC_xx check matched, the SSPP UBWC static register was
-		 * never written and every UBWC buffer showed green and blocky (owner, 2026-11-13).
+		 * never written and every UBWC buffer showed green and blocky.
 		 */
 		qcom,sde-ubwc-version = <0x30000000>;
 		qcom,sde-ubwc-swizzle = <0x06>;

@@ -3,7 +3,7 @@
 # in place (idempotent). Used by dt/mkmodemtree.sh and drivers612/realboot/build-realboot.sh
 # (MODEM=1).
 #
-# The bug (POLISH.md "IPA DT: 2+2 cells"): ipa_{ap,uc}_iommu_region_partition hold
+# The bug: ipa_{ap,uc}_iommu_region_partition hold
 #   iommu-addresses = <&ipa_smmu_X 0x0 0x0 0x0 0x20000000>, <&ipa_smmu_X 0x0 0x40000000 0x0 0xc0000000>,
 #                     <&ipa_smmu_X 0x1 0x0 0xf 0x0>
 # (2+2 cells: reserve everything except the 5.4 pool 0x20000000 + 512 MiB). of_iommu_get_resv_regions()

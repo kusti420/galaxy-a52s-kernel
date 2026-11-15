@@ -1,5 +1,5 @@
 #!/bin/bash
-# Unlock a test phone's pattern keyguard over adb (owner-approved for phone 1, 2026-11-15).
+# Unlock a test phone's pattern keyguard over adb.
 # The pattern is NOT in this repo: it is read from ~/.config/a52sxq/p<N>-pattern (dots 1-9, keypad order).
 # Usage: PHONE=1 tools/unlock.sh
 set -u

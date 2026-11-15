@@ -267,7 +267,7 @@ also runs the mainline DT and upstream clock/PHY/SMMU drivers built in.
 | `msm_kgsl` | port | Adreno blob driver | rule `dma-fence-ops` (also used by msm_drm's `sde_fence`, the rotator, the techpacks copy) | - |
 | `minidump` (added) | port | not in the target list, but a load dependency of boot-path modules: `ufs-qcom`, `qcom_ipc_logging`, `qcom_wdt_core`, `qcom-dload-mode`, `qcom_logbuf_*`, `memory_dump_v2`, `dcc_v2`, `qcom_va_minidump`, `frpc-adsprpc` | patch 0017 | - |
 
-**FBE finding (needs an owner decision, not a build fix):** `ufshcd-crypto-qti` advertises
+**FBE finding (needs a decision, not a build fix):** `ufshcd-crypto-qti` advertises
 `key_types_supported = BLK_CRYPTO_KEY_TYPE_HW_WRAPPED` only, but the ROM's fstab
 (`device/samsung/sm7325-common/init/fstab.qcom:50`) uses raw keys
 (`fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized`, no `wrappedkey_v0`, no
@@ -281,7 +281,7 @@ data wipe and TZ support); or give the fork a raw-key profile (upstream ufs-qcom
 
 ## sched-walt pass (2026-11-14, evening)
 
-Decision (owner): **port** `sched-walt` (soc-repo `kernel/sched/walt`) rather than build the
+Decision: **port** `sched-walt` (soc-repo `kernel/sched/walt`) rather than build the
 6.18 module set without `CONFIG_SCHED_WALT`: `ufs-qcom` (storage boost), `msm_performance`,
 `thermal_pause`, `bwmon` and `qcom_lpm` import it, and 6.12 runs with it.
 
@@ -637,7 +637,7 @@ the forks stay. Items 2-4 and 8 are done at compile level.
 5. **DMA heaps / secure buffers**: `qcom_dma_heaps` builds (pool-size hook dropped).
    `minidump` builds (patch 0017); it could not stay out of the boot list after all: ufs-qcom,
    `qcom_ipc_logging`, `qcom_wdt_core`, `qcom-dload-mode` and others import it.
-6. **Scheduler** (`sched-walt`): **builds and modpost-clean** (owner decision: port, keep
+6. **Scheduler** (`sched-walt`): **builds and modpost-clean** (decision: port, keep
    `CONFIG_SCHED_WALT=m`; rule `cfs-h-nr-queued`, patch 0018; `qcom-cpufreq-hw` fork too,
    patch 0019). Hook audit, boot arguments (`android_arch_task_struct_size=512` required,
    `sched_proxy_exec=0` recommended) and run-time risks: sched-walt section.
@@ -787,11 +787,11 @@ it: the session stays up, so read FAR/FSR/soft-vs-ATOS from dmesg over telnet.
 
 - Compile and modpost only. Nothing here says the modules load or work on 6.18; the next
   milestone is loading the 6.12 boot module list built from this tree under the 6.18 kernel
-  (kexec from the harness on the third test device, when the owner names it).
+  (kexec from the harness on the third test device, once one is chosen).
 - clang stops at 20 errors per file (camera excepted), so a few heavy files may hide more.
   (The boot-path targets were checked with `-ferror-limit=0`: nothing was hidden behind them.)
 - The fork-vs-upstream decisions assume the 6.18 vendor boot uses the vendor DT, as the 6.12
-  one does. If the owner ever prefers a mainline-binding DT for UFS/SMMU/USB, the upstream
+  one does. If a later port prefers a mainline-binding DT for UFS/SMMU/USB, the upstream
   drivers become the better base, but the vendor modules that import fork APIs (kgsl, msm_drm,
   camera, usb_f_gsi, sdhci-msm) would then need shims.
 - `lahaina` module config and GKI vmlinux come from the survey build (plain-make gki_defconfig,

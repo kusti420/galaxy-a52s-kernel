@@ -1,7 +1,7 @@
 #!/bin/sh
 # Packs the ACK 6.18 build (out-ack/) as a recovery-format test image. BUILDS ONLY, flashes
 # nothing. Hard rule (2026-11-11): no test image goes on DAILYPHONE or OTHERPHONE; images
-# from here are for the separate test device the owner will name.
+# from here are for a separate test device.
 # Usage: ./mkimage-ack.sh <name>   -> images/a52sxq-ack618-<name>-recovery.img
 # Layout and checks follow research/bootloader-acceptance.md.
 set -e

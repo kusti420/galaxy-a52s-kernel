@@ -124,9 +124,9 @@ stage, from REF ramdisk s76).
    (kx line in out/rh-rh612p1fod/HOWTO.txt). Checks in the rehearsal: display up, boot_completed,
    `dmesg | grep -c 'failed to set fod prop'` = 0, no `plane stages assigned` / `Stage too large`
    errors, no `[FINGER_MASK]` line without a finger on the sensor.
-3. Enrollment needs a screen lock: in the rehearsal (RAM /data) only with the owner's OK; the
-   real test is rb17 flashed on phone 1 (owner window; rollback = /cache/a52rb-rollback rb16
-   images), owner enrolls, then
+3. Enrollment needs a screen lock: in the rehearsal (RAM /data) only with an explicit OK; the
+   real test is rb17 flashed on phone 1 (hands-on session; rollback = /cache/a52rb-rollback rb16
+   images), enroll a finger, then
    `adb shell dmesg | grep -E 'FINGER_MASK|fingermask_image_tx|Stage too large|fod'`
    and `cat /sys/class/lcd/panel/actual_mask_brightness` during/after a touch. Pass: the
    sequence above on every finger-down AND a `mode 0` / FINGERMASK_OFF on every lift (screen

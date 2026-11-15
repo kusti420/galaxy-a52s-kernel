@@ -14,7 +14,7 @@
 #   (7) SDCARD=1 builds (rb16, rb618-5): cqhci + sdhci-msm in the first stage. RH_SD=on lets
 #       sdhci-msm probe (vold then mounts a card as on the real boot: never formats it); RH_SD=off adds
 #       the test word module_blacklist=sdhci_msm (the kernel refuses that one module, init goes on:
-#       first_stage_console=2), so no microSD is ever seen. Default: off on PHONE=1 (the owner's
+#       first_stage_console=2), so no microSD is ever seen. Default: off on PHONE=1 (the inserted
 #       card), on on PHONE=2. Checks: probe + 8804000.sdhci bound (on) / refused + no mmcblk (off).
 #   (8) bus/GPU DCVS builds (bwmon/memlat/GPU governors in the first stage): kgsl devfreq governor
 #       msm-adreno-tz, bwmon + memlat probed (no SCMI defer), the rc's bus_dcvs writes applied
@@ -33,7 +33,7 @@
 #
 #   [PHONE=1|2] drivers612/realboot/rehearse.sh <612|618> <name>     e.g. rehearse.sh 612 rh612a
 #     -> out/rh-<name>/{Image,rd.cpio.gz,rh-base.dtb,pack.tgz,cmdline.txt,harness-extra.sh,REPORT.txt}
-#        and prints the kx-cycle command. RUN=1 also runs it (needs the phone; the owner's call).
+#        and prints the kx-cycle command. RUN=1 also runs it (needs the phone; the user's call).
 # Env: PHONE=2 (default) PHONE2: harness images/a52sxq-ack618-kexec9-p2-recovery.img, NET 43
 #      (172.16.43.1), USB 1-5.4.4.2, ABL A528BXXS2DWB5 (bit 2), hw rev 4;
 #      PHONE=1 PHONE1: harness images/a52sxq-ack618-kexec9-recovery.img, NET 42 (172.16.42.1),
@@ -66,7 +66,7 @@ KV=${1:?usage: rehearse.sh <612|618> <name>}; NAME=${2:?usage: rehearse.sh <612|
 case "$NAME" in *[!a-z0-9-]*) echo "name: a-z 0-9 - only" >&2; exit 2;; esac
 AB=$TOP/drivers612/androidboot; R=$HERE/rehearsal
 PB=${ANDROID_TREE:-$HOME/android}/prebuilts/clang/host/linux-x86
-# the two test phones (the private project log; nothing else may ever be a target)
+# the two test phones (nothing else may ever be a target)
 PHONE=${PHONE:-2}
 phone_vars() {   # <1|2> -> PS PNET PHIMG PPORT PBL PREV
 	case "$1" in
@@ -340,8 +340,8 @@ Real-boot rehearsal $NAME ($RBNAME, $V) on phone $PHONE ($S, USB $UPORT, ABL $BL
 $( [ "$PHONE" = 1 ] && printf '%s\n' "Phone 1: LineageOS has no su: kx-cycle/test-cycle use adb root, so \"Rooted debugging\" must be ON in its" \
 "Developer options (USB debugging alone is not enough)." \
 "$(case "$RH_SD" in none) echo "Its microSD (mmcblk1) is never touched: no SD host driver is in this kernel's module set (sdhci-msm blocklisted, not built in).";;
-off) echo "Its microSD (mmcblk1) is never touched: this build has sdhci-msm in the first stage, the rehearsal cmdline refuses it (module_blacklist=sdhci_msm; RH_SD=on would let vold mount the owner's card, as the real boot does)";;
-on) echo "RH_SD=on: sdhci-msm probes and vold MOUNTS the owner's microSD (exFAT, as on the real 6.12 boot rb16; nothing formats it). Owner's OK for that first.";; esac)" \
+off) echo "Its microSD (mmcblk1) is never touched: this build has sdhci-msm in the first stage, the rehearsal cmdline refuses it (module_blacklist=sdhci_msm; RH_SD=on would let vold mount the inserted card, as the real boot does)";;
+on) echo "RH_SD=on: sdhci-msm probes and vold MOUNTS the inserted microSD (exFAT, as on the real 6.12 boot rb16; nothing formats it). Explicit OK for that first.";; esac)" \
 "$( [ "$RBMODEM" = 1 ] && echo "MODEM=1: its OWN modem boots under the ROM's radio userspace; the EFS (modemst1/2, fsg, fsc) is served from RAM copies (testguard keeps the partitions read-only; efsdump verify at the end), the modem only boots if its anti-rollback version equals the ADSP image's. Registration/data need the SIM (PIN lock off) and mobile data on (fresh zram /data = defaults)." || echo "Its modem stays off in this tree (MODEM=0)." )" )
 
 1. run (about 3 min; KX_HOLD leaves the test boot up until the dead-man at ${DEADMAN} s):
@@ -399,7 +399,7 @@ periodic usbdiag lines with the recent state changes in hist=[...]. userdata is 
 (testguard + zram /data in every case).
 EOF
 say ""
-say "kx-cycle (phone $PHONE = $S, owner's OK for the run; nothing flashed):"
+say "kx-cycle (phone $PHONE = $S, explicit OK for the run; nothing flashed):"
 say "  $KXCMD"
 say "results: adb -s $S shell dmesg | grep -E 'a52rh:|a52sxq-init: rh:'   (checks list + USB-failure behaviour: $O/HOWTO.txt)"
 say "end:     TSH_IP=$TSHIP tools/tsh.py /leave; PHONE=$PHONE kexec/kx-finish.sh $NAME"

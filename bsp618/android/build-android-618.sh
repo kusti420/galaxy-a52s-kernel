@@ -7,7 +7,7 @@
 #   dtb      mkdtb-618.sh        out/android-r02-618.dtb (6.12 android tree + a52ram reservation)
 #   pack     pack-kexec-rd-618.sh <name>   out/<name>-rd.cpio.gz (+ insmod simulation)
 # Usage: bsp618/android/build-android-618.sh <name>      e.g. a1
-# Prints the kx-cycle line for the main session at the end. Nothing is flashed or run on a phone.
+# Prints the kx-cycle line at the end. Nothing is flashed or run on a phone.
 set -euo pipefail
 A=$(cd "$(dirname "$0")" && pwd); B=$(dirname "$A"); TOP=$(dirname "$B")
 NAME=${1:?name}

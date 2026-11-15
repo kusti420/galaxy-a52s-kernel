@@ -120,7 +120,7 @@ analysed, no rev-0 hardware is in use.
 ## Unverifiable from the device tree
 - Sensor model per slot and the sensor I2C address: the 5.4 CamX stack probes sensors from
   userspace (sensor module blobs), so `qcom,cam-sensor` nodes carry no address or name. The
-  model column below is from the vendor blob names (the private project log), not from the DT. Slot 3 is
+  model column below is from the vendor blob names, not from the DT. Slot 3 is
   LABELLED `sensor_rear_tele` by Samsung but the A52s has no tele: by its rails (1.2 V vdig +
   1.8 V vio, no vana, same as the macro slot) it is the second GC5035 (depth).
 - `sensor_front` (cell 1) and `sensor_front_full` (cell 13) are the same physical front camera

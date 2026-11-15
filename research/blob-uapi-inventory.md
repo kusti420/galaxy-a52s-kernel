@@ -562,7 +562,7 @@ userspace ABI (no user).
 
 - **Exact ioctl subsets actually issued** by each closed library. Counts above are what the header
   defines, not what the blob calls; no disassembly or tracing was done (tracing would have meant
-  attaching to processes on the owner's phone).
+  attaching to processes on a daily-use phone).
 - **Socket families**: sockets were classified by elimination (not unix, netlink or inet ⇒ assumed
   AF_QIPCRTR). `/proc/net/protocols` shows `QIPCRTR 0` because that proto does not maintain the
   counter, so there is no direct confirmation.

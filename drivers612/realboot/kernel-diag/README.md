@@ -10,7 +10,7 @@ Offline analysis of 2026-11-14 22:xx (no phone touched). Builds: `out/rb6` (obse
 ## What happened (logs/rb4-flash1-last_kmsg.txt, logs/rb5-last_kmsg.txt, logs/rb5-flash-prev-console.txt)
 
 - **rb4 behaved exactly like rb5**: 13 "Warm Reset by Watchdog Bite" from 19:20:53 to 19:32:52
-  UTC, then the owner's key reset and Download mode (the "first-stage mount failure" reading
+  UTC, then a manual key reset and Download mode (the "first-stage mount failure" reading
   of rb4 was wrong: it never got that far). rb5: 5 more bites 19:38:00-19:43:05. Bite to bite
   54-68 s; the ABL reaches ExitBootServices at ~18.8 s, so each kernel ran **35-49 s** until
   the bite (not a fixed time).
@@ -97,7 +97,7 @@ CPUs in first stage (ramoops would have the log).
 
 ## Reading the result after a failed rb6 (phone 2)
 
-1. Owner: Vol-down + Power ~7 s (restart; this is the key reset that lets DRAM decay a little),
+1. By hand: Vol-down + Power ~7 s (restart; this is the key reset that lets DRAM decay a little),
    then at once Vol-up + Power with USB connected = recovery = the 6.18 harness (black screen,
    172.16.43.1; it leaves for Download mode by itself after 300 s without a login).
 2. PC, before anything else (each later boot of LineageOS or the harness keeps the area, but a

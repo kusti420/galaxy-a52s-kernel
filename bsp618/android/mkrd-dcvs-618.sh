@@ -15,7 +15,7 @@
 # stage files must be byte-identical to IN's (checked), so only the four new modules are new.
 # Stage dirs come from `python3 -I bsp618/android/mkstages-618.py` (kgsl2, dcvs = the 6.12
 # drivers612/androidboot/out/stage-{kgsl2,dcvs} mapped to their 6.18 builds).
-# Kexec test (owner's OK, phone 2): a52.mods=debug,secure,display,kgsl,dcvs,video,i2c,... and the
+# Kexec test (explicit OK, phone 2): a52.mods=debug,secure,display,kgsl,dcvs,video,i2c,... and the
 # tree bsp618/android/out/android-r02-618.dtb (since 2026-11-15 with drivers612/busdcvs/dt-fix.sh).
 # Packs only; nothing is run or flashed.
 set -eu

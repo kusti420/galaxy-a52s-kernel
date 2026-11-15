@@ -16,7 +16,7 @@ Trees compared (abbreviations used throughout):
 | QC r7 | Qualcomm display techpack for lahaina on 6.12 | `donors/display-drivers` (`display-kernel.lnx.1.11.r7-rel`) |
 | DT | the phone's real device tree | `downstream-dt/a52sxq-r02.dts` |
 
-The S24 and S23 trees were fetched tonight (display-drivers only). They were not in
+The S24 and S23 trees were fetched (display-drivers only). They were not in
 `research/source-scout.md` and they change the display decision.
 
 ## 1. Decision per driver, in bring-up order
@@ -287,7 +287,7 @@ Source: subagent report.
   payload sizes differ. Keep the 5.4 core and header; `lsm6dso_accel.c` has 15 `set_fs`
   uses to replace; it is built in on 5.4 and must become a module.
 
-## 6. sec_core (step 0, done tonight)
+## 6. sec_core (step 0, done)
 
 `samsung612/modules/sec_core/`: `sec_core.c` (about 300 lines), `include/linux/sec_class.h`,
 `Kbuild`. Built as `sec_core.ko` against the 6.12.81 lahaina build of the other agent

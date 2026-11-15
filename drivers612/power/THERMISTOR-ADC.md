@@ -145,7 +145,7 @@ upstream's driver (which ignores scale-fn-type) is not involved.
 - That PM7325 AMUX_THM5 shares a pin with gpio1 is an inference from Samsung pairing
   `gpio1_adc_default` with pa_therm. No PM7325 pinout was available to confirm it.
 
-## Hardware result (main session, 2026-11-13 21:5x, run ab-s37)
+## Hardware result (2026-11-13 21:5x, run ab-s37)
 Root cause found on the phone: binding sec_thermistor logs
 `spmi spmi-0: disallowed SPMI write to sid=1, addr=0x8840` (PM7325 gpio1, pa) and `addr=0x8B40`
 (gpio4, wf) -> "Error applying setting, reverse things back". The PMIC arbiter does not let the
@@ -169,7 +169,7 @@ given), `drivers612/modem/stages/therm/targets.txt` (qcom-spmi-adc5.ko + qcom-va
 not in the bsp612 first stage; IIO is built in, hwmon not needed). Built into
 `drivers612/modem/out/pack-modem.tgz` by `drivers612/modem/build.sh`.
 
-Run (owner):
+Run:
 
     M1_ARGS="100 therm" drivers612/modem/run-m1.sh m1t-p1
 

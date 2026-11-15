@@ -10,7 +10,7 @@
 #    (same .config, same objects: only setup.o, a52bc.o and the vmlinux link are redone);
 #  - the two tracked files touched (arch/arm64/kernel/setup.c, Makefile) are marked
 #    `git update-index --assume-unchanged` for the build, so setlocalversion sees a clean tree and
-#    the release stays 6.12.81-4k-g8a69376da734 (the 14:30 GOTCHA in the private project log); a52bc.[ch] are
+#    the release stays 6.12.81-4k-g8a69376da734; a52bc.[ch] are
 #    untracked (setlocalversion uses status -uno);
 #  - afterwards the source tree is put back exactly (git checkout of the two files, a52bc.[ch]
 #    removed, assume-unchanged cleared): bsp612/out/gki and bsp612/out/dist are never touched;

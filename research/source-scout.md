@@ -17,7 +17,7 @@ Legend: **V** = verified by fetching a listing or file content today; **U** = un
 - No public `kernel.lnx.6.18.*` Android branch exists yet in `clo/la/kernel/qcom` (only 6.1, 6.6, 6.12). CLO does mirror ACK 6.18 prebuilts (`clo/la/kernel/prebuilts/6.18`).
 - The old QCM6490 Android LTS line (`LA.UM.9.14.x`, up to `QISI15`) stays on msm-5.4.
 
-This contradicts the project's the private project log "Known facts" line "Qualcomm never released a newer Android kernel for this chip"; that line should be corrected by the owner.
+This corrects the earlier assumption "Qualcomm never released a newer Android kernel for this chip".
 
 Second headline: **a community SM7325 phone already runs its 5.4-era vendor on this 6.12 BSP**: `suvojeet-sengupta/redwood-6.12` (POCO X5 Pro 5G). It contains an `/dev/ion` compat module and a forward-port of the 5.4 camera driver. See section 3.
 

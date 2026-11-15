@@ -268,7 +268,7 @@ looks easier than on 6.18: ids match, `/__symbols__` is there, the hypervisor's 
    creates its device nodes itself, or build a second, non-GKI bring-up Image with a small
    fragment (then vendor modules must be built against that kernel's `Module.symvers`).
    Pass `clk_ignore_unused pd_ignore_unused` until display is up. Boot test only on the test
-   phone and only when the owner says so.
+   phone and only when the user says so.
 3. **First-stage modules** for UFS + USB: `out/dist/first-stage.a52sxq.list` = Qualcomm's lahaina
    first-stage list minus stale and SM8350-only entries, plus `dwc3-msm`, `phy-msm-snps-hs`,
    `phy-msm-ssusb-qmp`, `pinctrl-spmi-gpio`, `qcom-pon`, `pm8941-pwrkey` and their dependencies.

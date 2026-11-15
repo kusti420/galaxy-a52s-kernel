@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stages the prebuilt-kernel directory that patches/0001+0002 expect at
 # ${ANDROID_TREE:-$HOME/android}/device/samsung/a52sxq-kernel/6.12, from bsp612/out/dist. Writes ONLY to
-# drivers612/androidboot/out/prebuilt/6.12; the main session copies it into the ROM tree.
+# drivers612/androidboot/out/prebuilt/6.12; it is then copied into the ROM tree.
 #   EXTRA_MODULES="a.ko ..."  forward-ported drivers of the other drivers612 agents (second stage)
 #   EXTRA_FIRST="a.ko ..."    extra first-stage modules (sec_core is added by default)
 #   DTBO=<dtbo.img>           default: the bring-up overlay of bsp612 packed alone

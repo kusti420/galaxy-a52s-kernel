@@ -8,7 +8,7 @@
 #   sh /p/fp-test.sh          probe + sysfs + ioctl checks, NO power-on
 #   sh /p/fp-test.sh power    also FP_POWER_CONTROL 1/0 (L3C 3.3 V at the tree's own voltage
 #                             through the driver, exactly what the HAL does at every unlock;
-#                             run only with the main session's go-ahead)
+#                             run only with an explicit go-ahead)
 #   sh /p/fp-test.sh reload   also rmmod + insmod twice (unbind / rebind paths)
 D=$(cd "$(dirname "$0")" && pwd)
 B=/bin/busybox

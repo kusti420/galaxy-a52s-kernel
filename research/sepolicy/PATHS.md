@@ -411,7 +411,7 @@ Is a compatibility shim reasonable?
 
 ## 6. Key-free kexec check before rb11 is flashed
 
-Run the rehearsal (phone 2, the owner's OK for the run; nothing is flashed):
+Run the rehearsal (phone 2, an explicit OK for the run; nothing is flashed):
 `drivers612/realboot/out/rh-rh612d/HOWTO.txt` has the kx-cycle line, which uses rb11's own modules
 and tree.
 

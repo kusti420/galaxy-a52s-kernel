@@ -117,7 +117,7 @@ esac; done
 # ---------------------------------------------------------------- escape chain first
 # Before anything that could hang or reset the phone, load the four modules that make
 # "reboot download" work (PMIC arbiter -> PMIC -> SDAM nvmem -> sec_core writes PON 0x15).
-# They have no other dependencies (modules.dep). RULE (owner, 2026-11-11: no key presses):
+# They have no other dependencies (modules.dep). RULE (no key presses):
 # after a crashed boot, or with a52.escapetest=1, load ONLY this chain and leave at once.
 # A boot that crashes is never retried with a different module set; the PC decides.
 M=/lib/modules

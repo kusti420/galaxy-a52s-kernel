@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* ionone <heap mask hex> <flags hex> <len MiB> <hold s>: ONE /dev/ion allocation, held, then closed.
- * For narrowing the reset that iontest -s causes (hwbringup HARDWARE-LOG, hw3/hw5). nolibc, static. */
+ * For narrowing the reset that iontest -s causes (hwbringup runs hw3/hw5). nolibc, static. */
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>

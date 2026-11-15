@@ -2,7 +2,7 @@
 # Builds the odin4 rollback package for a real-boot attempt: a plain ustar AP.tar holding the
 # phone's own boot.img, vendor_boot.img and dtbo.img (complete partition images with footers),
 # as used on phone 2 after rb7/rb8/rb9 (`odin4 -a AP.tar -d /dev/bus/usb/BBB/DDD`, from a
-# Download mode the owner entered). Nothing else goes in: no vbmeta, recovery, firmware.
+# Download mode entered by hand). Nothing else goes in: no vbmeta, recovery, firmware.
 #
 #   tools/mk-odin-rollback.sh <dir with the 3 images> <out dir> [SHA256SUMS that must match]
 #

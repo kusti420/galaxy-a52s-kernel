@@ -146,7 +146,7 @@ phone's sleep pins and 1 MHz, SPI personality disabled, sec-nfc the only live ch
 not in `qcom,gpios-reserved`; the only other users of those pins (SE10 i2c/spi/uart a88000,
 nq@28, spi@a84000) are disabled.
 
-Integration (main session): in `kexec/mkandroidtree.sh` add
+Integration: in `kexec/mkandroidtree.sh` add
 `(cd drivers612/nfc && ./dt-check.sh >/dev/null 2>&1) || { echo "nfc overlay build failed"; exit 1; }`
 and append `drivers612/nfc/dt-work/a52sxq-nfc.dtbo` to the `fdtoverlay` list. Long term
 boarddt should carry the real regulator node instead of the placeholder.
@@ -203,8 +203,7 @@ Android-level test (after the above): boot the test Android with stages `...,i2c
 read-only `logcat | grep -iE 'nfc|SecNfc|NfcService'` and `dmesg | grep sec_nfc`: expect the
 5.4 sequence open -> mode 2 -> mode 1, the HAL's "Bootloader: Version ..." line, NCI
 CORE_RESET/INIT, and no `enableInternal` FatalError. Do not tap cards or enable payment
-routing on a test phone without the owner (and never on the owner's daily phone: the private project log
-forbids changing NFC state there).
+routing on a test phone without someone at the phone (and never on a daily-use phone).
 
 ## Open questions for hardware testing
 

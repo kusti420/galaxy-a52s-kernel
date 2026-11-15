@@ -15,7 +15,56 @@ Two kernel targets, one source tree:
 
 This repository holds **sources only**: patch series, out-of-tree modules, device trees, build
 and test scripts, and the notes needed to understand them. There are no kernel images, modules,
-ramdisks or firmware here, and no builds are distributed yet.
+ramdisks or firmware in the tree; prebuilt test images are published separately (see
+[Download](#download)).
+
+## Download
+
+Prebuilt **alpha** images are published as GitHub Releases of this repository (the Releases
+page). Each release has its own README with the install and roll-back steps and a SHA256SUMS
+file. Read the [safety notes](#safety-read-before-touching-a-phone) first.
+
+**Alpha 1: Linux 6.12 for LineageOS 24 on the SM-A528B.** Qualcomm's 6.12 BSP kernel (GKI
+6.12.81 + the forward-ported Qualcomm/Samsung drivers from this tree) in place of the phone's 5.4
+kernel. The ROM and its vendor blobs run unchanged. For enthusiasts only.
+
+Requirements:
+
+- SM-A528B with an unlocked bootloader.
+- LineageOS 24.0 (Android 17); tested with `lineage-24.0-20261028-nightly`. Other builds and
+  ROMs are untested.
+- The mobile network (modem) needs the bootloader-bit-5 firmware (A528BXXU5...). On older
+  firmware the phone boots, but TrustZone refuses the modem (no cellular).
+- A PC with adb and Odin (or `odin4` on Linux); Developer options -> Rooted debugging on.
+
+What works (tested on two phones): display 120 Hz, touch, GPU, CPU/GPU/bus frequency scaling,
+Wi-Fi, Bluetooth, NFC, LTE voice + mobile data, calls (CS/CSFB) + SMS, speaker/mic/call audio,
+cameras (photo/video, flash, torch), hardware video decode, fingerprint (enroll + unlock), 32
+sensors, battery + charging, USB, microSD, vibrator, SELinux enforcing, the real encrypted
+`/data`.
+
+Known issues:
+
+- No VoLTE / VoWiFi (this LineageOS build has no IMS stack; the same on the stock kernel).
+- The L3 cache clock idles at about 1.19 GHz (a firmware-side vote is not configured yet); the
+  battery impact is still being measured, battery and standby numbers are not final.
+- The first Wi-Fi connection attempt sometimes fails; the retry works.
+- Night light also tints the fingerprint circle.
+
+Install in short (the release README has the exact steps): boot the phone normally on the
+**stock** 5.4 kernel, run the release's `install-addon.sh` (it writes the 6.12 vendor add-on into
+`/vendor`; the 5.4 kernel ignores it), then flash the release's AP tar in Download mode with Odin.
+To roll back, flash the stock LineageOS AP tar of the release (or your own build's
+`boot.img`/`vendor_boot.img`/`dtbo.img`). If it bootloops: hold Vol-down + Power about 7 s to
+restart, then at once Vol-down + Vol-up with USB plugged in for Download mode, and flash the
+roll-back tar.
+
+Two rules from the release notes that protect the phone:
+
+- Never flash official firmware with a higher bootloader bit than the phone has (there is no
+  way back).
+- Never load firmware images from another phone or another firmware version: TrustZone raises
+  its anti-rollback counter and the phone's own older images stop working.
 
 ## Status
 

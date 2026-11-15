@@ -1,6 +1,6 @@
 # realboot CHECKLIST: what hardware still has to prove
 
-Nothing below has been done. Each flash needs the owner's explicit OK; phone 2 (PHONE2)
+Nothing below has been done. Each flash needs an explicit OK; phone 2 (PHONE2)
 only, never DAILYPHONE or OTHERPHONE. Items marked (kexec) can be checked first through the
 existing test path (harness + kexec, nothing flashed); the rest only on a real boot.
 
@@ -40,7 +40,7 @@ existing test path (harness + kexec, nothing flashed); the rest only on a real b
 - [ ] `adb remount` mode (in place / overlayfs); `df /vendor` >= 30 MB free; vendor add-on
       installed, labels (`ls -Z`), sha256 = `vendor-addon.SHA256SUMS`; 5.4 still boots with it,
       Wi-Fi and sound unchanged on 5.4.
-- [ ] Backups decided by the owner (metadata, persist, efs, sec_efs, modemst1/2, fsg, fsc,
+- [ ] Backups decided by the user (metadata, persist, efs, sec_efs, modemst1/2, fsg, fsc,
       user data). Rollback images staged on /cache and checked.
 - [ ] The harness on recovery still starts by keys and its telnet works (rescue path).
 
@@ -67,14 +67,14 @@ existing test path (harness + kexec, nothing flashed); the rest only on a real b
 - [ ] Wi-Fi: macloader log, `wlan0`, MAC from efs (not the Qualcomm default), scan, **join a
       network** (never done on 6.12), traffic.
 - [ ] Bluetooth on, scan, pair once.
-- [ ] NFC on; fingerprint HAL up (enrolment only with the owner's OK for a screen lock).
+- [ ] NFC on; fingerprint HAL up (enrolment only with an explicit OK for a screen lock).
 - [ ] Camera: front and rear preview + photo + video; torch (real SM5714 fled) and flash photo.
 - [ ] 6.18 only: `cat /proc/cmdline` has `sched_proxy_exec=0`; no dwc3 SMMU fault lines
       (`dmesg | grep -i "context fault"`; non-fatal in the tree, so they would only be logged).
 - [ ] Sensors (32), vibrator, keys, charging + percentage, USB-PD, `sec-battery` health.
 - [ ] cpufreq policies and schedutil; thermal zones; temperatures idle/load vs 5.4.
 - [ ] SELinux enforcing: `dmesg | grep avc` / `logcat -b events | grep avc`; HAL deaths
-      (`logcat -b crash`). Decide on a permissive diagnostic build only with the owner.
+      (`logcat -b crash`). A permissive diagnostic build is a separate, deliberate decision.
 - [ ] 10+ minutes stable, no reset (watchdog, SEA/SIGBUS, panics: pstore after a reboot).
 - [ ] Reboot from Android; `reboot download` lands in Download mode (sec_core); power off and
       charge while off (charger mode = modules.load fallback).

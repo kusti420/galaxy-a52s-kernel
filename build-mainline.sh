@@ -16,7 +16,7 @@ OUT=$TOP/out-ml
 FRAG=$TOP/patches/mainline-7.3/a52sxq-ml.config
 # The exact clang ACK pins (build.config.constants CLANG_VERSION), as build-ack.sh.
 CLANG=${ANDROID_TREE:-$HOME/android}/prebuilts/clang/host/linux-x86/clang-r596125/bin
-# Generic build identity: the version string must not carry the owner's login or host.
+# Generic build identity: the version string must not carry the builder's login or host.
 export KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost
 # -@ keeps /__symbols__ in the dtb (the ABL needs it for any later real boot; harmless for kexec)
 # LOCALVERSION= (empty) keeps setlocalversion from appending "+": release = 7.3.0-a52sxq
@@ -97,8 +97,8 @@ def sub(p):
     c = f.first_subnode(o, QUIET_NOTFOUND)
     while c >= 0: out.append(f.get_name(c)); c = f.next_subnode(c, QUIET_NOTFOUND)
     return out
-# 1. __symbols__ and the labels the ABL / hypervisor overlay need (research/bootloader-acceptance.md,
-#    the private project log 2026-11-11): soc, intc as in mkimage-ack.sh, plus the stock labels and placeholders
+# 1. __symbols__ and the labels the ABL / hypervisor overlay need (research/bootloader-acceptance.md):
+#    soc, intc as in mkimage-ack.sh, plus the stock labels and placeholders
 if node('/__symbols__') < 0: bad.append('no /__symbols__')
 for l in ('soc', 'intc', 'aliases', 'firmware', 'reserved_memory', 'wdog', 'qcom_tzlog', 'arch_timer'):
     if prop('/__symbols__', l) is None: bad.append(f'label {l} missing')

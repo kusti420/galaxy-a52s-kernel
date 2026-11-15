@@ -1,6 +1,6 @@
 # L3 at 1.4-1.5 GHz on 6.12: causes and fix (2026-11-15, offline; nothing run on a phone)
 
-Observation (rb15/rb16, the private project log 13:45): `bus_dcvs/L3/cur_freq` 1401600-1516800 under light load
+Observation (rb15/rb16): `bus_dcvs/L3/cur_freq` 1401600-1516800 under light load
 and screen-off idle, boost already released (rh618p2 dmesg: `L3=300000/1516800/1401600`).
 `cur_freq` is the **software** aggregate of the AP's votes (dcvs.c `show_cur_freq` = max of
 `path->cur_freq.ib`), not the hardware clock.
@@ -224,7 +224,7 @@ Only after that: `A52_L3_VOTE_OFFSET=0x90` + memlat 0010 together into a real-bo
 (build-realboot.sh REF=<the tested ramdisk>), never the offset alone.
 
 ## Who holds the L3 at 1190.4 MHz on 6.12 (2026-11-15, offline; nothing run on a phone)
-Measured (the private project log 17:00, logs/l3measure-rh612p1l3.txt): AP vote 556.8 MHz, hw L3 1189-1190.4 MHz
+Measured (logs/l3measure-rh612p1l3.txt): AP vote 556.8 MHz, hw L3 1189-1190.4 MHz
 in 20 of 20 samples, 0010 on and off. 1190400 = L3 LUT index 7 exactly (LUT logs/ab-s76-busdcvs.txt:
 300000 556800 652800 768000 844800 940800 1056000 **1190400** 1305600 1401600 1516800). With the AP
 at idx 10 the hw read 1516.8 (l3fix run), with the AP at idx 1 it reads 1190.4: the EPSS takes the
@@ -340,7 +340,7 @@ C. **(2) Port the 5.4 memlat-v1 SCMI client so RIMPS runs L3 memlat with 5.4's t
 3. **Persistence.** `insmod epssvote.ko off=<from 1> idx=0 keep=1`, 10 min screen-off idle and
    one real suspend, then `cat /proc/epssdump`: the port must still read 0. On the real boot the
    phone cannot suspend with USB attached (dwc3 -EBUSY, no a52susp in rb19): either `adb tcpip`
-   + owner unplugs the cable for ~5 min, or a kexec session with stage `susp` and
+   + someone unplugs the cable for ~5 min, or a kexec session with stage `susp` and
    `PHONE=1 drivers612/suspend/run-level.sh s2idle-shallow` (drivers612/suspend). Pass -> implement fix A (soc-repo 0011 + dt-fix switch) in the next
    rb, rehearse, flash; port reverted after resume -> fix A plus a resume rewrite. Reboot clears
    all test writes.

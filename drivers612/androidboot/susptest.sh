@@ -4,7 +4,7 @@
 # for the test and re-attached afterwards INCLUDING Android's configfs gadget (UDC), which a
 # plain driver re-bind does not restore (lost phone 2 on 2026-11-14 that way).
 # Safety: a deadman reboots the phone after DEADMAN seconds unless the script finishes, so a
-# hang in suspend/resume never needs the owner. Results: /data/local/tmp/susp.log
+# hang in suspend/resume never needs anyone at the phone. Results: /data/local/tmp/susp.log
 #   usage: susptest.sh [pm_test level ... | s2idle | skip]   (skip = only detach/re-attach USB)   e.g. susptest.sh devices   or   susptest.sh s2idle
 L=/data/local/tmp/susp.log; : > $L; DEADMAN=${DEADMAN:-240}
 log() { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> $L; }

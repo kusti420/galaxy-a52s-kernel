@@ -161,7 +161,7 @@ IMAGE=${IMAGE:-$DIST/Image}
 SELINUX=${SELINUX:-enforcing}; USB_EXTCON=${USB_EXTCON:-samsung}; MODEM=${MODEM:-0}
 case "$MODEM" in 0|1) ;; *) echo "MODEM=0|1" >&2; exit 2;; esac
 # SDCARD=1 (default since 2026-11-15, both kernels): microSD host (cqhci + sdhci-msm), proven read-only
-# kernel-only on 6.12 (run sdprobe-p1: mmcblk1 detected), rb16 on phone 1. The owner's card must never
+# kernel-only on 6.12 (run sdprobe-p1: mmcblk1 detected), rb16 on phone 1. The inserted card must never
 # be formatted: vold only mounts it.
 SDCARD=${SDCARD:-1}; case "$SDCARD" in 0|1) ;; *) echo "SDCARD=0|1" >&2; exit 2;; esac
 if [ "$MODEM" = 1 ]; then
@@ -804,4 +804,4 @@ sed 's/^/  /' "$O/SHA256SUMS" | tee -a "$R"
 if [ ${#BLOCKERS[@]} -gt 0 ]; then
 	say "NOT READY TO FLASH: ${#BLOCKERS[@]} blocker(s):"; for b in "${BLOCKERS[@]}"; do say "  - $b"; done
 else say "no blockers found by the offline checks (CHECKLIST.md still applies)"; fi
-say "NOTHING WAS FLASHED. Flashing needs the owner's explicit OK, and only on the test phones PHONE2 / PHONE1 (README.md, 2d)."
+say "NOTHING WAS FLASHED. Flashing needs an explicit OK, and only on the test phones PHONE2 / PHONE1 (README.md, 2d)."

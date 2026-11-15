@@ -6,7 +6,7 @@
  *   no dm-default-key table and no raw write can reach it from this kernel;
  * - every partition in ro= (misc, metadata, efs, ...) is set read-only at the block layer, so
  *   Android cannot leave a wipe command in misc, reformat metadata (it holds the userdata
- *   key: losing it loses the owner's data) or change the EFS;
+ *   key: losing it loses the user's data) or change the EFS;
  * - "reboot recovery" becomes "reboot download": the recovery partition holds THIS test image
  *   and the harness leaves Download mode by itself (heimdall print-pit);
  * - without a52.androidtest=1 on the command line, or if userdata/misc are not guarded

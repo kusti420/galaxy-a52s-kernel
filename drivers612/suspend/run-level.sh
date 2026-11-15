@@ -25,7 +25,6 @@ else
 fi
 O=logs/susp-$LEVEL-p${PHONE:-2}-$(date +%H%M%S); mkdir -p "$O"
 say() { echo "[$(date +%T)] $*" | tee -a "$O/run.txt"; }
-[ "$(date +%H%M)" -lt 2115 ] || { say "after 21:15: not starting (PC sleeps at 22:00)"; exit 1; }
 T -t 10 'uname -r' | grep -qE '^6\.(12|18)\.' || { say "the phone is not in the 6.12/6.18 test kernel"; exit 1; }
 for f in susp2.sh:/tmp/susp2.sh; do
 	PUT "$H/${f%%:*}" "${f#*:}" >> "$O/run.txt" 2>&1 || { say "push ${f%%:*} failed"; exit 1; }

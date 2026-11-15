@@ -1,15 +1,15 @@
 # bsp612 first bring-up image for the a52sxq (`first1`)
 
 Built 2026-11-11 20:30, offline, `images/a52sxq-bsp612-first1-recovery.img`, sha256
-`977cab5c9cd32aa7...` (rebuilding changes the AVB salt, so the hash changes). **Never booted.** Nothing in this directory flashes anything; the
-main session tests with `./test-cycle.sh` on the test phones only.
+`977cab5c9cd32aa7...` (rebuilding changes the AVB salt, so the hash changes). **Never booted.** Nothing in this directory flashes anything; tests run
+with `./test-cycle.sh` on the test phones only.
 
     bsp612/mkimage-612.sh first1          -> images/a52sxq-bsp612-first1-recovery.img
     NET=43 bsp612/mkimage-612.sh first1p2 -> same for the second test phone (172.16.43.1)
     EXTRA_CMDLINE="a52.skip=sched-walt" bsp612/mkimage-612.sh x   # never load a module
     EXTRA_CMDLINE="a52.nomods=1" bsp612/mkimage-612.sh gkionly    # GKI alone (no USB: see below)
 
-Test (main session): `./test-cycle.sh images/a52sxq-bsp612-first1-recovery.img 180`
+Test: `./test-cycle.sh images/a52sxq-bsp612-first1-recovery.img 180`
 (the gadget needs the whole module stage first; allow more than the 6.18 flow's 20 s).
 
 ## What the image contains
@@ -281,10 +281,10 @@ Useful from the shell: `cat /tmp/insmod-failed.txt`, `lsmod | wc -l`,
 |---|---|---|
 | Back in Download mode within ~16 s, bootloader log says `ufdt apply overlay failed` or `Board Dtbo blob not found` | overlay refused by the ABL's libufdt, or selection | read the bootloader log `test-cycle.sh` pulls; bisect the overlay: build with only the root properties + marker fragment (the 6.18 overlay's shape), then add fragments back one at a time (reserved-memory first) |
 | No gadget, phone resets after ~30 s, then comes back with `/tmp/crashed` | a vendor module hung or panicked the kernel | automatic: the next boot skips the culprit; read `crash-console.txt` (last `a52sxq-init: insmod` line names it, `/tmp/culprit`). If the culprit is a base dependency (qcom-scm, arm_smmu, clk-qcom, gcc-sc7280) the fix is in DT/driver, not in the list |
-| Reset loop that never reaches the gadget and never reaches Download mode | crash before `sec_core` can load on every boot (also with the culprit skipped), or kernel dies before the ramdisk | owner's keys (Vol Down + Power, then Vol Up + Vol Down). Then `EXTRA_CMDLINE=a52.nomods=1` image to confirm GKI + ramdisk + hhwdt alone survive 30 s (it has no USB and no Download reboot: it WILL need the keys once; only do it if the question is "does GKI itself start") |
+| Reset loop that never reaches the gadget and never reaches Download mode | crash before `sec_core` can load on every boot (also with the culprit skipped), or kernel dies before the ramdisk | manual key presses (Vol Down + Power, then Vol Up + Vol Down). Then `EXTRA_CMDLINE=a52.nomods=1` image to confirm GKI + ramdisk + hhwdt alone survive 30 s (it has no USB and no Download reboot: it WILL need the keys once; only do it if the question is "does GKI itself start") |
 | Runs, but no gadget; dead-man leaves after 300 s into Download mode | dwc3-msm did not probe (eud/extcon, PHY, GDSC, fw_devlink) or the mode request was refused | read the pstore console afterwards from Android: `usb mode` lines, `dwc3`, `eud`, `deferred`. Try `EXTRA_CMDLINE=fw_devlink=permissive`. If `eud` does not probe: dwc3-msm treats the `extcon` phandle as mandatory (`-EPROBE_DEFER`, or `-ENODEV` "no extcon device found") and an overlay cannot delete the property, so the fix is a small soc-repo patch (`patches/soc-repo/`) that ignores a missing extcon, or a rebuilt base dtb without `extcon` on `usb0` |
 | Gadget up, UFS absent | PHY, regulator or ICE probe failed or is deferred | `dmesg \| grep -i -e ufs -e ice -e qmp`; `cat /sys/kernel/debug/devices_deferred`; `regulator_summary` must show L7B 2.952 V, L9B 1.2 V, L6B 1.2 V, L10C 0.88 V enabled; wait 15 s and look again (fw_devlink timeout) |
-| Everything up but `/leave` restarts into this image again | SDAM chain or sec_core failed (`/tmp/sec_core` = 0) | `cat /tmp/insmod-failed.txt`; `dmesg \| grep -e spmi -e sdam -e sec_core`. Not dangerous while the gadget works (every boot gives a 300 s shell), but only the owner's keys end it |
+| Everything up but `/leave` restarts into this image again | SDAM chain or sec_core failed (`/tmp/sec_core` = 0) | `cat /tmp/insmod-failed.txt`; `dmesg \| grep -e spmi -e sdam -e sec_core`. Not dangerous while the gadget works (every boot gives a 300 s shell), but only a manual key press ends it |
 | `insmod FAILED ... Unknown symbol` | dependency order or a dropped module is needed | `dmesg | grep "Unknown symbol"`; add the module in `mkramdisk-612.sh` (`ADD=`) |
 | Watchdog reset exactly ~30-35 s after start although the log looks healthy | the `watchdog` feeder did not start (no `/dev/watchdog0` node) | log shows `watchdog feeder failed`; check `mkdevs`; `a52.wdt=0` to run without |
 | Phone hangs with a black/frozen splash and never resets | kernel died before `hhwdt` was armed (GKI early boot, initramfs unpack) | keys; compare with the 6.18 image on the same phone; check the image with `a52.nomods=1` |

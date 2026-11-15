@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")/ack"
 # The exact clang ACK pins in build.config.constants (CLANG_VERSION), from the AOSP prebuilts.
 CLANG=${ANDROID_TREE:-$HOME/android}/prebuilts/clang/host/linux-x86/clang-r596125/bin
-# Generic build identity: the kernel version string must not carry the owner's login or host.
+# Generic build identity: the kernel version string must not carry the builder's login or host.
 export KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost
 # -@ keeps /__symbols__ in the dtb: the Samsung ABL refuses a base dtb without it.
 MAKE="make ARCH=arm64 LLVM=$CLANG/ O=../out-ack DTC_FLAGS=-@"

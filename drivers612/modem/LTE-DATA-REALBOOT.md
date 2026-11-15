@@ -105,7 +105,7 @@ identical, so the rmnet modules still bind.
   dtbo 6080a523... differs only by the `realboot = "rb13"` marker. The add-on differs only by
   the build name in the rc comment, so there is no need to reinstall it.
 - Flashing rb13 = rb12's procedure (vendor_boot + dtbo; boot unchanged). This needs the
-  owner's OK. Rollback is as for rb12: `/cache/a52rb-rollback`.
+  explicit OK. Rollback is as for rb12: `/cache/a52rb-rollback`.
 - Alternative without a module change: drop `qcom,tx-napi` from the IPA node (tasklet path,
   the one the command and low-lat pipes prove works). This is not prepared, because
   build-realboot's modem-subtree check would need a deliberate allowance.
@@ -182,7 +182,7 @@ Prerequisite: Rooted debugging, `adb root`. Do not print SIM/UIM data.
   If the queue already stopped (watch for NETDEV WATCHDOG in dmesg), only a reboot or modem
   SSR clears it. `ip link set rmnet_ipa0 down/up` calls `netif_start_queue()` but tears down
   Android's network: last resort only.
-- **E5, after rb13 is flashed (owner's OK).** Repeat E1-E3. Expected: `tx_compl` follows
+- **E5, after rb13 is flashed (explicit OK).** Repeat E1-E3. Expected: `tx_compl` follows
   `hw_tx`, the wrapper slab stays flat, `ping -c 20` without -S gives 20/20,
   TCPSpuriousRtxHostQueues stays flat, `act_clnt` goes to 0 when idle. Then H5: ping after
   2 min idle and after screen-off, and look for GSI/IPA errors in dmesg.

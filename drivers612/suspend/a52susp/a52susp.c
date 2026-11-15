@@ -11,7 +11,7 @@
  *    driver that blocks inside a suspend/resume callback is caught by nothing: the helper's
  *    hung_task_panic does not cover suspend.  -> "deadman": two pinned timers that panic
  *    (panic=-1 reboots) when a suspend/resume transition takes longer than deadman_s.
- *  - a suspend that is never woken needs the owner's keys.  -> "backstop": an hrtimer that
+ *  - a suspend that is never woken needs a manual key press.  -> "backstop": an hrtimer that
  *    calls pm_system_wakeup() (works while the tick runs, i.e. in the shallow s2idle mode of
  *    the test plan, where the deepest cpuidle state is disabled), plus an ALARM_BOOTTIME alarm
  *    that alarmtimer_suspend() programs into the PMIC RTC (also works with the tick frozen).

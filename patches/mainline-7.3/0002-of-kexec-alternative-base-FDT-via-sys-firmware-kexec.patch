@@ -1,5 +1,5 @@
 From adf5c645a4f6871d34e995ecdb047005eac723a4 Mon Sep 17 00:00:00 2001
-From: owner <owner@example.invalid>
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 17:39:56 +0200
 Subject: [PATCH 2/5] of: kexec: alternative base FDT via
  /sys/firmware/kexec_fdt

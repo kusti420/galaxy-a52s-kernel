@@ -1,10 +1,10 @@
 # realboot: the real boot path for LineageOS on the Qualcomm 6.12 kernel and the 6.18 port
 
 > **NOTHING HERE HAS BEEN FLASHED OR RUN ON A PHONE.** Flashing any image of this directory
-> needs the owner's explicit OK for that flash. Targets: test phone 2, **PHONE2**
+> needs an explicit OK for that flash. Targets: test phone 2, **PHONE2**
 > (LineageOS 24 / Android 17 userdebug, bit-2 bootloader A528BXXS2DWB5, unlocked), and since
 > 2026-11-15 test phone 1, **PHONE1** (same LineageOS build, bit-5 A528BXXU5FWK4; section 2d). **Never on
-> DAILYPHONE (owner's daily phone) or OTHERPHONE (One UI port).** Never raise the bootloader
+> DAILYPHONE (a daily-use phone) or OTHERPHONE (One UI port).** Never raise the bootloader
 > bit. Never load firmware from another phone (2026-11-13 incident).
 
 Today Android 17 runs on 6.12 only through the test path: ABL -> 6.18 harness on `recovery` ->
@@ -250,7 +250,7 @@ except the gate property; everything kernel-specific comes from the tested 6.18 
 ## 2c. Rehearsal by kexec (`rehearse.sh`, nothing flashed)
 
     ./rehearse.sh 612 <name>     # rb11 (RB= to pick another) -> out/rh-<name>/ (REPORT.txt, HOWTO.txt), prints the kx-cycle line
-    ./rehearse.sh 618 <name>     # rb618-5  (RUN=1 also runs it: owner's OK)
+    ./rehearse.sh 618 <name>     # rb618-5  (RUN=1 also runs it: explicit OK)
     PHONE=1 ./rehearse.sh 612 <name>   # on phone 1 (default PHONE=2): section 2d
 
 Runs the never-run parts of the real boot on phone 2 through the harness: `a52sxq_dsp_boot.ko`
@@ -309,7 +309,7 @@ there is its OWN previous console, never the 6.x one. Read a 6.x console from th
 ## 2d. Phone 1 (PHONE1) with the same builds (2026-11-15, offline analysis)
 
 Phone 1 (USB 1-5.3, ABL **A528BXXU5FWK4 = bit 5, never raise it**, hw rev 3, its own working
-modem + the owner's SIM, a **microSD = mmcblk1 that nothing may touch**) runs the same
+modem + a SIM, a **microSD = mmcblk1 that nothing may touch**) runs the same
 lineage-24.0-20261028 build as phone 2 since 2026-11-15 11:40. `boot.img`, `vendor_boot.img`,
 `dtbo.img` of `~/Downloads/lineage-a52sxq-20261028/lineage-24.0-20261028-nightly-a52sxq-signed.zip`
 (its updater-script writes all three unconditionally) are byte-identical to phone 2's
@@ -353,12 +353,12 @@ Real boot of rb11 on phone 1: section 3 with `S=PHONE2` replaced by **`S=PHONE1`
 `B=drivers612/realboot/out/rb11 V=6.12 K=k612` and the rollback images from
 `D=testdev-PHONE2/backup-2026-11-14-prerealboot` (same build; step 0 must show
 `out/rb11/rollback/SHA256SUMS` on the phone, else stop). Harness rollback: `TSH_IP=172.16.42.1`,
-`tools/dlexit.sh 1-5.3`. odin4 rollback (Download mode entered by the owner):
+`tools/dlexit.sh 1-5.3`. odin4 rollback (Download mode entered by hand):
 `testdev-PHONE1/odin-rollback-lineage-20261028/AP.tar` (`tools/mk-odin-rollback.sh`,
 ustar of the three images, read back + SHA256SUMS), `odin4 -a <AP.tar> -d /dev/bus/usb/BBB/DDD`
 of port 1-5.3 (`odin4 -l`; `-d` keeps phone 2 out of it).
 Phone 1's own ABL has not yet started rb11 from `boot`: it is the bit-5 binary, not the bit-2
-one of the rb9/rb10 proof, so the first direct boot needs the owner's window like rb10 did.
+one of the rb9/rb10 proof, so the first direct boot needs a hands-on session like rb10 did.
 
 ## 2e. rb12 = rb11 + the modem (`DIAG=1 MODEM=1`, phone 1 only; 2026-11-15, offline)
 
@@ -400,7 +400,7 @@ DT zones could trip on bad readings: test separately).
 (the kernel-only runs' edit: `modem_pas` okay, memshare `client_4` (id 3) disabled = what 5.4 ends
 up with, plus its checks: mpss/IPA GSI regions, IPA/rmnet/glinkpkt/memshare nodes,
 `/soc/qcom,rmtfs_sharedmem@0` qcom,sharedmem-uio "rmtfs" 0x280000 enabled, no upstream
-qcom,rmtfs-mem, no qcom,sc7280) and the IPA IOVA fix (`dt/ipa-iova-fix.sh`, POLISH.md item: it
+qcom,rmtfs-mem, no qcom,sc7280) and the IPA IOVA fix (`dt/ipa-iova-fix.sh`, it
 DID affect 6.12: every modem run logged `ipa_smmu_ap/uc: Cannot reserve IOVA region of 0 size`
 x6/x4, because the 2+2-cell iommu-addresses were read with /soc's 1+1 cells, leaving one
 [0, 1 GiB) reservation; the fastmap AP domain then allocated from [0x40000000, 4 GiB), where the
@@ -459,7 +459,7 @@ stall/SSR, IPA FW + init, `rmnet_ipa0`, rmtfs UIO, every `/dev` node of modem-de
 the ueventd owner, voice/data IN_SERVICE (waits 120 s; only the reg-state fields of
 `dumpsys telephony.registry` are read, never SIM identifiers), an IPv4 on `rmnet_data*` (address
 not printed) + `ping -I`, and every SELinux denial of a radio/data domain (permissive here,
-enforcing on the real boot: each one would be a blocked access). Run (owner's OK; Rooted debugging on):
+enforcing on the real boot: each one would be a blocked access). Run (explicit OK; Rooted debugging on):
 
     cd ./ && D=drivers612/realboot/out/rh-rh612p1m; PHONE=1 HARNESS_IMG=images/a52sxq-ack618-kexec9-recovery.img KEXEC_BASE=$D/rh-base.dtb KEXEC_OVERLAY=none KX_PACK=$D/pack.tgz HARNESS_EXTRA="$(cat $D/harness-extra.sh)" KX_HOLD=1 KX_WAIT=300 kexec/kx-cycle.sh rh612p1m $D/Image $D/rd.cpio.gz gen -
     # results: adb -s PHONE1 shell dmesg | grep -E 'a52rh:|a52sxq-init: rh:'
@@ -476,7 +476,7 @@ show `out/rb12/rollback/SHA256SUMS` on phone 1), EFS backups of 2026-11-15 in
 `TSH_IP=172.16.42.1`, `tools/dlexit.sh 1-5.3`, odin4 rollback
 `testdev-PHONE1/odin-rollback-lineage-20261028/AP.tar`. If the first enforcing boot shows
 "No service" while the rehearsal had service, the rehearsal's selinux lines name the accesses;
-`SELINUX=permissive` is one rebuild away (owner's call).
+`SELINUX=permissive` is one rebuild away (the user's call).
 
 ## 2f. rb14 = rb13 + GPU/bus DCVS (`DIAG=1 MODEM=1`, phone 1; 2026-11-15, offline, NOT flashed)
 
@@ -541,14 +541,14 @@ replace anything, it is empty, but never overwrite the 6.12 wlan.ko there); `mkd
 /vendor/etc/init/a52sxq-k618.rc`; compare with `vendor-addon.SHA256SUMS`. Vendor rw remount only
 from 5.4 (6.12/6.18 cannot remount the dm vendor rw).
 
-**Rehearsal packages (built, NOT run; the owner's OK per run):**
+**Rehearsal packages (built, NOT run; an explicit OK per run):**
 
     RB=drivers612/realboot/out/rb618-5 PHONE=2 drivers612/realboot/rehearse.sh 618 rh618p2   # -> out/rh-rh618p2
     RB=drivers612/realboot/out/rb618-5 PHONE=1 drivers612/realboot/rehearse.sh 618 rh618p1   # -> out/rh-rh618p1
 
 The kx-cycle line is in each `HOWTO.txt` / `REPORT.txt`. rehearse.sh now also handles SDCARD=1
 builds (`RH_SD=off` default on phone 1: test word `module_blacklist=sdhci_msm`, the kernel refuses
-that one module and init goes on, so the owner's card is never seen; `RH_SD=on` default on phone 2:
+that one module and init goes on, so the inserted card is never seen; `RH_SD=on` default on phone 2:
 sdhci-msm probes) and the 6.18 Wi-Fi dir (BUILDINFO `wlan=`), and rh-checks.sh got checks for
 `sd`, `dcvs` (msm-adreno-tz, bwmon, memlat, boost dropped by the rc, interconnect synced) and
 `wlan-bind`. Phone 2 with MODEM=1: its TZ refuses the modem (expected modem/radio FAILs; the
@@ -560,21 +560,21 @@ never run so far are bwmon/memlat/GPU governors, the busdcvs tree and rc writes,
 timeout bootargs, sdhci-msm/cqhci, the ROM's radio userspace + LTE data (only the kernel-only
 modem test kx-m2k618 ran, no data call) incl. the 6.18 ipam TX fix and dev_ril_bridge, and the
 wlan bind; (2) the 6.18 add-on must be installed from 5.4 (vendor rw) next to the 6.12 one;
-(3) owner's OK + hands-on window (the ABL->kernel jump of 6.18 from `boot` is new: ack 6.18 only
+(3) explicit OK + hands-on window (the ABL->kernel jump of 6.18 from `boot` is new: ack 6.18 only
 ever started from `recovery` as the harness or by kexec; the rb9 dtbo fix applies to both).
 
-## 3. Install plan (for later; every step needs the owner's OK; phone 2 only)
+## 3. Install plan (for later; every step needs an explicit OK; phone 2 only)
 
 Preconditions
 1. Done: bsp612 rebuilt with `COMMAND_LINE_SIZE` 4096 and run through the kexec test path
    (ab-s70 ... ab-s74); `REF=s74`. 6.18 needs nothing (already 4096).
 2. `adb devices` shows PHONE2; always `adb -s PHONE2`. Phone in its own LineageOS
-   (5.4), "Rooted debugging" on (`adb root` works), battery > 60 %, the owner present.
+   (5.4), "Rooted debugging" on (`adb root` works), battery > 60 %, someone at the phone.
 3. The dumps still match the phone: `adb -s PHONE2 shell 'for p in boot vendor_boot dtbo;
    do sha256sum /dev/block/by-name/$p; done'` must equal `out/<name>/rollback/SHA256SUMS`
    (dumps of 2026-11-11). If not (LineageOS update), dump again (read-only `dd ... | adb exec-out`)
    into `testdev-PHONE2/` and rebuild: the boot patch level must be the installed one.
-4. Backups the owner decides on (this is the first 6.12 boot with the real /data): `metadata`
+4. Backups the user decides on (this is the first 6.12 boot with the real /data): `metadata`
    (holds the vold metadata key), `persist`, `efs`, `sec_efs`, `modemst1/2`, `fsg`, `fsc`
    (`dd` to the PC, kept local only); user data on /sdcard. Do not accept any "wipe"/"factory
    reset" prompt in recovery afterwards.
@@ -603,10 +603,10 @@ Steps
 4. `adb reboot` (never `adb reboot recovery`: sticky). Watch: boot animation, `adb` (the ROM's
    own gadget, needs the USB extcon path), then CHECKLIST.md.
 
-### Exact commands (NOT run; owner's OK first; phone 2 = PHONE2 only; from the repo root)
+### Exact commands (NOT run; explicit OK first; phone 2 = PHONE2 only; from the repo root)
 Pick ONE build: `B=drivers612/realboot/out/rb3 V=6.12 K=k612` or
 `B=drivers612/realboot/out/rb618-2 V=6.18 K=k618`. Phone in its own LineageOS (5.4), Rooted
-debugging on, battery > 60 %, owner present, phone 1 not in Download mode.
+debugging on, battery > 60 %, someone at the phone, phone 1 not in Download mode.
 
     S=PHONE2; D=testdev-PHONE2
     adb -s $S root
@@ -696,7 +696,7 @@ signature with the same key and is not touched here. Do not flash a vbmeta with 
 3. `COMMAND_LINE_SIZE`: resolved on both kernels (4096; 2.8 KiB append checked offline).
 4. SELinux enforcing on 6.12 was never run: renamed sysfs/DT paths (e.g. `remoteproc-wpss@8a00000`
    instead of `qcom,wpss@8a00000/subsys2` in genfs_contexts), new nodes. A HAL may die where
-   the permissive tests passed. `SELINUX=permissive` is one rebuild away (owner's call).
+   the permissive tests passed. `SELINUX=permissive` is one rebuild away (the user's call).
 5. USB: dwc3 waits for the Samsung extcon of the power stack (first stage); if that stack fails,
    no USB and no adb. `USB_EXTCON=eud` is the tested fallback.
 6. Audio waits up to 20 s at early-boot (init is blocked meanwhile); if the ADSP never comes up,

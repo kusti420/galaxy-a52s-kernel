@@ -128,8 +128,7 @@ the platform device name (`0.etspi,et7xx` expected on both kernels).
 ## Dependencies outside this directory
 
 Secure world (fingerprint does nothing without them; all use **the phone's own firmware only** —
-never load a TA or any signed image from another phone or firmware version, see the
-2026-11-13 rollback incident in the private project log):
+never load a TA or any signed image from another phone or firmware version: a firmware image from another phone once raised a test phone's anti-rollback counter):
 - `/dev/qseecom` + listeners: `drivers612/secure` (`qseecom_dlkm.ko`, `si_core_module`, ...)
   and the ROM's `qseecomd`. TAs loaded by `libbauthtzcommon.so` via `QSEECom_start_app` from
   `/vendor/firmware_mnt/image` (that phone's apnhlos partition): `dualfp` (.mdt + .b00..b07,
@@ -160,7 +159,7 @@ phone's `VDD_BTP_3P3` 3.3 / 3.3 / 3.3 V, mode 4 (identical to boarddt's regulato
 Labels used from the base: `soc`, `tlmm`, `et7xx_rst` (boarddt `a52sxq-pinctrl.dtsi`),
 `pm8350c_l3`. `dt-check.sh` result: overlay 1.3 KB, all properties equal the phone's.
 Integrating it: add it next to the camera/fastrpc fragments in `kexec/mkandroidtree.sh`
-(main session), or apply `dt-work/a52sxq-fingerprint.dtbo` with `fdtoverlay`.
+or apply `dt-work/a52sxq-fingerprint.dtbo` with `fdtoverlay`.
 
 ## Load order
 
@@ -180,7 +179,7 @@ No TZ, no HAL, no SPI traffic. Board tree: `drivers612/fingerprint/dt-work/merge
     ./drivers612/fingerprint/dt-check.sh
     drivers612/hwbringup/run.sh fp1 drivers612/fingerprint/pack-fingerprint.tgz \
         drivers612/fingerprint/dt-work/merged.dtb 'sh /p/fp-test.sh'
-    # later, with the main session's OK for enabling L3C through the driver:  'sh /p/fp-test.sh power'
+    # later, with an explicit OK for enabling L3C through the driver:  'sh /p/fp-test.sh power'
     # unbind/rebind paths:                                                     'sh /p/fp-test.sh reload'
 
 Expected (`fps_<function>:` prefix; compare the 5.4 lines in `research/blob-uapi-evidence/dmesg_boot.txt`

@@ -1,7 +1,7 @@
 # androidboot: Android userspace on the Qualcomm 6.12 GKI kernel (A52s)
 
 Nothing here has run on a phone. Everything was built and checked offline on 2026-11-11.
-Nothing in this directory flashes; the main session does that, on the test phones only.
+Nothing in this directory flashes; flashing is done by hand, on the test phones only.
 
 ## What is here
 
@@ -90,7 +90,7 @@ recovery partition, without being able to hurt that installation.
    was destroyed and apps crash-looped). ext4 on zram has both. zram0 is left to the ROM
    (`fstab.ramplus` swap). `DATA=tmpfs` exists for a kernel built with those options.
 
-## Order of experiments (main session)
+## Order of experiments
 
 The harness (`test-cycle.sh`) expects the telnet ramdisk; for these images it must wait for an
 adb device with `ro.a52.androidtest=1` instead, and fall back to the ramoops log

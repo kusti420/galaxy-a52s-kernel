@@ -141,7 +141,7 @@ phone, 0x800000 here, as the proven 6.18 dts), ADC_TM (4 nodes/8 properties, tra
 `ldoc6` path, `dwc3` `usb-phy`/`reg` cells (base), 12 audio LPI pin nodes that live in the 5.4
 base and have no 6.12 counterpart yet.
 
-## Open questions (only hardware or the owner can answer)
+## Open questions (only hardware or the user can answer)
 
 1. **Which body is right for test phone 1?** Its dtbo (One UI based) differs from the ROM tree:
    `removed_region@c0000000` is 0x5f00000 long (ROM tree and test phone 2: 0x6a00000), no
@@ -165,7 +165,7 @@ base and have no 6.12 counterpart yet.
 7. `sdm-skin-therm-usr` on r01+: disabled here; on 5.4 it references a channel that does not
    exist. Confirm on the phone (`/sys/class/thermal`) that the zone is absent on 5.4 too.
 
-## First on-device test (main session only; nothing here flashes)
+## First on-device test (nothing here flashes)
 
 Pack `out/build/r02.dtbo` (or the table image) as the recovery dtbo of the bring-up image
 instead of the bring-up overlay, same ramdisk. Expected: `Machine model` line, then in the

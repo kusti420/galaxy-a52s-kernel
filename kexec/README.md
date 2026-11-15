@@ -1,6 +1,6 @@
 # kexec chain: experimental kernels are started FROM the 6.18 harness
 
-Rule (the private project log, 2026-11-11 21:05): only the 6.18 harness sits on `recovery`. Every other
+Rule: only the 6.18 harness sits on `recovery`. Every other
 kernel is started from it by kexec with the hypervisor watchdog armed, so a crash, reset or
 hang lands back in the harness, whose crash guard leaves for Download mode.
 
@@ -129,7 +129,7 @@ sha256 compared for every file.
 Exit 0 = kexec'd kernel answered on telnet, 1 = not started, 3 = back in the harness from
 flash, 4 = nothing answered.
 
-## Test order (main session; needs the owner's go-ahead for the flash of kexec1)
+## Test order (needs an explicit go-ahead for the flash of kexec1)
 
 Precondition: `images/a52sxq-ack618-kexec1-recovery.img` on `recovery` of the test phone by
 the usual harness procedure, shell reachable (`python3 tools/tsh.py 'uname -r'`). The harness
@@ -154,7 +154,7 @@ image refused, 12 = no memory, 22 = bad dtb, 38 = no kexec in this kernel); exit
 or the second kernel died and the watchdog/reset brought the flash harness back in safe mode
 (log saved in `logs/kexec-h2h-prev-console-*.txt`; it shows how far it got); exit 4 = second
 kernel alive without USB (it then leaves by its own dead-man timer after 300 s) or hung with
-no bite (then the watchdog does not survive kexec: owner keys needed. This is the one case
+no bite (then the watchdog does not survive kexec: a manual key press needed. This is the one case
 that cannot be excluded before the first run).
 
 ### (b) deliberate bad payload: proves the way back
@@ -191,7 +191,7 @@ retrievable evidence of why 6.12's exit fails) and leaves.
 
 1. Whether the hypervisor watchdog keeps counting across a kexec and still bites when the
    guest is dead at EL1 with all secondaries off. Everything rests on it; test (b) is the proof.
-   Until (b) passes, a failed (a) can need the owner's keys once.
+   Until (b) passes, a failed (a) can need a manual key press once.
 2. PSCI CPU_OFF/CPU_ON of secondaries under Haven during kexec: never exercised here.
 3. `device_shutdown()` of this driver set (dwc3, UFS, SMMU, geni) has never run on the phone;
    a hang there is covered by the watchdog (armed before), a reset there too.

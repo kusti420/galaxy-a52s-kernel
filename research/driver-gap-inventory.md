@@ -68,7 +68,7 @@ touch driver, or any of the camera sensors (IMX682, IMX616, S5KGW1, S5KGD2, GC50
 | Clocks | `qcom,yupik-{gcc,camcc,dispcc,gpucc,videocc,debugcc}`, `qcom,gdsc`, `qcom,aop-qmp-clk` | `qcom,gcc-sc7280`, `qcom,sc7280-{camcc,dispcc,gpucc,videocc}`, lpass cc | Clock IDs are a different numbering. GDSCs are power domains, not regulators: every downstream consumer does `regulator_get("...-gdsc")`. No `clk_set_flags`, no vdd-class voting, no debugcc |
 | Pinctrl / irq | `qcom,yupik-pinctrl`, `qcom,yupik-pdc` | `qcom,sc7280-pinctrl`, `qcom,sc7280-pdc` | pin function names differ; `gpio-reserved-ranges` for secure pins 56-59 |
 | Interconnect / LLCC / cpufreq | `qcom,yupik-*_noc`, `qcom,yupik-llcc`, `qcom,cpufreq-hw-epss`, `qcom,lahaina-epss-l3-cpu` | `qcom,sc7280-*`, `qcom,sc7280-cpufreq-epss`, `qcom,sc7280-epss-l3` | node IDs differ (`dt-bindings/interconnect/qcom,sc7280.h`) |
-| RPMh | `qcom,rpmh-rsc`, `qcom,cmd-db`, `qcom,bcm-voter` same; `qcom,rpmh-vrm-regulator` (40 nodes), `qcom,rpmh-arc-regulator` | `qcom,pm7325/pm8350c/pmr735a-rpmh-regulators`, `qcom,sc7280-rpmhpd` | per-PMIC regulator nodes; no proxy-consumer, no `qcom,init-voltage`; pin min == max (the private project log rule) |
+| RPMh | `qcom,rpmh-rsc`, `qcom,cmd-db`, `qcom,bcm-voter` same; `qcom,rpmh-vrm-regulator` (40 nodes), `qcom,rpmh-arc-regulator` | `qcom,pm7325/pm8350c/pmr735a-rpmh-regulators`, `qcom,sc7280-rpmhpd` | per-PMIC regulator nodes; no proxy-consumer, no `qcom,init-voltage`; pin min == max |
 | QUP | `qcom,qupv3-geni-se`, `qcom,i2c-geni` (7), `qcom,msm-geni-console`, `qcom,msm-geni-serial-hs` (2), `qcom,gpi-dma` | `qcom,geni-se-qup`, `qcom,geni-i2c`, `qcom,geni-debug-uart`, `qcom,geni-uart`, `qcom,sc7280-gpi-dma` | none of note. The fingerprint SPI SE is TZ-owned and has no kernel SPI node downstream |
 | UFS / SD | `qcom,ufshc`, `qcom,ufs-phy-qmp-v4-yupik`, `qcom,sdhci-msm-v5`, `qcom,hwkm` | `qcom,sc7280-ufshc`, `qcom,sc7280-qmp-ufs-phy`, `qcom,inline-crypto-engine` | ICE is its own node. fstab uses `inlinecrypt_optimized` without wrapped keys (`device/samsung/sm7325-common/init/fstab.qcom:50`), so upstream ICE is enough |
 | USB | `qcom,dwc-usb3-msm`, `qcom,usb-hsphy-snps-femto`, `qcom,usb-ssphy-qmp-dp-combo` | `qcom,sc7280-dwc3`, `qcom,usb-snps-hs-7nm-phy`, `qcom,sc7280-qmp-usb3-dp-phy` | role comes from extcon/Samsung `usb_notify` + SM5714 PDIC downstream; upstream wants `usb-role-switch`/typec |
@@ -93,7 +93,7 @@ touch driver, or any of the camera sensors (IMX682, IMX616, S5KGW1, S5KGD2, GC50
   in the built `.config`. Charging and Type-C on this phone are 100 % SM5714 + PCA9468. Do not copy
   the `pmic-glink` node from the Fairphone 5 or Edge 30 device trees.
 - **Touch is on I2C, not SPI.** `stm,stm_ts` is at address 0x49 on `i2c@a94000` (QUP SE13),
-  firmware `tsp_stm/fts5cu56a_a52sxq.bin` (`a52sxq-r02.dts:20753`). the private project log says SPI; that is
+  firmware `tsp_stm/fts5cu56a_a52sxq.bin` (`a52sxq-r02.dts:20753`). Earlier notes said SPI; that is
   wrong for this revision. The driver that binds is `drivers/input/sec_input/stm/stm_i2c.c`.
   Upstream `st,stmfts` (`drivers/input/touchscreen/stmfts.c`) is for the older FingerTip S
   protocol, not FTS5.
@@ -755,7 +755,7 @@ Sub-grouping and verdict (details and LOC in section 3.1):
 - `security/keys`: KEYS_COMPAT
 
 Notes on (d):
-- `KSU`, `KSU_KPROBES_HOOK`: KernelSU is a ROM feature added by the owner, not hardware. On a 6.18
+- `KSU`, `KSU_KPROBES_HOOK`: KernelSU is a ROM-side feature, not hardware. On a 6.18
   GKI kernel it is used as its own module/manager build, not as an in-tree patch.
 - `IPC_LOGGING`: debug, but every techpack and most `drivers/soc/qcom` files call
   `ipc_log_string()`. Provide a header of no-op stubs instead of porting it.

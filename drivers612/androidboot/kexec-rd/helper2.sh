@@ -57,7 +57,7 @@ log "start androidboot helper (stage=$STAGE deadman=${DEADMAN}s mods=$MODS)"
 ( sleep "$DEADMAN"; [ -e /tmp/a52keep ] || { log "dead-man timer expired"; /leave deadman; } ) &
 
 # Hang -> panic -> reboot (CONFIG_PANIC_TIMEOUT=-1), so a wedged test kernel comes back by itself
-# through the harness instead of needing the owner's keys (2026-11-14: a live insmod of
+# through the harness instead of needing a manual key press (2026-11-14: a live insmod of
 # qcom-cpufreq-hw deadlocked the kernel; nothing spun, so no watchdog could see it). Re-asserted
 # every 30 s because Android's init may rewrite them. a52.nohangpanic=1 turns this off.
 hangpanic() {

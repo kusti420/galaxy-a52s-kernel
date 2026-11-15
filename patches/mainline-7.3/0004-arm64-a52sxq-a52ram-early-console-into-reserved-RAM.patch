@@ -1,5 +1,5 @@
 From 30091476382655047148e4ecc97b839528ab1b26 Mon Sep 17 00:00:00 2001
-From: owner <owner@example.invalid>
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 17:40:04 +0200
 Subject: [PATCH 4/5] arm64: a52sxq: a52ram early console into reserved RAM
 

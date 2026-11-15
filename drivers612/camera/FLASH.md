@@ -1,4 +1,4 @@
-# Main flash does not fire (POLISH 2026-11-14 19:16): analysis and fix
+# Main flash does not fire: analysis and fix
 
 Symptom (run ab-s74t, 6.12 kexec Android, phone 2 on USB): forced-flash photo in Aperture, the
 pre-flash lights, the main flash is not seen. Torch (sysfs `rear_flash`, QS tile) works. No dmesg

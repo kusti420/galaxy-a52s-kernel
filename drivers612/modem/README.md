@@ -4,7 +4,7 @@ State 2026-11-14 16:30: **M1 passed on hardware** (phone 1, run `kx-m1b`, log
 `logs/kx-m1b-p1-p1-160146/`): MPSS boots on 6.12, IPA FW loads, SSR recovery and a deliberate
 SSR both work, no panic. The four problems that run showed are analysed and fixed or explained
 in section 9 (built and checked offline; **not rerun yet**: "Next on hardware" there). The
-Android-level cellular test is still **blocked on a firmware decision by the owner** (section 6).
+Android-level cellular test is still **blocked on a firmware decision** (section 6).
 19:30: **M2-K prepared** (kernel only, phone 1, open rmtfs + tqftpserv on RAM copies of the EFS
 partitions; section 10). 19:29: **M2-K PASSED on 6.12** (run `kx-m2k-p1-p1-192337`: modem fully
 up, no DOG stall, 45 modem QRTR services, EFS verify unchanged). 19:50: **M2-K for 6.18 prepared**
@@ -103,7 +103,7 @@ Log: `logs/kxfin-ab-s18-p2-191459/prev-console.txt` (console filtered to error l
    `qcom_check_ssr_status()`: **"Kernel panic - Panicking, remoteproc 4080000.remoteproc-mss
    failed to recover!"**.
 
-So "without IPA it crashed" (the private project log 19:15) is not what the log shows. The modem stalled in
+So "without IPA it crashed" is not what the log shows. The modem stalled in
 its own initialisation, twice, 66 s after each start. Ranked causes: (a) no RMTFS server
 (rmt_storage could not map the shared buffer, so the MPSS never got its EFS: NV items, RF
 calibration, IMEI); (b) no IPA (the modem's IPA driver waits for the AP-side IPA QMI
@@ -158,7 +158,7 @@ and checks: mpss region `0x8b800000 + 0xf600000`, IPA GSI fw region `0x8b710000 
 Diff against the base tree: exactly those 2 `status` properties. mkmodemtree.sh also checks
 that memshare clients 1/2/3 (ids 0/2/1) are present and enabled.
 
-## 6. The firmware question (owner decides; nothing here loads non-own firmware)
+## 6. The firmware question (the user decides; nothing here loads non-own firmware)
 
 What the modem needs from TrustZone-authenticated images:
 
@@ -177,7 +177,7 @@ segment; offset 0xa4 of `.b01` for these v6 headers):
 |---|---|---|
 | phone 2's `modem` partition (backup `testdev-PHONE2/backup-2026-11-13-incident/modem.img`) | **2** | byte-identical `modem.mdt`/`.b01` to Samsung's official DWB5 CP: it is phone 2's own image |
 | phone 2's TZ counter since the incident | **5** | `RP SWREV B2(2,5,...)`: one shared counter for all subsystem images -> its own modem is **refused** |
-| phone 2's apnhlos `yupik_ipa_fws`, `adsp`, `cdsp`, ... | 5 | phone 1's copies, written by the owner on 2026-11-13 |
+| phone 2's apnhlos `yupik_ipa_fws`, `adsp`, `cdsp`, ... | 5 | phone 1's copies, written by hand on 2026-11-13 |
 | official FWK4 CP (`stock-firmware/fw-FWK4`, phone 1's firmware version) | **5** | same MPSS build id string `MPSS.HI.4.1.1-00392` as DWB5 |
 | official A528BXXSAGYA2 CP (`stock-firmware/fw`) | **10** | would raise any phone's counter to 10: then every rollback-5 image on it is refused. **Never.** |
 | phone 1's own modem | not read (no phone access) | expected 5 (FWK4); `kpack/m1.sh` reads and checks it before booting |
@@ -188,8 +188,7 @@ Consequences:
   test mode needs a permissive (userdebug) init (`drivers612/androidboot/README.md` item 5).
 - **Phone 2** (`PHONE2`): its own modem cannot run (also not on its own LineageOS 5.4). An
   Android test there checks everything except the modem itself (A0 below).
-- Cellular in Android on 6.12 therefore needs ONE of these, each only with the owner's explicit
-  OK (listed for the decision, not proposed):
+- Cellular in Android on 6.12 therefore needs ONE of these, each only with an explicit OK (listed for the decision, not proposed):
   1. a test device whose own modem its TZ accepts and that runs a userdebug Android (a third
      phone, or phone 1 with a different ROM);
   2. phone 2 with a rollback-5 modem image (the official FWK4 CP is the only one known with
@@ -205,7 +204,7 @@ Consequences:
 
 ## 7. Hardware test plan
 
-General: the main session runs these, on the named test phone only, via the kexec chain
+General: these are run by hand, on the named test phone only, via the kexec chain
 (nothing flashed). Before any run: `drivers612/modem/build.sh`. Each run ends in Android by
 itself (deadman, crash guard); `KX_HOLD=1` for interactive work, then `kexec/kx-finish.sh`.
 
@@ -274,8 +273,8 @@ kexec/kx-finish.sh ab-m0`.
 
 ### A1: Android cellular (blocked: section 6)
 
-On a device/image combination the owner approved, same command as A0. Needs a SIM in the
-phone (owner). Steps and pass criteria:
+On a device/image combination the user approved, same command as A0. Needs a SIM in the
+phone. Steps and pass criteria:
 1. modem ONLINE, no crash for 5 min; QRTR servers (push `drivers612/conn/tools/qrtrls` with `tools/tput.py`):
    DMS 2, NAS 3, WDS 1, UIM 11, VOICE 9, WMS 5, WDA 26, PDC 36, IPA 49 (inst 2 modem, 1 apps),
    LOC 16, RMTFS 14 answered by rmt_storage, memshare.
@@ -283,7 +282,7 @@ phone (owner). Steps and pass criteria:
    registered; IMEI shown (Settings > About phone), proving the EFS came through the RAM shim.
 3. Mobile data (Wi-Fi off): `rmnet_data0` up with an address, `ping -I rmnet_data0 1.1.1.1`.
    If the data call fails in format negotiation: GAPS G3 (reject `RMNET_IOCTL_EXTENDED_V2`).
-4. A voice call only with the owner (it uses his SIM and his time): MO call, audio both ways.
+4. A voice call only with someone at the phone (it needs a SIM and a person on the other end): MO call, audio both ways.
 5. SSR under Android: `echo 1 > /sys/kernel/debug/remoteproc/<mss>/crash`: modem back,
    rild re-registers, no panic; repeat twice (the -2 question of section 4).
 
@@ -294,7 +293,7 @@ phone (owner). Steps and pass criteria:
    missing RMTFS server (first) and TFTP/pd-mapper (vendor userspace), so M2 (section 9) is
    the test that decides. The `request_firmware -2` of ab-s18's second recovery did not recur
    in M1 (both reloads worked; firmware from `/lib/firmware`), still unexplained under Android.
-2. Firmware for an Android cellular test: owner's decision (section 6).
+2. Firmware for an Android cellular test: the user's decision (section 6).
 3. R3: two service locators (kernel `qcom_pd_mapper_a52` with `msm/modem/root_pd` =
    gps/gps_service + tms/pdr_enabled; vendor `pd-mapper` with modemr.jsn = tms/servreg +
    gps/gps_service). If GNSS or a modem PD lookup fails, check `qrtrls` for two servers of
@@ -443,7 +442,7 @@ M2 therefore needs one of:
   **Prepared 2026-11-14 19:30: section 10.** (Original plan: it needs a static aarch64 RMTFS server (e.g. linaro `rmtfs` + `libqrtr`,
   UIO lookup by name `rmtfs`, storage = RAM copies of phone 1's four EFS partitions dd'd from
   the read-only block devices to `/tmp/efs/modem_fs1|modem_fs2|modem_fsg|modem_fsc`), fetched
-  and built with the owner's OK.) TFTP is now served too (tqftpserv); the vendor pd-mapper is
+  and built with an explicit OK.) TFTP is now served too (tqftpserv); the vendor pd-mapper is
   not (the kernel locator `qcom_pd_mapper_a52` is), so a stall that remains in M2-K does not
   fully clear the userspace side.
 
@@ -452,7 +451,7 @@ rmts"; `qrtrls` shows service 14 on node 1 (AP) and the modem's own services app
 NAS 3, WDS 1, UIM 11, IPA 49 inst 2 ...); no `DOG detects stalled initialization` for 5 min;
 `ipa3_qmi` init_modem_driver exchange in dmesg; memshare: client 3 "client not found" only.
 
-### Next on hardware (owner runs; nothing here was run on a phone)
+### Next on hardware (run by hand; nothing here was run on a phone)
 
 1. Rebuild (offline, ~40 s): `drivers612/conn/data/build.sh && drivers612/modem/build.sh`
    (already done for this commit; repeat only after changes).
@@ -513,7 +512,7 @@ mounts, rollback checks, dsp + modem stages, IPA FW), then, **before the vote**:
    skips it);
    vote released; rmtfs/tqftpserv stopped; `efsdump verify /tmp/efs`.
 
-### Command (owner runs it; phone 1 = PHONE1, own modem, kexec harness as for M1)
+### Command (run by hand; phone 1 = PHONE1, own modem, kexec harness as for M1)
 
     drivers612/modem/build.sh      # offline, ~5 s after the first build; already done for this commit
     M1_ARGS="120 m2 therm" drivers612/modem/run-m1.sh m2k-p1
@@ -595,7 +594,7 @@ parts is the passing 6.12 run's material, byte for byte.
 - `out-618/inputs.sha256` fingerprints Image, ramdisk, pack, DT and cmdline; `run-m2-618.sh`
   refuses to run if any of them changed after these checks.
 
-### Command (owner runs it; phone 1 = PHONE1, harness kexec9 on recovery, as for the 6.12 M2-K)
+### Command (run by hand; phone 1 = PHONE1, harness kexec9 on recovery, as for the 6.12 M2-K)
 
     drivers612/modem/build-618.sh      # offline, ~5 s; already done for this commit
     drivers612/modem/run-m2-618.sh m2k618-p1
@@ -621,7 +620,7 @@ are section 10's "What success looks like" (compare line by line with
 ## 12. Radio and data on the new kernels: `qmi-nas`, M2 steps `nas` and `data` (prepared 2026-11-14 20:15)
 
 Goal: show that the modem's **radio** works on 6.12 and 6.18 (cell search, signal, a network
-scan; no SIM needed), and, with the SIM the owner put into phone 1, a **data call** through
+scan; no SIM needed), and, with the SIM in phone 1, a **data call** through
 IPA + rmnet. Nothing here was run on a phone.
 
 ### The tool (`userspace/qmi-nas/`, static aarch64 musl, built and tested by `userspace/build.sh`)
@@ -716,7 +715,7 @@ On 6.12, `run-m1.sh` picks these from `M1_ARGS`. On 6.18, `build-618.sh` writes
 `cmdline-m2{nas,data}-618.txt` (fingerprinted in `inputs.sha256`) and `run-m2-618.sh` picks one
 by `M1_ARGS`. `M1_DEADMAN` / `KX_EXTRA_TIMEOUT` override.
 
-microSD (owner's HARD RULE, 2026-11-14: never wipe, format or write it):
+microSD (HARD RULE: never wipe, format or write it):
 - efsdump only considers UFS partitions named `sdXN`. It skips and refuses `mmcblk*`, both by
   sysfs name and by DEVNAME, before the open.
 - `common.sh part()` looks only at `/sys/class/block/sd*`.
@@ -766,7 +765,7 @@ BAM-DMUX (type 5) is not tried: this SoC has no bam-dmux (IPA only). Offline che
 `test/fake-modem.c` (accepts only control+hw, only hw, or nothing; qmapv5 adaptation).
 Not run on a phone.
 
-### Commands (owner runs them; phone 1 = PHONE1, same harness and safety as sections 10/11)
+### Commands (run by hand; phone 1 = PHONE1, same harness and safety as sections 10/11)
 
     drivers612/modem/build.sh && drivers612/modem/build-618.sh     # offline, ~6 s; already done for this commit
     # radio, no data (works with or without a SIM):

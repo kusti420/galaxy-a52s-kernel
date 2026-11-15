@@ -180,7 +180,7 @@ Why our images are short:
 - **The direct ABL -> kernel jump from `boot` has no key-free test.** There is no A/B and no
   boot-count fallback: 13 consecutive bites were seen without any fallback. A failed recovery
   image would loop the same way. rb9 (= rb6 DIAG kernel + a52ram + padded dtbo, KASLR on
-  unless the kexec rehearsal fails) therefore still needs the owner's window with the keys
+  unless the kexec rehearsal fails) therefore still needs a hands-on session with the keys
   ready, as the rule requires. What changes is the odds: the known blocker is fixed and
   verified offline, and the breadcrumbs would now actually be reached if the kernel starts.
 

@@ -64,7 +64,7 @@ static int on_ram_fs(int fd)
 }
 
 /*
- * UFS partitions only: "sd" + letters + digits (sda29, sdf4). HARD RULE (owner, 2026-11-14):
+ * UFS partitions only: "sd" + letters + digits (sda29, sdf4). HARD RULE:
  * the microSD card (mmcblk*) is never opened, read or written by anything in the test packs.
  */
 static int ufs_part_name(const char *n)

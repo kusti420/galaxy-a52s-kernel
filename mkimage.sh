@@ -1,12 +1,12 @@
 #!/bin/sh
-# Builds the recovery-format test image (see the private project log, "Boot test procedure").
+# Builds the recovery-format test image.
 # Usage: ./mkimage.sh <name>   -> images/a52sxq-mainline-<name>-recovery.img
 set -e
 cd "$(dirname "$0")"
 NAME="${1:?name}"
 MKDTBOIMG=${ANDROID_TREE:-$HOME/android}/system/libufdt/utils/src/mkdtboimg.py
 CMDLINE="${CMDLINE:-console=tty0 loglevel=7 clk_ignore_unused pd_ignore_unused pmos.nosplash pmos.debug-shell}"
-# Generic build identity: the kernel version string must not carry the owner's login or host.
+# Generic build identity: the kernel version string must not carry the builder's login or host.
 export KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost
 ( cd linux && make ARCH=arm64 LLVM=1 O=../out -j20 Image qcom/sm7325-samsung-a52sxq.dtb >/dev/null )
 dtc -q -@ -I dts -O dtb -o out/a52sxq-mainline-overlay.dtbo dtbo/a52sxq-mainline-overlay.dts

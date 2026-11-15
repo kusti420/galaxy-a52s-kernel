@@ -17,9 +17,9 @@
 #   s2idle-shallow  REAL suspend to idle, deepest cpuidle state disabled (tick keeps running:
 #                   a52susp's hrtimer backstop and deadman work all the time), RTC wake +15 s
 #   s2idle-deep     REAL suspend to idle with cluster power collapse and frozen tick: only the
-#                   RTC alarm can wake it. Refused unless A52_DEEP_OK=1 (needs the owner's OK)
+#                   RTC alarm can wake it. Refused unless A52_DEEP_OK=1 (needs an explicit OK)
 # Env: A52_WDT=1 arm the hypervisor watchdog (30 s busy / 35 s bite) for the run and pet it
-#      (main session's decision only: PHONE-RULES forbids agents to arm it);
+#      (a manual decision only: the scripts never arm it);
 #      A52_KEEP_RADIOS=1 leave Wi-Fi/BT as they are (default: switched off for the run);
 #      A52_WAKE_S (default 15) RTC wake delay for the s2idle levels.
 # Result: /tmp/susp2/<level>-<time>.log, a "RESULT" line in the kernel log (ramoops keeps it).
@@ -38,7 +38,7 @@ w() { echo "$2" > "$1" 2>/dev/null || log "write $2 > $1 failed"; }
 [ -e $D/lock ] && [ -d /proc/$($B cat $D/lock) ] && die "another run is active (pid $($B cat $D/lock))"
 echo $$ > $D/lock
 case $LEVEL in preflight|freezer|devices|platform|s2idle-shallow|s2idle-deep) ;; *) die "unknown level $LEVEL";; esac
-[ $LEVEL = s2idle-deep ] && [ "${A52_DEEP_OK:-0}" != 1 ] && die "s2idle-deep needs A52_DEEP_OK=1 (owner's OK: a missed wake-up there needs his keys)"
+[ $LEVEL = s2idle-deep ] && [ "${A52_DEEP_OK:-0}" != 1 ] && die "s2idle-deep needs A52_DEEP_OK=1 (explicit OK: a missed wake-up there needs a manual key press)"
 log "level=$LEVEL kernel=$($B uname -r) pid=$$"
 
 # ---------- facts (all levels) ----------

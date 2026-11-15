@@ -3,8 +3,8 @@
 Written 2026-11-14 offline (no phone touched). Audits whether the best 6.12 Android run (ab-s68 /
 ab-s70: `bsp612/out/dist/Image` + `s68-rd`, `a52.mods=debug,secure,display,kgsl,i2c,nfc,touch,
 fingerprint,powerpd,vibrator,camera,dsp,wlanb,audio@adsp,wlan@adsp`) can suspend and resume, and
-gives a test that does not detach USB, does not need the owner, and cannot leave the phone
-wedged in a state only the owner's keys can end (up to the last, optional level).
+gives a test that does not detach USB, does not need anyone at the phone, and cannot leave the phone
+wedged in a state only a manual key press can end (up to the last, optional level).
 
 Nothing here was run on hardware. "Verified" below means read in the source that is built.
 
@@ -42,7 +42,7 @@ all four have a fix here:
    then skips their prepare/suspend/resume/complete; the controller stays powered and
    enumerated, the host just sees NAKs while the phone sleeps, adb and telnet continue after
    resume. No detach, no UDC rewrite, no re-enumeration. Cost: USB keeps CX/DDR votes, so the
-   SoC cannot reach CX collapse; that is a later test with the cable out (owner).
+   SoC cannot reach CX collapse; that is a later test with the cable out.
 2. **No hang protection inside suspend/resume.** The helper's hung_task_panic does not cover
    it: `kernel/hung_task.c` sets `hung_detector_suspended` from PM_SUSPEND_PREPARE to
    PM_POST_SUSPEND. This GKI has no `CONFIG_DPM_WATCHDOG`. The hypervisor watchdog counts busy
@@ -55,7 +55,7 @@ all four have a fix here:
    (Correction to a guess in the audit brief: `softlockup_panic` does work: the running GKI Image
    is built from `bsp612/out/gki/.config` with `CONFIG_SOFTLOCKUP_DETECTOR=y`; only the module
    build config `bsp612/out/lahaina/.config` says "not set". No hardlockup detector exists.)
-3. **A suspend that nobody wakes needs the owner.** Fix: wake IRQ interlock + backstops + a
+3. **A suspend that nobody wakes needs someone at the phone.** Fix: wake IRQ interlock + backstops + a
    "shallow" s2idle level (below): `a52susp` refuses the suspend in its `suspend_noirq` unless the
    RTC alarm IRQ is wake-set and armed; an hrtimer calls `pm_system_wakeup()` after 30 s; an
    ALARM_BOOTTIME alarm (45 s) is programmed into the PMIC RTC by `alarmtimer_suspend()` even if
@@ -69,7 +69,7 @@ all four have a fix here:
    `kexec-rd/helper2.sh` sees g1's UDC empty and races the script's UDC rewrite. Separately: the
    helper's `/leave` uses `reboot -f` and then `/rb reboot`, both of which run
    `device_shutdown()`, which blocks forever if a USB device lock is held by a wedged
-   bind/unbind; only `sysrq b` (emergency_restart) skips it. Suggested for the main session
+   bind/unbind; only `sysrq b` (emergency_restart) skips it. Suggested
    (not changed here, shared file): in `/leave`, start `( sleep 20; echo b > /proc/sysrq-trigger ) &`
    before `reboot -f`.
 
@@ -195,7 +195,7 @@ the end of `audit-table.md`.
 ### Why not adb over Wi-Fi (asked)
 It does not remove blocker 1: while the cable is in and enumerated, dwc3-msm refuses suspend
 whatever channel adb uses. It becomes the channel for the later "cable out" test (the only way
-to test CX collapse). What it needs, each item needing the owner's OK:
+to test CX collapse). What it needs, each item needing an explicit OK:
 - a network for the test phone to join (SSID + password typed into a test Android whose /data is
   zram, so nothing persists), preferably an isolated SSID or a hotspot: the test Android is
   `force_debuggable` with a root adbd, so adb on TCP must not be reachable by other LAN hosts;
@@ -219,7 +219,7 @@ to test CX collapse). What it needs, each item needing the owner's OK:
 | deep state / wrong mem_sleep | script check + a52susp `.prepare` | refused before any device suspends |
 | RTC wake path dead | awake self-test; a52susp `suspend_noirq` interlock | run stops / suspend refused |
 | no wake-up at all, shallow level | hrtimer backstop 30 s -> `pm_system_wakeup()` (tick keeps running); deadman 120 s | wakes; worst case panic |
-| no wake-up at all, deep level | alarm backstop 45 s through the same RTC | **nothing else: owner's keys**. Hence deep is the last level and needs his OK |
+| no wake-up at all, deep level | alarm backstop 45 s through the same RTC | **nothing else: manual key presses**. Hence deep is the last level and needs an explicit OK |
 | Android starts its own suspend | a52susp gate (`allow_tgid`) | refused at PM_SUSPEND_PREPARE |
 | script session dies | `setsid`, `trap '' HUP` | script continues |
 | UFS resume fails | hung_task_panic after PM_POST_SUSPEND / deadman inside resume | panic -> reboot |
@@ -238,8 +238,8 @@ session"). Stop at the first level that does not come back clean and read its lo
 | devices | + all prepare/suspend/resume/complete callbacks (usbkeep on) | the ~70 driver callbacks | - |
 | platform | + suspend_late/noirq, wake IRQ interlock (usbkeep on) | noirq phase, IRQ suspend | - |
 | s2idle-shallow | REAL suspend to idle, deepest cpuidle state disabled on every CPU, RTC wake +15 s | wake by RTC through PDC with the GIC up; real sleep duration | - |
-| s2idle-deep | REAL suspend to idle with CPU + cluster power collapse and frozen tick | PDC wake from cluster collapse | owner's OK (`A52_DEEP_OK=1`) |
-| later | Wi-Fi/BT on; then cable out + adb over Wi-Fi (CX collapse) | WoW, dwc3 LPM | owner |
+| s2idle-deep | REAL suspend to idle with CPU + cluster power collapse and frozen tick | PDC wake from cluster collapse | explicit OK (`A52_DEEP_OK=1`) |
+| later | Wi-Fi/BT on; then cable out + adb over Wi-Fi (CX collapse) | WoW, dwc3 LPM | someone at the phone |
 
 Why "shallow" is a real suspend and still safe: `cpuidle-psci` puts `enter_s2idle` only on each
 CPU's deepest state (state2: `cpu-sleep-0-1` / `cpu-sleep-1-1`, the rail power-down states). With it disabled, `cpuidle_enter_s2idle()`
@@ -249,9 +249,9 @@ frozen, every device is suspended, `/sys/power/suspend_stats/success` counts it,
 IRQ (or the backstop) ends it. Kernel timers keep working the whole time, which is what lets
 the hrtimer backstop and the deadman guarantee a way out.
 
-## Step by step (main session, PHONE=2 = PHONE2; PHONE=1 works the same with net 42)
+## Step by step (PHONE=2 = PHONE2; PHONE=1 works the same with net 42)
 
-0. Before 21:15 (PC sleeps at 22:00). Phone in its own Android, harness on recovery as usual.
+0. Phone in its own Android, harness on recovery as usual.
    `drivers612/suspend/build.sh` (already built: `a52susp/a52susp-strip.ko`).
 1. Start the current best run, held, with a longer helper dead-man:
    ```
@@ -280,16 +280,16 @@ the hrtimer backstop and the deadman guarantee a way out.
    `wakeup_irq=<the RTC IRQ>` (an earlier wake by a charger/touch/NFC IRQ is still a pass; the
    backstop at 30 s means the RTC wake did not work: a finding), `success` +1, adb answers,
    screen comes back. This is the first real suspend.
-7. Optional, main session's decision: repeat 4-6 with `A52_WDT=1` (hypervisor watchdog net for
-   IRQs-off spins). PHONE-RULES forbids agents to arm it.
-8. Only with the owner's OK and him reachable: `run-level.sh s2idle-deep A52_DEEP_OK=1`.
+7. Optional, a manual decision: repeat 4-6 with `A52_WDT=1` (hypervisor watchdog net for
+   IRQs-off spins). The scripts never arm it.
+8. Only with someone at the phone: `run-level.sh s2idle-deep A52_DEEP_OK=1`.
    Then Wi-Fi/BT on (`A52_KEEP_RADIOS=1` after switching them on), then the cable-out test.
 
 If a level does not come back (`no RESULT line`): touch nothing for 10 minutes (panic -> reboot
 -> harness/Android takes 1-3 min), then `adb -s PHONE2 get-state`. Once it is in Android,
 read `/sys/fs/pstore/console-ramoops-0` (or `prev-console.txt` from kx-finish): the last
 `calling ...+` line without its `returned` is the device that hung, the `DEADMAN` lines and
-the sysrq-w dump follow. If the phone is not back after 10 minutes: stop and tell the owner.
+the sysrq-w dump follow. If the phone is not back after 10 minutes: stop and recover it by hand (keys).
 
 ## The same test on 6.18 (bsp618/android package a5)
 

@@ -97,7 +97,7 @@ K=$OUT/kpack; rm -rf "$K"; mkdir -p "$K/m"
 cp "$HERE/kpack/"*.sh "$K/"
 cp "$TOP/drivers612/conn/tools/qrtrls" "$K/"
 cp "$TOP/drivers612/hwbringup/mkdevs" "$K/" 2>/dev/null || cp "$TOP/drivers612/wifibt/pack/mkdevs" "$K/"
-# HARD RULE (owner, 2026-11-14): the microSD card is never touched: the packed mkdevs makes no
+# HARD RULE: the microSD card is never touched: the packed mkdevs makes no
 # mmcblk* nodes (the copy is filtered here; the shared hwbringup/mkdevs stays as it is)
 sed -i 's@^\t\[ -e "/dev/\$DEVNAME" \] && continue$@&\n\tcase "$DEVNAME" in mmcblk*|block/mmcblk*) continue;; esac  # microSD: never (HARD RULE)@' "$K/mkdevs"
 grep -q 'mmcblk\*|block/mmcblk\*) continue' "$K/mkdevs" || fail "mkdevs: mmcblk filter not applied"

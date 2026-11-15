@@ -1,6 +1,6 @@
 #!/bin/sh
 # Packs the Qualcomm 6.12 BSP bring-up as a recovery-format test image. PACKS ONLY, flashes
-# nothing (test flashes are done by the main session with ../test-cycle.sh, test phones only).
+# nothing (test flashes are done with ../test-cycle.sh, test phones only).
 # Usage: bsp612/mkimage-612.sh <name>   -> images/a52sxq-bsp612-<name>-recovery.img
 #   NET=43      ramdisk network 172.16.43.1 (second test phone); default 42
 #   CMDLINE=... replace the whole command line
