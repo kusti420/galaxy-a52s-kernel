@@ -1,7 +1,7 @@
 From e030815921880bee9f1142500124a367669508ba Mon Sep 17 00:00:00 2001
 From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 17:41:51 +0200
-Subject: [PATCH 5/7] arm64: dts: qcom: sm7325: add Samsung Galaxy A52s 5G
+Subject: [PATCH 05/10] arm64: dts: qcom: sm7325: add Samsung Galaxy A52s 5G
  (a52sxq)
 
 Bring-up board file: bootloader framebuffer, keys, USB 2.0 gadget, UFS,

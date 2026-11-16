@@ -1,7 +1,7 @@
 From 10eec6a4ba13ce8392403c3c91bf87ddabffd382 Mon Sep 17 00:00:00 2001
 From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 17:39:56 +0200
-Subject: [PATCH 3/7] arm64: kexec: machine_kexec() __nocfi
+Subject: [PATCH 03/10] arm64: kexec: machine_kexec() __nocfi
 
 Both jumps in machine_kexec() are indirect calls to physical addresses;
 with kCFI the type-hash load in front of the target faults in the

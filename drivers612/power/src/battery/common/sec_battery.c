@@ -9041,12 +9041,46 @@ static const struct power_supply_desc battery_power_supply_desc = {
 	.set_property = sec_bat_set_property,
 };
 
+/*
+ * a52sxq 6.x: the USB "configured" current. On 5.4 Samsung's patched dwc3 core sent
+ * POWER_SUPPLY_EXT_PROP_USB_CONFIGURE to "battery" on SET_CONFIGURATION. GKI's dwc3 core has no such
+ * hook; the Qualcomm 6.x USB PHY/dwc3-msm instead set POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT (uA) on the
+ * "usb" supply (msm-usb-hsphy: "Avail curr from USB = 500"), which this driver ignored, so a PC USB port
+ * stayed at the 100 mA unconfigured limit forever (phone drained while plugged in, 2026-11-16).
+ * Map it onto the same sec_bat_set_usb_configure() the 5.4 path used.
+ */
+static int sec_usb_set_property(struct power_supply *psy,
+		enum power_supply_property psp, const union power_supply_propval *val)
+{
+	struct sec_battery_info *battery = power_supply_get_drvdata(psy);
+	int ma, conf;
+
+	if (psp != POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT)
+		return -EINVAL;
+	ma = val->intval / 1000;
+	if (ma >= 900)
+		conf = USB_CURRENT_SUPER_SPEED;
+	else if (ma >= 500)
+		conf = USB_CURRENT_HIGH_SPEED;
+	else if (ma >= 100)
+		conf = USB_CURRENT_UNCONFIGURED;
+	else if (ma > 0)
+		conf = USB_CURRENT_SUSPENDED;
+	else
+		return 0;	/* 0 = gadget gone: cable detach is handled by the cable/PDIC path */
+	pr_info("%s: USB gadget vbus draw %d mA -> usb configure %d\n", __func__, ma, conf);
+	if (conf != battery->prev_usb_conf)
+		sec_bat_set_usb_configure(battery, conf);
+	return 0;
+}
+
 static const struct power_supply_desc usb_power_supply_desc = {
 	.name = "usb",
 	.type = POWER_SUPPLY_TYPE_USB,
 	.properties = sec_power_props,
 	.num_properties = ARRAY_SIZE(sec_power_props),
 	.get_property = sec_usb_get_property,
+	.set_property = sec_usb_set_property,
 };
 
 static const struct power_supply_desc ac_power_supply_desc = {

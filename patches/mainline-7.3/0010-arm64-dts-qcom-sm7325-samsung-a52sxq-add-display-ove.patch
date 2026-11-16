@@ -1,0 +1,151 @@
+From 4b14b48409fa669313d29cc12427f9cade9153b9 Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Sun, 15 Nov 2026 21:05:34 +0200
+Subject: [PATCH 10/10] arm64: dts: qcom: sm7325-samsung-a52sxq: add display
+ overlay (DSI0 + S6E3FC3)
+
+MDSS, DSI0 (vdda L6B 1.2 V), DSI PHY (vdds L10C 0.88 V) and the
+S6E3FC3/AMS646YD01 panel (reset TLMM 44, TE TLMM 80 mdp_vsync), as an
+overlay applied to sm7325-samsung-a52sxq-panel.dtb, so the base board
+file keeps the bootloader simple-framebuffer path unchanged.
+
+The panel rails L8C (VDDI) and L13C (VCI) are pinned to the panel's own
+vendor supply entries, 1.8 V and 3.0 V (also the vendor regulator
+range), not to the regulators' vendor init voltages (1.62 V / 2.7 V)
+that the other rails of this board are pinned to. No regulator-boot-on:
+the panel driver enables them.
+---
+ arch/arm64/boot/dts/qcom/Makefile             |   2 +
+ .../dts/qcom/sm7325-samsung-a52sxq-panel.dtso | 110 ++++++++++++++++++
+ 2 files changed, 112 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-panel.dtso
+
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index c2358190b..a96e481b0 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -359,6 +359,8 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-csot.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-motorola-dubai-tianma.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-nothing-spacewar.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq.dtb
++sm7325-samsung-a52sxq-panel-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sxq-panel.dtbo
++dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-panel.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-xiaomi-taoyao.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-microsoft-surface-duo.dtb
+diff --git a/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-panel.dtso b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-panel.dtso
+new file mode 100644
+index 000000000..6d1514502
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-panel.dtso
+@@ -0,0 +1,110 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Samsung Galaxy A52s 5G: MDSS + DSI0 + Samsung S6E3FC3 (AMS646YD01) panel with DSC.
++ *
++ * Kept as an overlay on purpose: the base board file drives the panel through the
++ * bootloader's simple-framebuffer, and this file is what turns the real display path
++ * on. Applied by kbuild to sm7325-samsung-a52sxq-panel.dtb (base + this overlay).
++ *
++ * All values from the phone's own 5.4 tree (downstream-dt/a52sxq-r02.dts,
++ * ss_dsi_panel_S6E3FC3_AMS646YD01_LO_FHD and dsi-ctrl-0 / dsi-phy-0).
++ */
++
++/dts-v1/;
++/plugin/;
++
++#include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/regulator/qcom,rpmh-regulator.h>
++
++&apps_rsc {
++	regulators-1 {
++		/*
++		 * The two panel rails. Unlike every other rail of the board, these are NOT
++		 * pinned to their downstream "qcom,init-voltage" (L8C 1.62 V, L13C 2.7 V):
++		 * downstream programs that value only until its panel driver takes the rail
++		 * and sets the panel's own supply entry (qcom,panel-supply-entries:
++		 * panel_vddi min = max = 1800000, panel_vci min = max = 3000000), which is
++		 * also the regulator's whole downstream range (min == max == 1.8 / 3.0 V).
++		 * These are the voltages the panel runs at, so they are pinned here.
++		 * Initial mode HPM = downstream qcom,init-mode (supply-enable-load 100 mA).
++		 * No regulator-boot-on: an RPMh rail cannot be read back, and boot-on without
++		 * a consumer would be switched off by the regulator core 30 s after boot if
++		 * the panel module is not loaded by then. Enabled by the panel driver.
++		 */
++		vreg_l8c: ldo8 {
++			regulator-name = "vreg_l8c";
++			regulator-min-microvolt = <1800000>;
++			regulator-max-microvolt = <1800000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++
++		vreg_l13c: ldo13 {
++			regulator-name = "vreg_l13c";
++			regulator-min-microvolt = <3000000>;
++			regulator-max-microvolt = <3000000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
++		};
++	};
++};
++
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi {
++	/* dsi-ctrl-0 vdda-1p2-supply = pm7325_l6 (L6B, 1.2 V) */
++	vdda-supply = <&vreg_l6b>;
++	#address-cells = <1>;
++	#size-cells = <0>;
++	status = "okay";
++
++	panel@0 {
++		compatible = "samsung,s6e3fc3-ams646yd01", "samsung,s6e3fc3";
++		reg = <0>;
++
++		/* qcom,platform-reset-gpio = <&tlmm 44 0>; reset sequence <0 10 1 10> */
++		reset-gpios = <&tlmm 44 GPIO_ACTIVE_LOW>;
++
++		vddi-supply = <&vreg_l8c>;
++		vci-supply = <&vreg_l13c>;
++
++		pinctrl-0 = <&panel_reset_active>, <&panel_te_active>;
++		pinctrl-names = "default";
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	/* qcom,mdss-dsi-lane-map = "lane_map_0123", lanes 0-3 */
++	data-lanes = <0 1 2 3>;
++	remote-endpoint = <&panel_in>;
++};
++
++&mdss_dsi_phy {
++	/* dsi-phy-0 vdda-0p9-supply = pm8350c_l10 (L10C, 0.88 V) */
++	vdds-supply = <&vreg_l10c>;
++	status = "okay";
++};
++
++&tlmm {
++	/* downstream sde_dsi_active */
++	panel_reset_active: panel-reset-active-state {
++		pins = "gpio44";
++		function = "gpio";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	/* downstream sde_te_active (qcom,platform-te-gpio = <&tlmm 80 0>) */
++	panel_te_active: panel-te-active-state {
++		pins = "gpio80";
++		function = "mdp_vsync";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++};

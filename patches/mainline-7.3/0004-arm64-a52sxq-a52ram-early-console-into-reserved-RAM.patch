@@ -1,7 +1,7 @@
 From 30091476382655047148e4ecc97b839528ab1b26 Mon Sep 17 00:00:00 2001
 From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 17:40:04 +0200
-Subject: [PATCH 4/7] arm64: a52sxq: a52ram early console into reserved RAM
+Subject: [PATCH 04/10] arm64: a52sxq: a52ram early console into reserved RAM
 
 earlycon=a52ram,0xf0be0000 writes the earliest kernel messages into the
 no-map region /reserved-memory/a52ram@f0be0000 (compatible a52,ramcon);

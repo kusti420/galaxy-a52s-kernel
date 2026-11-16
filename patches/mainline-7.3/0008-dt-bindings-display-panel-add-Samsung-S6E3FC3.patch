@@ -1,0 +1,91 @@
+From 51c41d203c9f53047818a5b8be938c54c9082207 Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Sun, 15 Nov 2026 21:05:33 +0200
+Subject: [PATCH 08/10] dt-bindings: display: panel: add Samsung S6E3FC3
+
+The Samsung S6E3FC3 is an AMOLED DDIC driven over 4-lane MIPI DSI in
+command mode with DSC 1.1. It is paired with the 6.46" 1080x2400
+AMS646YD01 panel in the Samsung Galaxy A52s 5G. Supplies: VDDI 1.8 V,
+VCI 3.0 V.
+---
+ .../display/panel/samsung,s6e3fc3.yaml        | 71 +++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/display/panel/samsung,s6e3fc3.yaml
+
+diff --git a/Documentation/devicetree/bindings/display/panel/samsung,s6e3fc3.yaml b/Documentation/devicetree/bindings/display/panel/samsung,s6e3fc3.yaml
+new file mode 100644
+index 000000000..c905a1f4c
+--- /dev/null
++++ b/Documentation/devicetree/bindings/display/panel/samsung,s6e3fc3.yaml
+@@ -0,0 +1,71 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/display/panel/samsung,s6e3fc3.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Samsung S6E3FC3 AMOLED DDIC
++
++maintainers:
++  - Kusti <a52sxq-kernel@users.noreply.github.com>
++
++description:
++  The S6E3FC3 is a display driver IC for AMOLED panels, driven over a 4-lane
++  MIPI DSI link in command mode with VESA DSC 1.1 compression.
++
++allOf:
++  - $ref: panel-common.yaml#
++
++properties:
++  compatible:
++    items:
++      - enum:
++            # Samsung 6.46 inch, 1080x2400 pixels, 20:9 ratio
++          - samsung,s6e3fc3-ams646yd01
++      - const: samsung,s6e3fc3
++
++  reg:
++    maxItems: 1
++
++  vddi-supply:
++    description: VDDI (I/O and logic) regulator, 1.8 V
++
++  vci-supply:
++    description: VCI (analog) regulator, 3.0 V
++
++required:
++  - compatible
++  - reg
++  - reset-gpios
++  - vddi-supply
++  - vci-supply
++  - port
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/gpio/gpio.h>
++
++    dsi {
++        #address-cells = <1>;
++        #size-cells = <0>;
++
++        panel@0 {
++            compatible = "samsung,s6e3fc3-ams646yd01", "samsung,s6e3fc3";
++            reg = <0>;
++
++            vddi-supply = <&vreg_l8c>;
++            vci-supply = <&vreg_l13c>;
++
++            reset-gpios = <&tlmm 44 GPIO_ACTIVE_LOW>;
++
++            port {
++                panel_in: endpoint {
++                    remote-endpoint = <&mdss_dsi0_out>;
++                };
++            };
++        };
++    };
++
++...

@@ -22,6 +22,8 @@ export KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost
 # LOCALVERSION= (empty) keeps setlocalversion from appending "+": release = 7.3.0-a52sxq
 MAKE="make -C $TOP/linux-7.3 ARCH=arm64 LLVM=$CLANG/ O=$OUT DTC_FLAGS=-@ LOCALVERSION="
 DTB=$OUT/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dtb
+# base + sm7325-samsung-a52sxq-panel.dtbo (MDSS/DSI0/S6E3FC3 panel): the M3 display test tree
+PANEL_DTB=$OUT/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-panel.dtb
 IMG=$OUT/arch/arm64/boot/Image
 HARNESS_DTB=$TOP/out-ack/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dtb
 mkdir -p $OUT
@@ -57,7 +59,8 @@ hhwdt() { # modules/hhwdt built against this kernel, in a copy (modules/hhwdt ho
 # modules the ramdisk carries in /extra (loaded by hand only: KX_EXTRA / the shell)
 EXTRA_KO="drivers/watchdog/gunyah_wdt.ko drivers/remoteproc/qcom_pil_info.ko drivers/remoteproc/qcom_common.ko
   drivers/remoteproc/qcom_q6v5.ko drivers/remoteproc/qcom_q6v5_pas.ko drivers/misc/fastrpc.ko
-  drivers/mmc/host/sdhci-msm.ko drivers/input/misc/gpio-vibra.ko ext/epssdump/epssdump.ko ext/mdpdump/mdpdump.ko"
+  drivers/mmc/host/sdhci-msm.ko drivers/input/misc/gpio-vibra.ko ext/epssdump/epssdump.ko ext/mdpdump/mdpdump.ko
+  drivers/gpu/drm/panel/panel-samsung-s6e3fc3.ko"
 
 checks() {
   fail() { echo "CHECK FAILED: $*" >&2; exit 1; }
@@ -168,6 +171,41 @@ print(f"ok   dtb: __symbols__ + labels soc intc aliases firmware reserved_memory
       f"overlay placeholders, watchdog reserved, mode-download 0x15, ramoops = harness (0xe0000, record 0x20000), "
       f"{pinned} rpmh regulators pinned min == max == downstream init voltage, {f.totalsize()} B")
 EOF
+  # panel tree (M3): the two panel rails pinned to the panel's own downstream supply entries
+  # (qcom,panel-supply-entries of ss_dsi_panel_S6E3FC3_AMS646YD01_LO_FHD), NOT to the regulator
+  # init voltages (L8C 1.62 / L13C 2.7 V); base tree without them; panel + DSI wiring present
+  python3 - "$DTB" "$PANEL_DTB" <<'EOF' || fail "panel device tree checks"
+import re, subprocess, sys
+dts = lambda f: subprocess.run(['dtc', '-I', 'dtb', '-O', 'dts', f], capture_output=True, text=True).stdout
+base, pan = dts(sys.argv[1]), dts(sys.argv[2])
+src = open('downstream-dt/a52sxq-r02.dts').read()
+node = src[src.index('ss_dsi_panel_S6E3FC3_AMS646YD01_LO_FHD: ss_dsi_panel_S6E3FC3_AMS646YD01_LO_FHD {'):]
+node = node[:node.index('qcom,mdss-dsi-display-timings')]
+want = {}
+for e in re.finditer(r'qcom,panel-supply-entry@\d \{(.*?)\};', node, re.S):
+    b = e.group(1)
+    lo = int(re.search(r'supply-min-voltage = <(0x[0-9a-f]+)>', b).group(1), 16)
+    hi = int(re.search(r'supply-max-voltage = <(0x[0-9a-f]+)>', b).group(1), 16)
+    want[re.search(r'supply-name = "(\w+)"', b).group(1)] = (lo, hi)
+bad = []
+if want != {'panel_vddi': (1800000, 1800000), 'panel_vci': (3000000, 3000000)}:
+    bad.append(f'downstream supply entries changed: {want}')
+def rail(t, n):
+    m = re.search(r'\{([^{}]*regulator-name = "vreg_' + n + r'"[^{}]*)\}', t)
+    if not m: return None
+    g = lambda p: int(re.search(p + r' = <(0x[0-9a-f]+)>', m.group(1)).group(1), 16)
+    return (g('regulator-min-microvolt'), g('regulator-max-microvolt'))
+for n, sup in (('l8c', 'panel_vddi'), ('l13c', 'panel_vci')):
+    if rail(base, n) is not None: bad.append(f'base tree describes {n} (panel rails belong to the panel overlay only)')
+    if rail(pan, n) != want.get(sup): bad.append(f'panel tree {n} = {rail(pan, n)} != downstream {sup} {want.get(sup)}')
+for need in ('samsung,s6e3fc3-ams646yd01', 'vddi-supply', 'vci-supply', 'reset-gpios', 'data-lanes = <0x00 0x01 0x02 0x03>'):
+    if need not in pan: bad.append(f'panel tree lacks {need}')
+if 'simple-framebuffer' not in pan: bad.append('panel tree lost the simple-framebuffer')
+if bad:
+    print('\n'.join('FAIL ' + b for b in bad)); sys.exit(1)
+print(f"ok   panel dtb: L8C {want['panel_vddi'][0]} uV / L13C {want['panel_vci'][0]} uV = downstream panel supply "
+      f"entries (not the init voltages), base tree without them, DSI0 4 lanes + S6E3FC3, simple-framebuffer kept")
+EOF
 }
 
 payload() {
@@ -212,7 +250,7 @@ payload() {
 
 summary() {
   echo "== artefacts"
-  for f in $IMG $DTB $OUT/ramdisk-ml.cpio.gz $OUT/kx/kexec-dryrun.dtb $OUT/ext/hhwdt/hhwdt.ko $OUT/drivers/watchdog/gunyah_wdt.ko; do
+  for f in $IMG $DTB $PANEL_DTB $OUT/ramdisk-ml.cpio.gz $OUT/kx/kexec-dryrun.dtb $OUT/ext/hhwdt/hhwdt.ko $OUT/drivers/watchdog/gunyah_wdt.ko; do
     [ -f $f ] && echo "$(sha256sum $f | cut -c1-64)  $(stat -c %s $f)  ${f#$TOP/}"
   done
   echo "kernel release: $(cat $OUT/include/config/kernel.release)"
@@ -225,7 +263,7 @@ case "${1:-}" in
   *) $MAKE -j22 "$@"; exit 0;;
 esac
 [ -f $OUT/.config ] || config
-$MAKE -j22 Image qcom/sm7325-samsung-a52sxq.dtb modules > $OUT/build.log 2>&1 || { tail -n 30 $OUT/build.log; exit 1; }
+$MAKE -j22 Image qcom/sm7325-samsung-a52sxq.dtb qcom/sm7325-samsung-a52sxq-panel.dtb modules > $OUT/build.log 2>&1 || { tail -n 30 $OUT/build.log; exit 1; }
 hhwdt
 checks
 payload
