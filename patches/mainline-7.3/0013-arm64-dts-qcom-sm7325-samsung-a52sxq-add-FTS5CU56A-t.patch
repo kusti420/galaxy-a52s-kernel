@@ -1,0 +1,78 @@
+From 4dacd55866e99c3e5c07b86686a9ea8c92445d13 Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Mon, 16 Nov 2026 18:23:12 +0200
+Subject: [PATCH 13/17] arm64: dts: qcom: sm7325-samsung-a52sxq: add FTS5CU56A
+ touchscreen
+
+ST FTS5CU56A on QUP1 SE5 (I2C13), address 0x49, attention on TLMM 81
+level low, AVDD from PM8350C L7 (3.0 V, pinned as downstream). The I/O
+rail is always on and there is no reset line. SE13 runs through GPI
+DMA 1 as on the vendor kernel; pins 52/53 get the downstream 2 mA and
+pull-up.
+---
+ .../boot/dts/qcom/sm7325-samsung-a52sxq.dts   | 52 +++++++++++++++++++
+ 1 file changed, 52 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dts b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dts
+index ccd2ddd10..563765c3c 100644
+--- a/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dts
++++ b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dts
+@@ -872,6 +872,58 @@ vib_en_default: vib-en-default-state {
+ 		drive-strength = <2>;
+ 		bias-disable;
+ 	};
++
++	/* downstream stm_attn_irq (touch on_state): input, no pull */
++	ts_int_default: ts-int-default-state {
++		pins = "gpio81";
++		function = "gpio";
++		bias-disable;
++		input-enable;
++	};
++};
++
++/*
++ * Touchscreen: ST FTS5CU56A on QUP1 SE5 (I2C13, downstream qupv3_se13_i2c at 0xa94000),
++ * address 0x49, attention on TLMM 81 (level low). No reset line: the IC is reset through a
++ * register write. AVDD = L7C 3.0 V (downstream tsp_avdd_ldo; L7C is pinned to 3.0 V above,
++ * = downstream min = max = init 3000000); the I/O rail is always on ("sec,unuse_dvdd_power"),
++ * so there is no vdd-supply. The IC reports 4096 x 4096 (downstream sec,max_coords).
++ * Downstream drives SE13 through GPI DMA 1 (dmas = gpi_dma1 0/1 5 I2C), SMMU SIDs 0x43
++ * (wrapper) and 0x56 (GPI), both as in kodiak.dtsi; GPI channels 1..4 (gpii-mask 0x1e,
++ * channel 0 static) = kodiak.dtsi dma-channel-mask 0x1e. Pins 52/53 qup15, 2 mA, pull-up.
++ */
++&gpi_dma1 {
++	status = "okay";
++};
++
++&qupv3_id_1 {
++	status = "okay";
++};
++
++&qup_i2c13_data_clk {
++	drive-strength = <2>;
++	bias-pull-up;
++};
++
++&i2c13 {
++	clock-frequency = <400000>;
++
++	status = "okay";
++
++	touchscreen@49 {
++		compatible = "st,fts5cu56a";
++		reg = <0x49>;
++
++		interrupts-extended = <&tlmm 81 IRQ_TYPE_LEVEL_LOW>;
++
++		avdd-supply = <&vreg_l7c>;
++
++		touchscreen-size-x = <4096>;
++		touchscreen-size-y = <4096>;
++
++		pinctrl-0 = <&ts_int_default>;
++		pinctrl-names = "default";
++	};
+ };
+ 
+ /*

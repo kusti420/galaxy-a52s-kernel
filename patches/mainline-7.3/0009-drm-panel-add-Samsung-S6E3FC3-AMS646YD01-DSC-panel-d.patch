@@ -1,7 +1,7 @@
 From 23652b86ef5c7b9a135e8d9c254809a52e27b9ee Mon Sep 17 00:00:00 2001
 From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 21:05:33 +0200
-Subject: [PATCH 09/10] drm/panel: add Samsung S6E3FC3 (AMS646YD01) DSC panel
+Subject: [PATCH 09/17] drm/panel: add Samsung S6E3FC3 (AMS646YD01) DSC panel
  driver
 
 Command mode panel of the Samsung Galaxy A52s 5G: 1080x2400, 4 lanes,

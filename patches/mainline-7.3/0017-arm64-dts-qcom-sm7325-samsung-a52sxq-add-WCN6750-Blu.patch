@@ -1,0 +1,125 @@
+From cd74e62f3aef44e3f331b41d08e47a616ae4cab3 Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Mon, 16 Nov 2026 19:56:27 +0200
+Subject: [PATCH 17/17] arm64: dts: qcom: sm7325-samsung-a52sxq: add WCN6750
+ Bluetooth overlay (WIP)
+
+sm7325-samsung-a52sxq-wifi-bt.dtb = base + wifi + this: QUP0, uart7 (pins
+as the downstream qupv3_se7 active states) and qcom,wcn6750-bt with BT_EN
+TLMM 85, SW_CTRL TLMM 86 and the downstream bt-vdd rails. Not working yet:
+qcom_geni_serial needs a serial alias for uart7 (probe: Invalid line -19).
+---
+ arch/arm64/boot/dts/qcom/Makefile             |  2 +
+ .../dts/qcom/sm7325-samsung-a52sxq-bt.dtso    | 90 +++++++++++++++++++
+ 2 files changed, 92 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-bt.dtso
+
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 4a5970663..26297c0c8 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -365,6 +365,8 @@ sm7325-samsung-a52sxq-gpu-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sx
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-gpu.dtb
+ sm7325-samsung-a52sxq-wifi-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sxq-wifi.dtbo
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-wifi.dtb
++sm7325-samsung-a52sxq-wifi-bt-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sxq-wifi.dtbo sm7325-samsung-a52sxq-bt.dtbo
++dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-wifi-bt.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-xiaomi-taoyao.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-microsoft-surface-duo.dtb
+diff --git a/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-bt.dtso b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-bt.dtso
+new file mode 100644
+index 000000000..da5f572a8
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-bt.dtso
+@@ -0,0 +1,90 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Samsung Galaxy A52s 5G: WCN6750 Bluetooth (hci_qca over QUP0 SE7 UART, serdev).
++ *
++ * Applied by kbuild on top of the Wi-Fi tree (sm7325-samsung-a52sxq-wifi-bt.dtb = base + wifi
++ * + this). hci_uart (with hci_qca) is a module (/extra/hci_uart.ko): nothing here is driven
++ * before it is loaded from the shell, after the phone's own vendor (msbtfw11.mbn, msnv11.bin)
++ * is mounted read-only.
++ *
++ * Checked against the phone's own 5.4 tree (downstream-dt/a52sxq-r02.dts):
++ * - UART: qupv3_se7_4uart (0x99c000 = kodiak uart7, ttyHS0 on 5.4/6.12), pins 28 CTS, 29 RTS,
++ *   30 TX, 31 RX, function qup07, 2 mA; RTS pull-down, TX pull-up, CTS/RX no bias (the
++ *   active states qupv3_se7_ctsrx / _rts / _tx).
++ * - bt_wcn6750: BT_EN (qcom,bt-reset-gpio) TLMM 85, SW_CTRL TLMM 86 (WL reset TLMM 84 stays
++ *   with WPSS); bt_en_sleep = 2 mA, output-low, pull-down; SW_CTRL pull-down as on 6.12.
++ * - supplies (downstream qcom,bt-vdd-*): io = pm7325 L19 (1.8 V), aon / dig / rfacmn /
++ *   rfa-0p8 = pm7325 S7, rfa1 = pm7325 S1, rfa2 = pm7325 S8, asd = pm8350c L11: all pinned in
++ *   the base tree. ipa-2p2 = pm8350c S1 is not described in the base tree (not pinned yet), so
++ *   vddrfa2p2 is left out (dummy): its rail stays as the bootloader/firmware left it.
++ */
++
++/dts-v1/;
++/plugin/;
++
++#include <dt-bindings/gpio/gpio.h>
++
++&qupv3_id_0 {
++	status = "okay";
++};
++
++&qup_uart7_cts {
++	drive-strength = <2>;
++	bias-disable;
++};
++
++&qup_uart7_rts {
++	drive-strength = <2>;
++	bias-pull-down;
++};
++
++&qup_uart7_tx {
++	drive-strength = <2>;
++	bias-pull-up;
++};
++
++&qup_uart7_rx {
++	drive-strength = <2>;
++	bias-disable;
++};
++
++&tlmm {
++	bt_en_default: bt-en-default-state {
++		pins = "gpio85";
++		function = "gpio";
++		drive-strength = <2>;
++		output-low;
++		bias-pull-down;
++	};
++
++	bt_sw_ctrl_default: bt-sw-ctrl-default-state {
++		pins = "gpio86";
++		function = "gpio";
++		bias-pull-down;
++	};
++};
++
++&uart7 {
++	status = "okay";
++
++	bluetooth: bluetooth {
++		compatible = "qcom,wcn6750-bt";
++
++		pinctrl-0 = <&bt_en_default>, <&bt_sw_ctrl_default>;
++		pinctrl-names = "default";
++
++		enable-gpios = <&tlmm 85 GPIO_ACTIVE_HIGH>;
++		swctrl-gpios = <&tlmm 86 GPIO_ACTIVE_HIGH>;
++
++		vddio-supply = <&vreg_l19b>;
++		vddaon-supply = <&vreg_s7b>;
++		vddbtcxmx-supply = <&vreg_s7b>;
++		vddrfacmn-supply = <&vreg_s7b>;
++		vddrfa0p8-supply = <&vreg_s7b>;
++		vddrfa1p7-supply = <&vreg_s1b>;
++		vddrfa1p2-supply = <&vreg_s8b>;
++		vddasd-supply = <&vreg_l11c>;
++
++		max-speed = <3200000>;
++	};
++};

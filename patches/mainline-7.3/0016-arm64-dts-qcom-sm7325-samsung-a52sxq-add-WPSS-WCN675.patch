@@ -1,0 +1,75 @@
+From c9e1041597f619774284f245b67ebfeae0c309c4 Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Mon, 16 Nov 2026 19:46:28 +0200
+Subject: [PATCH 16/17] arm64: dts: qcom: sm7325-samsung-a52sxq: add WPSS +
+ WCN6750 Wi-Fi overlay
+
+M4 part 1: sm7325-samsung-a52sxq-wifi.dtb = base + this overlay. Enables the
+WPSS remoteproc (bare split image wpss.mdt from the phone's own apnhlos) and
+the WCN6750 ath11k AHB node; every hardware value is kodiak.dtsi and matches
+the phone's downstream qcom,wpss / qcom,wcn6750 nodes (tools/check-wifi-dt.py).
+No wifi-firmware subnode: the MSA region stays TZ-owned, as on the FP5.
+The base, panel and GPU trees keep both disabled.
+---
+ arch/arm64/boot/dts/qcom/Makefile             |  2 +
+ .../dts/qcom/sm7325-samsung-a52sxq-wifi.dtso  | 38 +++++++++++++++++++
+ 2 files changed, 40 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-wifi.dtso
+
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index 8ce39b303..4a5970663 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -363,6 +363,8 @@ sm7325-samsung-a52sxq-panel-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-panel.dtb
+ sm7325-samsung-a52sxq-gpu-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sxq-panel.dtbo sm7325-samsung-a52sxq-gpu.dtbo
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-gpu.dtb
++sm7325-samsung-a52sxq-wifi-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sxq-wifi.dtbo
++dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-wifi.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-xiaomi-taoyao.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-microsoft-surface-duo.dtb
+diff --git a/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-wifi.dtso b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-wifi.dtso
+new file mode 100644
+index 000000000..c38d87219
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-wifi.dtso
+@@ -0,0 +1,38 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Samsung Galaxy A52s 5G: WCN6750 Wi-Fi through upstream ath11k (AHB) on the WPSS remoteproc.
++ *
++ * Applied by kbuild on top of the base tree (sm7325-samsung-a52sxq-wifi.dtb = base + this);
++ * the base, panel and GPU trees keep WPSS and wifi disabled. Both drivers are modules
++ * (qcom_q6v5_pas, ath11k_ahb), so nothing here runs before they are loaded from the shell, and
++ * WPSS is not auto-booted (sc7280 wpss resource: auto_boot = false): ath11k_ahb boots it.
++ *
++ * Checked against the phone's own 5.4 tree (downstream-dt/a52sxq-r02.dts):
++ * - WPSS (qcom,wpss@8a00000, qcom,pil-tz-generic): PAS id 6, SSCTL instance 0x19, minidump id 4,
++ *   carveout wlan@9ae00000 + 0x1900000, IRQ wdog SPI 587, smp2p in 0/1/2/3/7, force-stop smp2p
++ *   out 0, xo + CX/MX proxy votes: kodiak.dtsi remoteproc_wpss + qcom_q6v5_pas sc7280 data
++ *   already match. firmware-name = the bare split image "wpss.mdt" (+ .b00..b07), resolved in
++ *   the phone's own mounted apnhlos (firmware_class.path): the rollback-5 set its TZ accepts
++ *   (TrustZone anti-rollback), never a linux-firmware or another phone's copy.
++ * - WLAN (qcom,wcn6750 = icnss2): msi_addr 0x17a10040, SMMU SID 0x1c00 mask 0x1, IRQs SPI
++ *   768..799 (0x300..0x31f) rising, MSA region wlan_fw@80c00000 + 0xc00000, smp2p "wlan" out:
++ *   kodiak.dtsi wifi node matches. No wifi-firmware subnode: ath11k then leaves the MSA
++ *   region to TZ (use_tz), as on the Fairphone 5.
++ * - The WCN6750 rails (downstream vdd-cx-mx = S7B, vdd-1.8-xo = S1B, vdd-1.3-rfa = S8B) are
++ *   pinned in the base tree; ath11k takes no supplies (WPSS/RPMh own them).
++ * - Board data: ath11k reads ath11k/WCN6750/hw1.0/board.bin (api 1 fallback) and regdb.bin;
++ *   at run time these are symlinks to the phone's own vendor bdwlan.elf / regdb.bin
++ *   (patches/mainline-7.3/m4wifi.sh, hash-checked), nothing in the ramdisk.
++ */
++
++/dts-v1/;
++/plugin/;
++
++&remoteproc_wpss {
++	firmware-name = "wpss.mdt";
++	status = "okay";
++};
++
++&wifi {
++	status = "okay";
++};

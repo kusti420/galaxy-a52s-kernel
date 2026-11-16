@@ -1,0 +1,93 @@
+From 236787e2b2511e03e1df968faecb118221eb8ad2 Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Mon, 16 Nov 2026 19:16:09 +0200
+Subject: [PATCH 15/17] arm64: dts: qcom: sm7325-samsung-a52sxq: add Adreno
+ 642L GPU overlay
+
+Enable the Adreno 642L (chip id 0x06030500, qcom,adreno-635.0) and its GMU
+as an overlay on top of the panel overlay (sm7325-samsung-a52sxq-gpu.dtb):
+with MDSS enabled the GPU is a component of the msm DRM device.
+
+The zap shader uses the bare firmware-name a660_zap.mdt (the phone's own
+split image), the carveout is kodiak's gpu_zap_mem (= downstream
+pil_gpu_micro_code_mem). The OPPs of the phone's speed bin (117:
+315/450/550 MHz) get the downstream LPDDR4X DDR votes instead of kodiak's
+LPDDR5 numbers.
+---
+ arch/arm64/boot/dts/qcom/Makefile             |  2 +
+ .../dts/qcom/sm7325-samsung-a52sxq-gpu.dtso   | 53 +++++++++++++++++++
+ 2 files changed, 55 insertions(+)
+ create mode 100644 arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-gpu.dtso
+
+diff --git a/arch/arm64/boot/dts/qcom/Makefile b/arch/arm64/boot/dts/qcom/Makefile
+index a96e481b0..8ce39b303 100644
+--- a/arch/arm64/boot/dts/qcom/Makefile
++++ b/arch/arm64/boot/dts/qcom/Makefile
+@@ -361,6 +361,8 @@ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-nothing-spacewar.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq.dtb
+ sm7325-samsung-a52sxq-panel-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sxq-panel.dtbo
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-panel.dtb
++sm7325-samsung-a52sxq-gpu-dtbs	:= sm7325-samsung-a52sxq.dtb sm7325-samsung-a52sxq-panel.dtbo sm7325-samsung-a52sxq-gpu.dtbo
++dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-samsung-a52sxq-gpu.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm7325-xiaomi-taoyao.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-hdk.dtb
+ dtb-$(CONFIG_ARCH_QCOM)	+= sm8150-microsoft-surface-duo.dtb
+diff --git a/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-gpu.dtso b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-gpu.dtso
+new file mode 100644
+index 000000000..a51608ff5
+--- /dev/null
++++ b/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-gpu.dtso
+@@ -0,0 +1,53 @@
++// SPDX-License-Identifier: BSD-3-Clause
++/*
++ * Samsung Galaxy A52s 5G: Adreno 642L GPU (chip id 0x06030500, "qcom,adreno-635.0") + GMU.
++ *
++ * Applied by kbuild on top of the panel overlay (sm7325-samsung-a52sxq-gpu.dtb = base + panel
++ * + this): with MDSS enabled the GPU is a component of the msm DRM device, so nothing of it
++ * binds before the panel module is loaded from the shell; the base and panel trees stay as
++ * they are.
++ *
++ * Checked against the phone's own 5.4 tree (downstream-dt/a52sxq-r02.dts, qcom,kgsl-3d0,
++ * qcom,gmu, qcom,kgsl-hyp, kgsl-smmu):
++ * - registers, IRQs (GPU 300, GMU 304/305), SMMU stream ids (GPU 0/1 + 0x400 mask, GMU 5),
++ *   clocks, GDSCs and the gem_noc -> EBI1 path: kodiak.dtsi already matches.
++ * - zap shader: PAS id 13 (= drm/msm's fixed id), carveout 0x8b71a000 + 0x2000 = downstream
++ *   pil_gpu_micro_code_mem = kodiak's gpu_zap_mem. The image is the phone's own split
++ *   a660_zap.mdt (+ .b00..b02) from its mounted apnhlos (firmware_class.path), never a
++ *   linux-firmware or another phone's copy (TrustZone anti-rollback: a foreign image can raise the counter).
++ * - no regulators: GX/CX are the gpucc GDSCs (downstream vdd/vddcx-supply = the same GDSCs),
++ *   GX voltage is voted by the GMU through RPMh. Nothing to pin.
++ * - speed bin: the fuse at qfprom 0x1e9 bits 5..12 is 0x75 (117) on this phone: 6.18 KGSL runs
++ *   550 / 450 / 315 MHz (downstream qcom,gpu-pwrlevels-2, speed-bin 0x75). drm/msm maps 117
++ *   to supported-hw bit 0 = kodiak's opp-315000000, opp-450000000, opp-550000000-0, with the
++ *   same RPMh levels as downstream (LOW_SVS 64, SVS 128, SVS_L1 192).
++ * - DDR votes: kodiak's opp-peak-kBps are LPDDR5 numbers of the Chromebook boards (the 2133 MHz
++ *   step does not exist on this phone's LPDDR4X, ddr_type 7). Replaced by the downstream
++ *   default vote of each level (qcom,bus-freq-ddr7 index into qcom,bus-table-ddr7, kBps):
++ *   315 MHz idx 3 = 2136718, 450 MHz idx 6 = 3972656, 550 MHz idx 9 = 6671875.
++ */
++
++/dts-v1/;
++/plugin/;
++
++&gpu {
++	status = "okay";
++};
++
++&gpu_zap_shader {
++	firmware-name = "a660_zap.mdt";
++};
++
++&gpu_opp_table {
++	opp-315000000 {
++		opp-peak-kBps = <2136718>;
++	};
++
++	opp-450000000 {
++		opp-peak-kBps = <3972656>;
++	};
++
++	opp-550000000-0 {
++		opp-peak-kBps = <6671875>;
++	};
++};

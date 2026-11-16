@@ -1,7 +1,7 @@
 From 4b14b48409fa669313d29cc12427f9cade9153b9 Mon Sep 17 00:00:00 2001
 From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 21:05:34 +0200
-Subject: [PATCH 10/10] arm64: dts: qcom: sm7325-samsung-a52sxq: add display
+Subject: [PATCH 10/17] arm64: dts: qcom: sm7325-samsung-a52sxq: add display
  overlay (DSI0 + S6E3FC3)
 
 MDSS, DSI0 (vdda L6B 1.2 V), DSI PHY (vdds L10C 0.88 V) and the

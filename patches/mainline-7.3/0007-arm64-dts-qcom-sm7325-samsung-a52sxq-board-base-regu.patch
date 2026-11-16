@@ -1,7 +1,7 @@
 From 7f9a3107e51cec896e0de9bc33ec210762761686 Mon Sep 17 00:00:00 2001
 From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 18:52:44 +0200
-Subject: [PATCH 07/10] arm64: dts: qcom: sm7325-samsung-a52sxq: board base
+Subject: [PATCH 07/17] arm64: dts: qcom: sm7325-samsung-a52sxq: board base
  (regulators, ADC, thermal, hall, vibrator, SD, ADSP/CDSP, L3)
 
 - every downstream VRM rail with an init voltage on the mainline grid, pinned

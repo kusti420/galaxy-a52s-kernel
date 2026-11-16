@@ -1,7 +1,7 @@
 From 51c41d203c9f53047818a5b8be938c54c9082207 Mon Sep 17 00:00:00 2001
 From: a52sxq-kernel <a52sxq-kernel@example.invalid>
 Date: Sun, 15 Nov 2026 21:05:33 +0200
-Subject: [PATCH 08/10] dt-bindings: display: panel: add Samsung S6E3FC3
+Subject: [PATCH 08/17] dt-bindings: display: panel: add Samsung S6E3FC3
 
 The Samsung S6E3FC3 is an AMOLED DDIC driven over 4-lane MIPI DSI in
 command mode with DSC 1.1. It is paired with the 6.46" 1080x2400

@@ -1,0 +1,717 @@
+From 1634cdefb86e996e05edc7646f1ab546adc180cd Mon Sep 17 00:00:00 2001
+From: a52sxq-kernel <a52sxq-kernel@example.invalid>
+Date: Mon, 16 Nov 2026 18:23:12 +0200
+Subject: [PATCH 12/17] Input: add ST FingerTip 5 (FTS5) touchscreen driver
+
+Driver for the STMicroelectronics FTS5CU56A as used in the Samsung
+Galaxy A52s 5G. The upstream stmfts driver speaks the FingerTip 4
+protocol (0x85/0x86 event reads, event id in byte 0) and does not work
+with this part.
+
+The power-on sequence follows the vendor driver: system reset through
+a register write (there is no reset line), wait for the controller
+ready event, read the firmware version and device id, select the touch
+types, run the RAM-only forced calibration, clear the event FIFO and
+start mutual + self sensing, each command checked against its echo
+event. Events are read from the FIFO with plain I2C transfers (more
+than 32 bytes at once, which SMBus block reads cannot do) and reported
+as type-B multitouch with palm as MT_TOOL_PALM.
+
+Based on the woa-a52s stmfts_fts5cu56a driver and Samsung's FTS5
+driver. There is no firmware update path: the IC keeps the firmware it
+has in flash. The identity read at probe is printed and exported in
+sysfs (chip_id, fw_version, config_version, main_version).
+---
+ drivers/input/touchscreen/Kconfig   |  12 +
+ drivers/input/touchscreen/Makefile  |   1 +
+ drivers/input/touchscreen/stmfts5.c | 646 ++++++++++++++++++++++++++++
+ 3 files changed, 659 insertions(+)
+ create mode 100644 drivers/input/touchscreen/stmfts5.c
+
+diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
+index 5810b1d45..ea6919e07 100644
+--- a/drivers/input/touchscreen/Kconfig
++++ b/drivers/input/touchscreen/Kconfig
+@@ -1251,6 +1251,18 @@ config TOUCHSCREEN_STMFTS
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called stmfts.
+ 
++config TOUCHSCREEN_STMFTS5
++	tristate "STMicroelectronics FingerTip 5 (FTS5) touchscreen"
++	depends on I2C
++	help
++	  Say Y here if you have a STMicroelectronics FingerTip 5
++	  touchscreen controller such as the FTS5CU56A (Samsung Galaxy
++	  A52s 5G). The older FingerTip parts are handled by the
++	  TOUCHSCREEN_STMFTS driver.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called stmfts5.
++
+ config TOUCHSCREEN_STMPE
+ 	tristate "STMicroelectronics STMPE touchscreens"
+ 	depends on MFD_STMPE
+diff --git a/drivers/input/touchscreen/Makefile b/drivers/input/touchscreen/Makefile
+index 153dc1b7c..7763a0d3c 100644
+--- a/drivers/input/touchscreen/Makefile
++++ b/drivers/input/touchscreen/Makefile
+@@ -82,6 +82,7 @@ obj-$(CONFIG_TOUCHSCREEN_SILEAD)	+= silead.o
+ obj-$(CONFIG_TOUCHSCREEN_SIS_I2C)	+= sis_i2c.o
+ obj-$(CONFIG_TOUCHSCREEN_ST1232)	+= st1232.o
+ obj-$(CONFIG_TOUCHSCREEN_STMFTS)	+= stmfts.o
++obj-$(CONFIG_TOUCHSCREEN_STMFTS5)	+= stmfts5.o
+ obj-$(CONFIG_TOUCHSCREEN_STMPE)		+= stmpe-ts.o
+ obj-$(CONFIG_TOUCHSCREEN_SUN4I)		+= sun4i-ts.o
+ obj-$(CONFIG_TOUCHSCREEN_SUR40)		+= sur40.o
+diff --git a/drivers/input/touchscreen/stmfts5.c b/drivers/input/touchscreen/stmfts5.c
+new file mode 100644
+index 000000000..59a31a707
+--- /dev/null
++++ b/drivers/input/touchscreen/stmfts5.c
+@@ -0,0 +1,646 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * STMicroelectronics FingerTip 5 (FTS5) touchscreen controller, e.g. FTS5CU56A
++ *
++ * The FTS5 generation speaks a different command set from the FTS4 parts handled by stmfts.c
++ * (read events with 0x60/0x61 instead of 0x85/0x86, system reset through a register write,
++ * 16-byte events with the event class in the low two bits of byte 0, command echoes).
++ *
++ * Based on the woa-a52s stmfts_fts5cu56a driver and on Samsung's FTS5 driver for the
++ * Galaxy A52s (drivers/input/sec_input/stm). Only the plain touchscreen function is
++ * supported: no firmware update, no calibration data writes to the IC's flash, no
++ * low-power gestures. The firmware already in the IC is used as it is.
++ */
++
++#include <linux/bits.h>
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/input.h>
++#include <linux/input/mt.h>
++#include <linux/input/touchscreen.h>
++#include <linux/interrupt.h>
++#include <linux/module.h>
++#include <linux/mod_devicetable.h>
++#include <linux/mutex.h>
++#include <linux/regulator/consumer.h>
++#include <linux/slab.h>
++
++#define FTS5_CMD_SENSE_OFF		0x11
++#define FTS5_CMD_FORCE_CALIBRATION	0x13
++#define FTS5_READ_DEVICE_ID		0x22
++#define FTS5_READ_FW_VERSION		0x24
++#define FTS5_CMD_SET_TOUCH_TYPE		0x30
++#define FTS5_READ_ONE_EVENT		0x60
++#define FTS5_READ_ALL_EVENT		0x61
++#define FTS5_CMD_CLEAR_ALL_EVENT	0x62
++#define FTS5_CMD_SCAN_MODE		0xa0
++#define FTS5_CMD_REG			0xfa	/* register write, and read over I2C */
++
++#define FTS5_SCAN_MODE_OFF		0x00
++#define FTS5_SCAN_MODE_MS_SS		0x01	/* mutual + self sense */
++
++/* touch types reported (0x30): finger, palm, wet finger, as the vendor driver sets */
++#define FTS5_TOUCH_TYPE_DEFAULT		(BIT(0) | BIT(5) | BIT(6))
++
++#define FTS5_EVENT_SIZE			16
++#define FTS5_FIFO_MAX			31
++#define FTS5_DEVICE_ID_SIZE		5
++#define FTS5_VERSION_SIZE		9
++#define FTS5_MAX_FINGERS		10
++#define FTS5_MAX_COORD			4095	/* IC resolution on the A52s: 4096 x 4096 */
++
++/* byte 0 of every event: [1:0] event class, [5:2] type / touch id, [7:6] sub-field */
++#define FTS5_EV_CLASS(b)		((b) & 0x03)
++#define FTS5_EV_TYPE(b)			(((b) >> 2) & 0x0f)
++#define FTS5_EV_SUB(b)			(((b) >> 6) & 0x03)
++
++#define FTS5_EV_COORDINATE		0
++#define FTS5_EV_STATUS			1
++#define FTS5_EV_GESTURE			2
++#define FTS5_EV_VENDOR			3
++
++/* command echo: vendor class, sub 1, status id 0x01, then the first bytes of the command */
++#define FTS5_EV_ECHO_B0			0x43
++#define FTS5_EV_ECHO_B1			0x01
++#define FTS5_EV_ERROR_B0		0xf3
++
++/* coordinate event action (byte 0 [7:6]) */
++#define FTS5_ACTION_NONE		0
++#define FTS5_ACTION_PRESS		1
++#define FTS5_ACTION_MOVE		2
++#define FTS5_ACTION_RELEASE		3
++
++/* coordinate event touch type (byte 6 [7:6] << 2 | byte 7 [7:6]) */
++#define FTS5_TTYPE_NORMAL		0
++#define FTS5_TTYPE_HOVER		1
++#define FTS5_TTYPE_GLOVE		3
++#define FTS5_TTYPE_PALM			5
++#define FTS5_TTYPE_WET			6
++
++/* status event types (byte 0 [5:2]) and ids (byte 1) */
++#define FTS5_STATUS_ERROR		1
++#define FTS5_STATUS_INFO		2
++#define FTS5_ERROR_QUEUE_FULL		0x01
++#define FTS5_ERROR_ESD			0x02
++#define FTS5_INFO_READY			0x00
++
++#define FTS5_POLL_INTERVAL_MS		20
++#define FTS5_READY_TRIES		150	/* 3 s, as the vendor driver */
++#define FTS5_ECHO_TRIES			50
++
++enum fts5_supplies {
++	FTS5_SUPPLY_VDD,
++	FTS5_SUPPLY_AVDD,
++};
++
++struct fts5_data {
++	struct i2c_client *client;
++	struct input_dev *input;
++	struct touchscreen_properties prop;
++	struct regulator_bulk_data supplies[2];
++	/* serialises IC access between the event thread and power on/off */
++	struct mutex lock;
++	u8 *evbuf;			/* FTS5_FIFO_MAX events, kmalloc'ed: DMA safe */
++	bool running;
++
++	u32 chip_id;
++	u16 fw_ver;
++	u16 config_ver;
++	u16 main_ver;
++	u8 project_id;
++	u8 ic_name;
++	u8 module_ver;
++};
++
++static int fts5_read(struct fts5_data *fts, const u8 *cmd, u16 clen, u8 *buf, u16 len)
++{
++	struct i2c_msg msg[2] = {
++		{
++			.addr = fts->client->addr,
++			.len = clen,
++			.buf = (u8 *)cmd,
++		}, {
++			.addr = fts->client->addr,
++			.flags = I2C_M_RD,
++			.len = len,
++			.buf = buf,
++		},
++	};
++	int ret;
++
++	ret = i2c_transfer(fts->client->adapter, msg, ARRAY_SIZE(msg));
++	if (ret < 0)
++		return ret;
++
++	return ret == ARRAY_SIZE(msg) ? 0 : -EIO;
++}
++
++static int fts5_write(struct fts5_data *fts, const u8 *cmd, u16 len)
++{
++	int ret;
++
++	ret = i2c_master_send(fts->client, cmd, len);
++	if (ret < 0)
++		return ret;
++
++	return ret == len ? 0 : -EIO;
++}
++
++static int fts5_read_one_event(struct fts5_data *fts, u8 *ev)
++{
++	static const u8 cmd = FTS5_READ_ONE_EVENT;
++
++	return fts5_read(fts, &cmd, 1, ev, FTS5_EVENT_SIZE);
++}
++
++/* Poll the event FIFO for "controller ready" after a reset. IRQ must be disabled. */
++static int fts5_wait_ready(struct fts5_data *fts)
++{
++	struct device *dev = &fts->client->dev;
++	u8 *ev = fts->evbuf;
++	int i, ret;
++
++	for (i = 0; i < FTS5_READY_TRIES; i++) {
++		ret = fts5_read_one_event(fts, ev);
++		if (ret)
++			return ret;
++
++		if (FTS5_EV_CLASS(ev[0]) == FTS5_EV_STATUS &&
++		    FTS5_EV_TYPE(ev[0]) == FTS5_STATUS_INFO && ev[1] == FTS5_INFO_READY) {
++			dev_dbg(dev, "ready %8ph\n", ev);
++			return 0;
++		}
++
++		if (ev[0] == 0xff && ev[1] == 0xff && ev[2] == 0xff) {
++			dev_err(dev, "no firmware running (%8ph)\n", ev);
++			return -ENODEV;
++		}
++
++		if (ev[0] == FTS5_EV_ERROR_B0)
++			dev_warn(dev, "error event while waiting for ready: %8ph\n", ev);
++
++		msleep(FTS5_POLL_INTERVAL_MS);
++	}
++
++	dev_err(dev, "controller not ready, last event %8ph\n", ev);
++	return -ETIMEDOUT;
++}
++
++/* Send a command and wait for its echo event. IRQ must be disabled. */
++static int fts5_command(struct fts5_data *fts, const u8 *cmd, u16 len, unsigned int delay_ms)
++{
++	struct device *dev = &fts->client->dev;
++	u16 cmp = min_t(u16, len, 4);
++	u8 *ev = fts->evbuf;
++	int i, ret;
++
++	ret = fts5_write(fts, cmd, len);
++	if (ret)
++		return ret;
++
++	msleep(delay_ms ?: 5);
++
++	for (i = 0; i < FTS5_ECHO_TRIES; i++) {
++		ret = fts5_read_one_event(fts, ev);
++		if (ret)
++			return ret;
++
++		if (ev[0] == FTS5_EV_ECHO_B0 && ev[1] == FTS5_EV_ECHO_B1 &&
++		    !memcmp(&ev[2], cmd, cmp))
++			return 0;
++
++		if (ev[0] == FTS5_EV_ERROR_B0) {
++			dev_err(dev, "command %*ph: error event %8ph\n", len, cmd, ev);
++			return -EIO;
++		}
++
++		msleep(FTS5_POLL_INTERVAL_MS);
++	}
++
++	dev_err(dev, "command %*ph: no echo\n", len, cmd);
++	return -ETIMEDOUT;
++}
++
++static int fts5_system_reset(struct fts5_data *fts)
++{
++	static const u8 cmd[] = { FTS5_CMD_REG, 0x20, 0x00, 0x00, 0x24, 0x81 };
++	int ret;
++
++	ret = fts5_write(fts, cmd, sizeof(cmd));
++	if (ret)
++		return ret;
++
++	msleep(20);
++
++	return fts5_wait_ready(fts);
++}
++
++static int fts5_read_info(struct fts5_data *fts)
++{
++	static const u8 crc_cmd[] = { FTS5_CMD_REG, 0x20, 0x00, 0x00, 0x78 };
++	static const u8 ver_cmd = FTS5_READ_FW_VERSION;
++	static const u8 id_cmd = FTS5_READ_DEVICE_ID;
++	struct device *dev = &fts->client->dev;
++	u8 *buf = fts->evbuf;
++	int ret;
++
++	ret = fts5_read(fts, crc_cmd, sizeof(crc_cmd), buf, 1);
++	if (ret)
++		return ret;
++	if (buf[0] & 0x03)
++		dev_warn(dev, "firmware CRC status %#04x: flash image damaged\n", buf[0]);
++
++	ret = fts5_read(fts, &ver_cmd, 1, buf, FTS5_VERSION_SIZE);
++	if (ret)
++		return ret;
++
++	fts->fw_ver = (buf[0] << 8) | buf[1];
++	fts->config_ver = (buf[2] << 8) | buf[3];
++	fts->main_ver = buf[4] | (buf[5] << 8);
++	fts->project_id = buf[6];
++	fts->ic_name = buf[7];
++	fts->module_ver = buf[8];
++
++	ret = fts5_read(fts, &id_cmd, 1, buf, FTS5_DEVICE_ID_SIZE);
++	if (ret)
++		return ret;
++
++	if (buf[0] != 'S' || buf[1] != 'T')
++		dev_warn(dev, "unexpected device id %5ph\n", buf);
++
++	fts->chip_id = (buf[2] << 16) | (buf[3] << 8) | buf[4];
++
++	return 0;
++}
++
++static void fts5_release_all(struct fts5_data *fts)
++{
++	int i;
++
++	for (i = 0; i < FTS5_MAX_FINGERS; i++) {
++		input_mt_slot(fts->input, i);
++		input_mt_report_slot_inactive(fts->input);
++	}
++	input_mt_sync_frame(fts->input);
++	input_sync(fts->input);
++}
++
++static void fts5_report_coordinate(struct fts5_data *fts, const u8 *ev)
++{
++	struct device *dev = &fts->client->dev;
++	unsigned int id = FTS5_EV_TYPE(ev[0]);
++	unsigned int action = FTS5_EV_SUB(ev[0]);
++	unsigned int x = (ev[1] << 4) | (ev[3] >> 4);
++	unsigned int y = (ev[2] << 4) | (ev[3] & 0x0f);
++	unsigned int ttype = ((ev[6] >> 6) << 2) | (ev[7] >> 6);
++	unsigned int z = ev[6] & 0x3f;
++	int tool;
++
++	if (action == FTS5_ACTION_NONE || id >= FTS5_MAX_FINGERS)
++		return;
++
++	input_mt_slot(fts->input, id);
++
++	if (action == FTS5_ACTION_RELEASE) {
++		input_mt_report_slot_inactive(fts->input);
++		dev_dbg(dev, "release %u at %u,%u\n", id, x, y);
++		return;
++	}
++
++	switch (ttype) {
++	case FTS5_TTYPE_NORMAL:
++	case FTS5_TTYPE_GLOVE:
++	case FTS5_TTYPE_WET:
++		tool = MT_TOOL_FINGER;
++		break;
++	case FTS5_TTYPE_PALM:
++		tool = MT_TOOL_PALM;
++		break;
++	default:
++		/* hover, cover, stylus, proximity, jig: not a touch on the panel */
++		input_mt_report_slot_inactive(fts->input);
++		dev_dbg(dev, "id %u: ignored touch type %u\n", id, ttype);
++		return;
++	}
++
++	input_mt_report_slot_state(fts->input, tool, true);
++	touchscreen_report_pos(fts->input, &fts->prop, x, y, true);
++	input_report_abs(fts->input, ABS_MT_TOUCH_MAJOR, ev[4]);
++	input_report_abs(fts->input, ABS_MT_TOUCH_MINOR, ev[5]);
++	input_report_abs(fts->input, ABS_MT_PRESSURE, z ?: 1);
++
++	dev_dbg(dev, "%s %u at %u,%u major %u minor %u z %u type %u\n",
++		action == FTS5_ACTION_PRESS ? "press" : "move", id, x, y, ev[4], ev[5], z, ttype);
++}
++
++static void fts5_report_status(struct fts5_data *fts, const u8 *ev)
++{
++	struct device *dev = &fts->client->dev;
++	unsigned int type = FTS5_EV_TYPE(ev[0]);
++
++	if (type == FTS5_STATUS_ERROR && ev[1] == FTS5_ERROR_ESD)
++		dev_warn_ratelimited(dev, "ESD event %8ph\n", ev);
++	else if (type == FTS5_STATUS_ERROR && ev[1] == FTS5_ERROR_QUEUE_FULL)
++		dev_warn_ratelimited(dev, "event queue full\n");
++	else if (type == FTS5_STATUS_INFO && ev[1] == FTS5_INFO_READY)
++		dev_warn_ratelimited(dev, "controller reset by itself (%8ph)\n", ev);
++	else
++		dev_dbg(dev, "status %8ph\n", ev);
++}
++
++static irqreturn_t fts5_irq(int irq, void *dev_id)
++{
++	static const u8 all_cmd = FTS5_READ_ALL_EVENT;
++	struct fts5_data *fts = dev_id;
++	struct device *dev = &fts->client->dev;
++	u8 *ev = fts->evbuf;
++	int left, i, ret;
++
++	mutex_lock(&fts->lock);
++
++	if (!fts->running)
++		goto out;
++
++	ret = fts5_read_one_event(fts, ev);
++	if (ret) {
++		dev_err_ratelimited(dev, "event read failed: %d\n", ret);
++		goto out;
++	}
++
++	left = min_t(int, ev[7] & 0x1f, FTS5_FIFO_MAX - 1);
++	if (left) {
++		ret = fts5_read(fts, &all_cmd, 1, ev + FTS5_EVENT_SIZE, left * FTS5_EVENT_SIZE);
++		if (ret) {
++			dev_err_ratelimited(dev, "read of %d more events failed: %d\n", left, ret);
++			left = 0;
++		}
++	}
++
++	for (i = 0; i <= left; i++, ev += FTS5_EVENT_SIZE) {
++		switch (FTS5_EV_CLASS(ev[0])) {
++		case FTS5_EV_COORDINATE:
++			fts5_report_coordinate(fts, ev);
++			break;
++		case FTS5_EV_STATUS:
++			fts5_report_status(fts, ev);
++			break;
++		default:
++			dev_dbg(dev, "event %16ph\n", ev);
++			break;
++		}
++	}
++
++	input_mt_sync_frame(fts->input);
++	input_sync(fts->input);
++
++out:
++	mutex_unlock(&fts->lock);
++	return IRQ_HANDLED;
++}
++
++static int fts5_power_on(struct fts5_data *fts)
++{
++	static const u8 touch_type[] = {
++		FTS5_CMD_SET_TOUCH_TYPE,
++		FTS5_TOUCH_TYPE_DEFAULT & 0xff,
++		FTS5_TOUCH_TYPE_DEFAULT >> 8,
++	};
++	static const u8 calibrate[] = { FTS5_CMD_FORCE_CALIBRATION };
++	static const u8 clear[] = { FTS5_CMD_CLEAR_ALL_EVENT };
++	static const u8 scan_on[] = { FTS5_CMD_SCAN_MODE, 0x00, FTS5_SCAN_MODE_MS_SS };
++	struct device *dev = &fts->client->dev;
++	int ret;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(fts->supplies), fts->supplies);
++	if (ret)
++		return ret;
++
++	/* vendor driver: 35 ms from power on to the first command */
++	msleep(35);
++
++	mutex_lock(&fts->lock);
++
++	ret = fts5_system_reset(fts);
++	if (ret) {
++		dev_err(dev, "system reset failed: %d\n", ret);
++		goto err;
++	}
++
++	ret = fts5_read_info(fts);
++	if (ret) {
++		dev_err(dev, "reading chip info failed: %d\n", ret);
++		goto err;
++	}
++
++	/*
++	 * Same order as the vendor driver at every power on. The forced calibration only
++	 * re-tunes the analog front end in RAM; nothing is written to the IC's flash.
++	 */
++	ret = fts5_command(fts, touch_type, sizeof(touch_type), 0);
++	if (!ret)
++		ret = fts5_command(fts, calibrate, sizeof(calibrate), 100);
++	if (!ret)
++		ret = fts5_command(fts, clear, sizeof(clear), 100);
++	if (!ret)
++		ret = fts5_command(fts, scan_on, sizeof(scan_on), 20);
++	if (ret)
++		goto err;
++
++	fts->running = true;
++	mutex_unlock(&fts->lock);
++
++	enable_irq(fts->client->irq);
++
++	return 0;
++
++err:
++	mutex_unlock(&fts->lock);
++	regulator_bulk_disable(ARRAY_SIZE(fts->supplies), fts->supplies);
++	return ret;
++}
++
++static void fts5_power_off(struct fts5_data *fts)
++{
++	static const u8 sense_off = FTS5_CMD_SENSE_OFF;
++	int ret;
++
++	disable_irq(fts->client->irq);
++
++	mutex_lock(&fts->lock);
++	fts->running = false;
++	ret = fts5_write(fts, &sense_off, 1);
++	if (ret)
++		dev_warn(&fts->client->dev, "sense off failed: %d\n", ret);
++	fts5_release_all(fts);
++	mutex_unlock(&fts->lock);
++
++	regulator_bulk_disable(ARRAY_SIZE(fts->supplies), fts->supplies);
++}
++
++static void fts5_power_off_action(void *data)
++{
++	fts5_power_off(data);
++}
++
++static ssize_t chip_id_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct fts5_data *fts = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%#08x\n", fts->chip_id);
++}
++static DEVICE_ATTR_RO(chip_id);
++
++static ssize_t fw_version_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct fts5_data *fts = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%#06x\n", fts->fw_ver);
++}
++static DEVICE_ATTR_RO(fw_version);
++
++static ssize_t config_version_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct fts5_data *fts = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%#06x\n", fts->config_ver);
++}
++static DEVICE_ATTR_RO(config_version);
++
++static ssize_t main_version_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct fts5_data *fts = dev_get_drvdata(dev);
++
++	return sysfs_emit(buf, "%#06x\n", fts->main_ver);
++}
++static DEVICE_ATTR_RO(main_version);
++
++static struct attribute *fts5_attrs[] = {
++	&dev_attr_chip_id.attr,
++	&dev_attr_fw_version.attr,
++	&dev_attr_config_version.attr,
++	&dev_attr_main_version.attr,
++	NULL
++};
++ATTRIBUTE_GROUPS(fts5);
++
++static int fts5_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct fts5_data *fts;
++	int ret;
++
++	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
++		return -ENODEV;
++
++	fts = devm_kzalloc(dev, sizeof(*fts), GFP_KERNEL);
++	if (!fts)
++		return -ENOMEM;
++
++	fts->evbuf = devm_kzalloc(dev, FTS5_FIFO_MAX * FTS5_EVENT_SIZE, GFP_KERNEL);
++	if (!fts->evbuf)
++		return -ENOMEM;
++
++	fts->client = client;
++	i2c_set_clientdata(client, fts);
++
++	ret = devm_mutex_init(dev, &fts->lock);
++	if (ret)
++		return ret;
++
++	fts->supplies[FTS5_SUPPLY_VDD].supply = "vdd";
++	fts->supplies[FTS5_SUPPLY_AVDD].supply = "avdd";
++	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(fts->supplies), fts->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to get supplies\n");
++
++	fts->input = devm_input_allocate_device(dev);
++	if (!fts->input)
++		return -ENOMEM;
++
++	fts->input->name = "STM FTS5 touchscreen";
++	fts->input->phys = "input/ts";
++	fts->input->id.bustype = BUS_I2C;
++
++	input_set_abs_params(fts->input, ABS_MT_POSITION_X, 0, FTS5_MAX_COORD, 0, 0);
++	input_set_abs_params(fts->input, ABS_MT_POSITION_Y, 0, FTS5_MAX_COORD, 0, 0);
++	input_set_abs_params(fts->input, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
++	input_set_abs_params(fts->input, ABS_MT_TOUCH_MINOR, 0, 255, 0, 0);
++	input_set_abs_params(fts->input, ABS_MT_PRESSURE, 0, 63, 0, 0);
++	input_set_abs_params(fts->input, ABS_MT_TOOL_TYPE, 0, MT_TOOL_MAX, 0, 0);
++	touchscreen_parse_properties(fts->input, true, &fts->prop);
++
++	ret = input_mt_init_slots(fts->input, FTS5_MAX_FINGERS, INPUT_MT_DIRECT);
++	if (ret)
++		return ret;
++
++	input_set_drvdata(fts->input, fts);
++
++	ret = devm_request_threaded_irq(dev, client->irq, NULL, fts5_irq,
++					IRQF_ONESHOT | IRQF_NO_AUTOEN, "stmfts5", fts);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to request irq\n");
++
++	ret = fts5_power_on(fts);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to power on\n");
++
++	ret = devm_add_action_or_reset(dev, fts5_power_off_action, fts);
++	if (ret)
++		return ret;
++
++	dev_info(dev, "chip %#08x fw %#06x config %#06x main %#06x project %#04x ic %#04x\n",
++		 fts->chip_id, fts->fw_ver, fts->config_ver, fts->main_ver,
++		 fts->project_id, fts->ic_name);
++
++	return input_register_device(fts->input);
++}
++
++static int fts5_suspend(struct device *dev)
++{
++	struct fts5_data *fts = dev_get_drvdata(dev);
++
++	if (fts->running)
++		fts5_power_off(fts);
++
++	return 0;
++}
++
++static int fts5_resume(struct device *dev)
++{
++	struct fts5_data *fts = dev_get_drvdata(dev);
++
++	if (fts->running)
++		return 0;
++
++	return fts5_power_on(fts);
++}
++
++static DEFINE_SIMPLE_DEV_PM_OPS(fts5_pm_ops, fts5_suspend, fts5_resume);
++
++static const struct of_device_id fts5_of_match[] = {
++	{ .compatible = "st,fts5cu56a" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, fts5_of_match);
++
++static const struct i2c_device_id fts5_id[] = {
++	{ "fts5cu56a" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, fts5_id);
++
++static struct i2c_driver fts5_driver = {
++	.driver = {
++		.name = "stmfts5",
++		.of_match_table = fts5_of_match,
++		.pm = pm_sleep_ptr(&fts5_pm_ops),
++		.dev_groups = fts5_groups,
++		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
++	},
++	.probe = fts5_probe,
++	.id_table = fts5_id,
++};
++module_i2c_driver(fts5_driver);
++
++MODULE_DESCRIPTION("STMicroelectronics FingerTip 5 (FTS5) touchscreen driver");
++MODULE_LICENSE("GPL");

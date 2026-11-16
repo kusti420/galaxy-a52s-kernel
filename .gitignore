@@ -67,3 +67,5 @@ modules.order
 /bsp618/android/out/
 /linux-7.3/
 /out-ml/
+release/*
+!release/oneui9-kernel.last

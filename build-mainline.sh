@@ -24,6 +24,12 @@ MAKE="make -C $TOP/linux-7.3 ARCH=arm64 LLVM=$CLANG/ O=$OUT DTC_FLAGS=-@ LOCALVE
 DTB=$OUT/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dtb
 # base + sm7325-samsung-a52sxq-panel.dtbo (MDSS/DSI0/S6E3FC3 panel): the M3 display test tree
 PANEL_DTB=$OUT/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-panel.dtb
+# base + panel + sm7325-samsung-a52sxq-gpu.dtbo (Adreno 642L + GMU + own zap): the M3 GPU test tree
+GPU_DTB=$OUT/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-gpu.dtb
+# base + sm7325-samsung-a52sxq-wifi.dtbo (WPSS remoteproc + WCN6750 ath11k): the M4 Wi-Fi test tree
+WIFI_DTB=$OUT/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-wifi.dtb
+# wifi tree + sm7325-samsung-a52sxq-bt.dtbo (QUP0 SE7 UART + WCN6750 Bluetooth): the M4 BT test tree
+BT_DTB=$OUT/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq-wifi-bt.dtb
 IMG=$OUT/arch/arm64/boot/Image
 HARNESS_DTB=$TOP/out-ack/arch/arm64/boot/dts/qcom/sm7325-samsung-a52sxq.dtb
 mkdir -p $OUT
@@ -60,7 +66,8 @@ hhwdt() { # modules/hhwdt built against this kernel, in a copy (modules/hhwdt ho
 EXTRA_KO="drivers/watchdog/gunyah_wdt.ko drivers/remoteproc/qcom_pil_info.ko drivers/remoteproc/qcom_common.ko
   drivers/remoteproc/qcom_q6v5.ko drivers/remoteproc/qcom_q6v5_pas.ko drivers/misc/fastrpc.ko
   drivers/mmc/host/sdhci-msm.ko drivers/input/misc/gpio-vibra.ko ext/epssdump/epssdump.ko ext/mdpdump/mdpdump.ko
-  drivers/gpu/drm/panel/panel-samsung-s6e3fc3.ko"
+  drivers/gpu/drm/panel/panel-samsung-s6e3fc3.ko drivers/input/touchscreen/stmfts5.ko
+  drivers/net/wireless/ath/ath11k/ath11k_ahb.ko drivers/bluetooth/btqca.ko drivers/bluetooth/hci_uart.ko"
 
 checks() {
   fail() { echo "CHECK FAILED: $*" >&2; exit 1; }
@@ -206,6 +213,12 @@ if bad:
 print(f"ok   panel dtb: L8C {want['panel_vddi'][0]} uV / L13C {want['panel_vci'][0]} uV = downstream panel supply "
       f"entries (not the init voltages), base tree without them, DSI0 4 lanes + S6E3FC3, simple-framebuffer kept")
 EOF
+  # touch (M3): FTS5CU56A on I2C13, address / attention GPIO / AVDD rail as downstream
+  python3 tools/check-touch-dt.py $DTB || fail "touch device tree checks"
+  # Wi-Fi (M4): WPSS + wifi only in the wifi tree, values against the downstream WPSS / icnss2 nodes
+  python3 tools/check-wifi-dt.py $DTB $WIFI_DTB || fail "Wi-Fi device tree checks"
+  # GPU (M3 part 3): gpu tree = panel tree + GPU, values against the downstream kgsl nodes
+  python3 tools/check-gpu-dt.py $DTB $PANEL_DTB $GPU_DTB || fail "GPU device tree checks"
 }
 
 payload() {
@@ -218,21 +231,25 @@ payload() {
     cp $OUT/$k $OUT/rd-extra/
   done
   # static helpers (tools/*.c, no libc): ffbuzz plays one force-feedback effect (vibrator test),
-  # frpcattach attaches to a DSP guest-OS PD over FastRPC (first SMMU compute-CB use)
-  for t in ffbuzz frpcattach; do [ -f tools/$t ] && cp tools/$t $OUT/rd-extra/; done
-  cp patches/mainline-7.3/m2up.sh patches/mainline-7.3/m2check.sh $OUT/rd-extra/
+  # frpcattach attaches to a DSP guest-OS PD over FastRPC (first SMMU compute-CB use),
+  # i2cpoke writes raw I2C bytes (touch IRQ self-test), evcount decodes input_event captures
+  # gputest runs CP_MEM_WRITE submits through drm/msm (GPU test, no Mesa)
+  for t in ffbuzz frpcattach i2cpoke evcount gputest nlscan bthci; do [ -f tools/$t ] && cp tools/$t $OUT/rd-extra/; done
+  cp patches/mainline-7.3/m2up.sh patches/mainline-7.3/m2check.sh patches/mainline-7.3/m3touch.sh patches/mainline-7.3/m3gpu.sh patches/mainline-7.3/m4wifi.sh patches/mainline-7.3/m4bt.sh $OUT/rd-extra/
   [ -f ramdisk/extra/rb.prev ] && cp ramdisk/extra/rb.prev $OUT/rd-extra/
   OUT_RD=$OUT/ramdisk-ml.cpio.gz HHWDT=$OUT/ext/hhwdt/hhwdt.ko EXTRA_DIR=$OUT/rd-extra ./mkramdisk.sh >/dev/null
   zcat $OUT/ramdisk-ml.cpio.gz | cpio -it --quiet | sed "s|^\./||" > $OUT/ramdisk-ml.list
-  for f in init leave kexec-run kx rb hhwdt.ko bin/busybox extra/m2up.sh extra/m2check.sh extra/ffbuzz extra/frpcattach $(for k in $EXTRA_KO; do echo extra/${k##*/}; done); do
+  for f in init leave kexec-run kx rb hhwdt.ko bin/busybox extra/m2up.sh extra/m2check.sh extra/m3touch.sh extra/m3gpu.sh extra/m4wifi.sh extra/m4bt.sh extra/ffbuzz extra/frpcattach extra/i2cpoke extra/evcount extra/gputest extra/nlscan extra/bthci $(for k in $EXTRA_KO; do echo extra/${k##*/}; done); do
     grep -qx "$f" $OUT/ramdisk-ml.list || { echo "CHECK FAILED: ramdisk lacks $f" >&2; exit 1; }
   done
   # firmware only ever comes from the phone's own mounted apnhlos (firmware_class.path): the
   # ramdisk carries no firmware directory, and every firmware-name in the dtb is a bare file name
   grep -q -E '^(lib/firmware|vendor/firmware)' $OUT/ramdisk-ml.list && { echo "CHECK FAILED: ramdisk carries firmware" >&2; exit 1; }
-  FWN=$(dtc -I dtb -O dts $DTB 2>/dev/null | grep -o 'firmware-name = [^;]*' | grep -v '= "[^/"]*"$' || true)
-  [ -z "$FWN" ] || { echo "CHECK FAILED: firmware-name with a path: $FWN" >&2; exit 1; }
-  echo "ok   firmware: none in the ramdisk; dtb firmware-names $(dtc -I dtb -O dts $DTB 2>/dev/null | grep -o 'firmware-name = "[^"]*"' | cut -d'"' -f2 | tr '\n' ' ')(bare, resolved in the own apnhlos)"
+  for t in $DTB $PANEL_DTB $GPU_DTB $WIFI_DTB $BT_DTB; do
+    FWN=$(dtc -I dtb -O dts $t 2>/dev/null | grep -o 'firmware-name = [^;]*' | grep -v '= "[^/"]*"$' || true)
+    [ -z "$FWN" ] || { echo "CHECK FAILED: firmware-name with a path in ${t##*/}: $FWN" >&2; exit 1; }
+  done
+  echo "ok   firmware: none in the ramdisk; firmware-names $(dtc -I dtb -O dts $GPU_DTB 2>/dev/null | grep -o 'firmware-name = "[^"]*"' | cut -d'"' -f2 | tr '\n' ' ')(bare, resolved in the own apnhlos; SQE/GMU from the own vendor at run time)"
   # the 7.3 hhwdt.ko must carry this kernel's vermagic
   VM=$(modinfo -F vermagic $OUT/ext/hhwdt/hhwdt.ko)
   KR=$(cat $OUT/include/config/kernel.release)
@@ -250,7 +267,7 @@ payload() {
 
 summary() {
   echo "== artefacts"
-  for f in $IMG $DTB $PANEL_DTB $OUT/ramdisk-ml.cpio.gz $OUT/kx/kexec-dryrun.dtb $OUT/ext/hhwdt/hhwdt.ko $OUT/drivers/watchdog/gunyah_wdt.ko; do
+  for f in $IMG $DTB $PANEL_DTB $GPU_DTB $WIFI_DTB $BT_DTB $OUT/ramdisk-ml.cpio.gz $OUT/kx/kexec-dryrun.dtb $OUT/ext/hhwdt/hhwdt.ko $OUT/drivers/watchdog/gunyah_wdt.ko; do
     [ -f $f ] && echo "$(sha256sum $f | cut -c1-64)  $(stat -c %s $f)  ${f#$TOP/}"
   done
   echo "kernel release: $(cat $OUT/include/config/kernel.release)"
@@ -263,7 +280,7 @@ case "${1:-}" in
   *) $MAKE -j22 "$@"; exit 0;;
 esac
 [ -f $OUT/.config ] || config
-$MAKE -j22 Image qcom/sm7325-samsung-a52sxq.dtb qcom/sm7325-samsung-a52sxq-panel.dtb modules > $OUT/build.log 2>&1 || { tail -n 30 $OUT/build.log; exit 1; }
+$MAKE -j22 Image qcom/sm7325-samsung-a52sxq.dtb qcom/sm7325-samsung-a52sxq-panel.dtb qcom/sm7325-samsung-a52sxq-gpu.dtb qcom/sm7325-samsung-a52sxq-wifi.dtb qcom/sm7325-samsung-a52sxq-wifi-bt.dtb modules > $OUT/build.log 2>&1 || { tail -n 30 $OUT/build.log; exit 1; }
 hhwdt
 checks
 payload
