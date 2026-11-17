@@ -9064,9 +9064,13 @@ static int sec_usb_set_property(struct power_supply *psy,
 		conf = USB_CURRENT_HIGH_SPEED;
 	else if (ma >= 100)
 		conf = USB_CURRENT_UNCONFIGURED;
-	else if (ma > 0)
-		conf = USB_CURRENT_SUSPENDED;
 	else
+		/*
+		 * Host bus suspend (2 mA) or disconnect (0): keep the last configuration.
+		 * USB_CURRENT_SUSPENDED turns the charger buck OFF; with a sleeping PC
+		 * keeping VBUS up, the phone then drains on battery while showing
+		 * "Charging" (alpha4, 85% -> 28% overnight). Stock-like: keep charging.
+		 */
 		return 0;	/* 0 = gadget gone: cable detach is handled by the cable/PDIC path */
 	pr_info("%s: USB gadget vbus draw %d mA -> usb configure %d\n", __func__, ma, conf);
 	if (conf != battery->prev_usb_conf)
