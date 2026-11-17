@@ -697,7 +697,7 @@ PHASE=done
 cleanup
 if [ "$MODE" = install ]; then
 	ui_print "Done. Reboot to system: the first boot takes about 25 s to the lock screen."
-	ui_print "Rollback: flash a52s-lineage-stock-restore-twrp.zip."
+	ui_print "Rollback: flash your ROM's boot, vendor_boot and dtbo images (or the backup)."
 else
 	ui_print "Done. Reboot to system: the stock LineageOS 5.4 kernel is back."
 fi
