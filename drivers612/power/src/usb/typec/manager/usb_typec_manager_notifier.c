@@ -177,14 +177,14 @@ static void manager_event_notify(struct work_struct *data)
 					wVbus_time_update(typec_manager.water.wVbus_det);
 #endif
 				} else if (!is_hiccup_event_saved)
-					return;
+					goto out;	/* a52sxq: was return, leaked event_work */
 			}
 		}
 		break;
 	case PDIC_NOTIFY_DEV_USB:
 		if (event_work->event.sub2 == typec_manager.usb.notified_dr) {
 			pr_info("%s: Duplicate event(%s)\n", __func__, pdic_usbstatus_string(event_work->event.sub2));
-			return;
+			goto out;	/* a52sxq: was return, leaked event_work */
 		}
 		typec_manager.usb.notified_dr = event_work->event.sub2;
 		break;
@@ -239,6 +239,7 @@ static void manager_event_notify(struct work_struct *data)
 		break;
 	}
 
+out:
 	kfree(event_work);
 }
 

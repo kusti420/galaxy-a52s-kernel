@@ -809,6 +809,8 @@
 				virtual-addr-pool = <0x500000 0xdfb00000>;
 				buffer-types = <0x106>;
 				qcom,iommu-vmid = <0x0a>;
+				qcom,iova-max-align-shift = <0x09>;
+				qcom,iova-best-fit;
 				qcom,iommu-faults = "non-fatal";
 				memory-region = <0x589>;
 				iommus = <0x22 0x2183 0x00>;
@@ -822,6 +824,8 @@
 				virtual-addr-pool = <0x500000 0xdfb00000>;
 				buffer-types = <0x241>;
 				qcom,iommu-vmid = <0x09>;
+				qcom,iova-max-align-shift = <0x09>;
+				qcom,iova-best-fit;
 				qcom,iommu-faults = "non-fatal";
 				memory-region = <0x589>;
 				iommus = <0x22 0x2181 0x04>;
@@ -835,6 +839,8 @@
 				virtual-addr-pool = <0x1000000 0x24800000>;
 				buffer-types = <0x480>;
 				qcom,iommu-vmid = <0x0b>;
+				qcom,iova-max-align-shift = <0x09>;
+				qcom,iova-best-fit;
 				qcom,iommu-faults = "non-fatal";
 				memory-region = <0x589>;
 				iommus = <0x22 0x2184 0x20>;
@@ -846,6 +852,8 @@
 				phandle = <0x584>;
 				virtual-addr-pool = <0x25800000 0xba800000>;
 				buffer-types = <0xfff>;
+				qcom,iova-max-align-shift = <0x09>;
+				qcom,iova-best-fit;
 				qcom,iommu-faults = "non-fatal";
 				memory-region = <0x589>;
 				iommus = <0x22 0x2180 0x20>;

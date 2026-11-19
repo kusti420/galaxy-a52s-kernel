@@ -29,6 +29,15 @@ against `bsp612/out/lahaina` (GKI 6.12.81 + soc-repo r70) only.
   2. `0002` `governor_msm_adreno_tz.c`: `#include <linux/of.h>` (build fix).
   3. `0003` 5.4 copy semantics for old libgsl (below).
   4. `0004` `/sys/kernel/gpu/gpu_governor` and `gpu_available_governor` (below).
+  5. `0005` `kgsl_pool.c`: parse `qcom,gpu-mempool` children in ascending
+     `qcom,mempool-page-size` order. The 6.x board tree lists them @3..@0, and the pool
+     fallback needs ascending order (reversed: -ENOMEM on a fragmented phone, black UI).
+  6. `0006` `kgsl.c`: the `A52_KGSL_ERRNO_DEBUG` errno hunks (off by default).
+  7. `0007` `kgsl_pwrctrl.c`: the PM QoS max-frequency notifier picks the fastest level at or
+     below the limit (5 MHz slack) instead of needing a match within 5 MHz. Before, a devfreq
+     `max_freq` write of 450 MHz followed by 560 MHz or the default left the GPU capped.
+  `src/` must always equal donor + `patches/`: a change made only in `src/` is lost by the
+  next `./prepare.sh`.
 - `a52sxq-gpu.dtsi` + `dt-verify.sh` (below). `uapi-compare/` (below). `test/` on-device test.
 
 ### Build

@@ -5926,8 +5926,7 @@ static void fod_enable(void *device_data)
 
 	if (!ts->plat_data->enabled && !ts->plat_data->lowpower_mode && !ts->plat_data->pocket_mode
 			&& !ts->plat_data->ed_enable && !ts->plat_data->fod_lp_mode) {
-		if (device_may_wakeup(&ts->client->dev) && ts->plat_data->power_state == SEC_INPUT_STATE_LPM)
-			disable_irq_wake(ts->client->irq);
+		/* a52sxq 6.12: stm_ts_stop_device() now drops the LPM irq wake itself */
 		ts->plat_data->stop_device(ts);
 	} else {
 		stm_ts_set_custom_library(ts);

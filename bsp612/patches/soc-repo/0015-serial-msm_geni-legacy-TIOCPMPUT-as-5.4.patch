@@ -1,0 +1,70 @@
+a52sxq: msm_geni_serial: legacy TIOCPMPUT never fails for RX in flight
+
+6.12 vote_clock_off() returns -EAGAIN and keeps the clock vote when RX is in flight (two
+100-150 us polls). The 5.4 driver only logged that and always dropped the vote. HALs built
+against 5.4 use the legacy number 0x544E (patch 0007) and do not retry, so a lost PUT left the
+UART clocks, the ICC votes and the geni_wake wakeup source held until the next full ON/OFF
+cycle. For the legacy number only: retry for up to ~20 ms, then drop the vote as 5.4 did
+(runtime suspend itself still refuses while a transfer is in flight). Callers of the 6.12
+ioctl number see no change. (audit 2026-11-18, low 22)
+
+--- a/drivers/tty/serial/msm_geni_serial.c
++++ b/drivers/tty/serial/msm_geni_serial.c
+@@ -1548,7 +1548,7 @@
+ 	return 0;
+ }
+ 
+-static int vote_clock_off(struct uart_port *uport)
++static int vote_clock_off(struct uart_port *uport, bool force)
+ {
+ 	struct msm_geni_serial_port *port = GET_DEV_PORT(uport);
+ 	int usage_count;
+@@ -1578,7 +1578,9 @@
+ 	if (ret) {
+ 		UART_LOG_DBG(port->ipc_log_pwr, uport->dev,
+ 			"%s wait_for_transfer_inflight return ret: %d", __func__, ret);
+-		return -EAGAIN;
++		/* a52sxq: force = 5.4 behaviour (log only, the vote is always dropped) */
++		if (!force)
++			return -EAGAIN;
+ 	}
+ 
+ 	port->ioctl_count--;
+@@ -1599,6 +1601,7 @@
+ 	struct msm_geni_serial_port *port = GET_DEV_PORT(uport);
+ 	int ret = -ENOIOCTLCMD;
+ 	enum uart_error_code uart_error;
++	bool legacy = false;
+ 
+ 	UART_LOG_DBG(port->ipc_log_misc, uport->dev,
+ 		     "%s:%s cmd 0x%x\n", __func__, current->comm, cmd);
+@@ -1610,7 +1613,7 @@
+ 	 */
+ 	switch (cmd) {
+ 	case 0x544D: cmd = MSM_GENI_SERIAL_TIOCPMGET; break;
+-	case 0x544E: cmd = MSM_GENI_SERIAL_TIOCPMPUT; break;
++	case 0x544E: cmd = MSM_GENI_SERIAL_TIOCPMPUT; legacy = true; break;
+ 	case 0x544F: cmd = MSM_GENI_SERIAL_TIOCPMACT; break;
+ 	}
+ 	if (port->pm_auto_suspend_disable)
+@@ -1622,7 +1625,19 @@
+ 		break;
+ 	}
+ 	case MSM_GENI_SERIAL_TIOCPMPUT: {
+-		ret = vote_clock_off(uport);
++		int tries = 0;
++
++		ret = vote_clock_off(uport, false);
++		/*
++		 * a52sxq: the 5.4 driver never failed a PUT because of RX in flight, and HALs
++		 * built against it (legacy 0x544E) do not retry: a lost PUT leaves the clock
++		 * vote and the geni_wake wakeup source held until the next full ON/OFF cycle.
++		 * Retry for up to ~20 ms, then drop the vote anyway as 5.4 did.
++		 */
++		while (legacy && ret == -EAGAIN && ++tries <= 20) {
++			usleep_range(1000, 1500);
++			ret = vote_clock_off(uport, tries == 20);
++		}
+ 		break;
+ 	}
+ 	case MSM_GENI_SERIAL_TIOCPMACT: {

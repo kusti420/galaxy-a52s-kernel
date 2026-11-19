@@ -1,0 +1,24 @@
+diff --color -ruN a/qseecom/qseecom.c b/qseecom/qseecom.c
+--- a/qseecom/qseecom.c	2026-11-18 19:51:23.794428525 +0200
++++ b/qseecom/qseecom.c	2026-11-18 19:52:26.685409999 +0200
+@@ -3372,8 +3372,8 @@
+ 			MAKE_NULL(data->client.sgt,
+ 				data->client.attach, data->client.dmabuf);
+ 		}
++		/* a52sxq: qseecom_release() frees the tzbuf and the handle */
+ 		data->released = true;
+-		__qseecom_free_tzbuf(&data->sglistinfo_shm);
+ 		return 0;
+ 	}
+ 
+@@ -8849,6 +8849,10 @@
+ 				free_private_data = false;
+ 				mutex_lock(&unload_app_pending_list_lock);
+ 				ret = qseecom_prepare_unload_app(data);
++				/* a52sxq: keymaster is not queued for unload, so
++				 * nobody else frees its handle */
++				if (!ret && data->released)
++					free_private_data = true;
+ 				mutex_unlock(&unload_app_pending_list_lock);
+ 				__wakeup_unload_app_kthread();
+ 			}

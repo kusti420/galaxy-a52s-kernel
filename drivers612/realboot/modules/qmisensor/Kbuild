@@ -1,0 +1,11 @@
+# qti_qmi_sensor with Samsung's index-30 sensor name (msm_skin_therm). MUST see the soc-repo headers before the
+# kernel's: soc-repo's struct qmi_handle has one more member (svc_id) than the GKI header, and qmi_helpers.ko is
+# the soc-repo build. Built against the GKI header the embedded handle was 8 bytes short and qmi_helpers wrote
+# into the mutex behind it: NULL dereference in thermal_qmi_new_server() as soon as a live modem's TS service
+# arrived (broken screen, 2026-11-19, every boot at 9.7 s; white cable has no modem and never got there).
+SOC := $(abspath $(src)/../../../../bsp612/soc-repo-staging)
+obj-m := qti_qmi_sensor.o
+qti_qmi_sensor-objs := qmi_sensors.o thermal_sensor_service_v01.o
+# in front of the kernel include dirs (ccflags come after them)
+LINUXINCLUDE := -I$(SOC)/include -I$(SOC)/include/uapi $(LINUXINCLUDE)
+ccflags-y += -I$(srctree)

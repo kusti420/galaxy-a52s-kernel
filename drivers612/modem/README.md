@@ -319,6 +319,9 @@ phone. Steps and pass criteria:
     FnR stats region gone, quota/tethering/pdn moved up 0x800, and r30 sends the modem a
     `hw_filter_stats_info` TLV (start 0x27B0, 191 x 16 bytes) that 5.4 never sent. Watch in
     A1 data tests; candidate patch: 5.4's `ipa_4_11_mem_part` values.
+    2026-11-18: done as conn/data patch 0004 (5.4 values, TLV only sent when the Q6 range
+    fits, i.e. never here). Built, not run: expect "SRAM partition too small" and
+    "fail to init FnR stats" to be gone from dmesg.
 
 ## 9. M1 result (run kx-m1b, 2026-11-14) and the fixes of 16:30
 

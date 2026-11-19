@@ -62,7 +62,7 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  #if CONFIG_OF
 diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=Kbuild' '--exclude=include' orig/stm/stm_cmd.c src/stm/stm_cmd.c
 --- orig/stm/stm_cmd.c	2026-11-11 20:37:40.317015269 +0200
-+++ src/stm/stm_cmd.c	2026-11-11 20:43:37.187883484 +0200
++++ src/stm/stm_cmd.c	2026-11-18 19:53:41.152039425 +0200
 @@ -953,22 +953,22 @@
  	if (pStr == NULL)
  		return;
@@ -122,7 +122,17 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	if (atomic_read(&ts->trusted_touch_enabled)) {
  		input_info(true, &ts->client->dev, "%s trusted touch is enabled. skip\n", __func__);
  		snprintf(buff, sizeof(buff), "OK");
-@@ -6413,7 +6413,7 @@
+@@ -5926,8 +5926,7 @@
+ 
+ 	if (!ts->plat_data->enabled && !ts->plat_data->lowpower_mode && !ts->plat_data->pocket_mode
+ 			&& !ts->plat_data->ed_enable && !ts->plat_data->fod_lp_mode) {
+-		if (device_may_wakeup(&ts->client->dev) && ts->plat_data->power_state == SEC_INPUT_STATE_LPM)
+-			disable_irq_wake(ts->client->irq);
++		/* a52sxq 6.12: stm_ts_stop_device() now drops the LPM irq wake itself */
+ 		ts->plat_data->stop_device(ts);
+ 	} else {
+ 		stm_ts_set_custom_library(ts);
+@@ -6413,7 +6412,7 @@
  	sec_cmd_set_default_result(sec);
  
  #if IS_ENABLED(CONFIG_INPUT_SEC_SECURE_TOUCH)
@@ -133,7 +143,7 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  		snprintf(buff, sizeof(buff), "NG");
 diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=Kbuild' '--exclude=include' orig/stm/stm_core.c src/stm/stm_core.c
 --- orig/stm/stm_core.c	2026-11-11 20:37:40.317015269 +0200
-+++ src/stm/stm_core.c	2026-11-11 20:44:37.177745634 +0200
++++ src/stm/stm_core.c	2026-11-18 19:53:41.153649977 +0200
 @@ -15,7 +15,7 @@
  struct stm_ts_data *g_ts;
  
@@ -196,7 +206,30 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	if (atomic_read(&ts->trusted_touch_enabled)) {
  		input_info(true, &ts->client->dev, "%s wait for disabling trusted touch\n", __func__);
  		schedule_work(&ts->close_work.work);
-@@ -2667,7 +2666,7 @@
+@@ -2419,6 +2418,14 @@
+ 	}
+ 
+ 	disable_irq(ts->irq);
++	/*
++	 * a52sxq 6.12: balance the enable_irq_wake() taken on LPM entry (stm_ts_set_lowpowermode).
++	 * A reset in LPM came through here without it and leaked wake depth; the 6.12 TLMM
++	 * (IRQCHIP_ENABLE_WAKEUP_ON_SUSPEND) then re-enables the disabled, wake-armed IRQ at suspend.
++	 */
++	if (ts->plat_data->power_state == SEC_INPUT_STATE_LPM &&
++	    device_may_wakeup(&ts->client->dev))
++		disable_irq_wake(ts->irq);
+ 	if (ts->plat_data->unuse_dvdd_power)
+ 		ts->stm_ts_command(ts, STM_TS_CMD_SENSE_OFF, false);
+ 
+@@ -2659,6 +2666,7 @@
+ 
+ 	INIT_DELAYED_WORK(&ts->reset_work, stm_ts_reset_work);
+ 	INIT_DELAYED_WORK(&ts->work_read_info, stm_ts_read_info_work);
++	INIT_DELAYED_WORK(&ts->work_fw_recheck, stm_ts_fw_recheck_work);
+ 	INIT_DELAYED_WORK(&ts->work_print_info, stm_ts_print_info_work);
+ 	INIT_DELAYED_WORK(&ts->work_read_functions, stm_ts_get_touch_function);
+ 	INIT_DELAYED_WORK(&ts->switching_work, stm_switching_work);
+@@ -2667,7 +2675,7 @@
  	INIT_DELAYED_WORK(&ts->plat_data->interrupt_notify_work, stm_ts_interrupt_notify);
  #endif
  #if IS_ENABLED(CONFIG_INPUT_SEC_SECURE_TOUCH)
@@ -205,7 +238,7 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	INIT_DELAYED_WORK(&ts->close_work, stm_ts_close_work);
  #endif
  #endif
-@@ -2712,7 +2711,7 @@
+@@ -2712,7 +2720,7 @@
  
  	sec_secure_touch_register(ts, ts->plat_data->ss_touch_num, &ts->plat_data->input_dev->dev.kobj);
  
@@ -214,7 +247,15 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	stm_ts_trusted_touch_init(ts);
  	mutex_init(&ts->clk_io_ctrl_mutex);
  	mutex_init(&ts->transition_lock);
-@@ -2761,7 +2760,7 @@
+@@ -2753,6 +2761,7 @@
+ 		hall_notifier_unregister(&ts->hall_ic_nb);
+ #endif
+ 
++	cancel_delayed_work_sync(&ts->work_fw_recheck);
+ 	cancel_delayed_work_sync(&ts->work_read_info);
+ 	cancel_delayed_work_sync(&ts->work_print_info);
+ 	cancel_delayed_work_sync(&ts->work_read_functions);
+@@ -2761,7 +2770,7 @@
  	cancel_delayed_work_sync(&ts->plat_data->interrupt_notify_work);
  #endif
  	cancel_delayed_work_sync(&ts->switching_work);
@@ -223,7 +264,7 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	cancel_delayed_work_sync(&ts->close_work);
  #endif
  	flush_delayed_work(&ts->reset_work);
-@@ -2784,12 +2783,27 @@
+@@ -2784,12 +2793,27 @@
  }
  
  
@@ -251,9 +292,20 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	if (!deferred_flag) {
  		deferred_flag = 1;
  		input_info(true, &ts->client->dev, "deferred_flag boot %s\n", __func__);
+@@ -2855,6 +2879,10 @@
+ 	if (!ts->plat_data->shutdown_called)
+ 		schedule_delayed_work(&ts->work_read_info, msecs_to_jiffies(50));
+ 
++	/* a52sxq 6.12: probe ran before /vendor/firmware was mounted; look at the bin once later */
++	if (ts->fw_bin_missing && !ts->plat_data->shutdown_called)
++		schedule_delayed_work(&ts->work_fw_recheck, msecs_to_jiffies(STM_TS_FW_RECHECK_MS));
++
+ #if !IS_ENABLED(CONFIG_SAMSUNG_PRODUCT_SHIP) && IS_ENABLED(CONFIG_TOUCHSCREEN_STM_SPI)
+ 	stm_ts_tool_proc_init(ts);
+ #endif
 diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=Kbuild' '--exclude=include' orig/stm/stm_dev.h src/stm/stm_dev.h
 --- orig/stm/stm_dev.h	2026-11-11 20:37:40.317015269 +0200
-+++ src/stm/stm_dev.h	2026-11-11 20:43:37.190883480 +0200
++++ src/stm/stm_dev.h	2026-11-18 19:53:41.153934691 +0200
 @@ -1,7 +1,7 @@
  #ifndef _LINUX_STM_TS_H_
  #define _LINUX_STM_TS_H_
@@ -281,8 +333,14 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	struct trusted_touch_vm_info *vm_info;
  	struct mutex clk_io_ctrl_mutex;
  	struct mutex transition_lock;
-@@ -590,7 +590,7 @@
+@@ -588,9 +588,13 @@
+ 	struct delayed_work work_read_functions;
+ 	struct delayed_work reset_work;
  	struct delayed_work work_read_info;
++	/* a52sxq 6.12: one late re-check when the fw bin was not readable at (first-stage) probe */
++	struct delayed_work work_fw_recheck;
++	bool fw_bin_missing;
++	u8 fw_recheck_retry;
  	struct delayed_work debug_work;
  	struct delayed_work check_rawdata;
 -#if IS_ENABLED(CONFIG_GH_RM_DRV)
@@ -290,7 +348,18 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  	struct delayed_work close_work;
  #endif
  
-@@ -818,7 +818,7 @@
+@@ -794,7 +798,10 @@
+ ssize_t get_cmoffset_dump(struct stm_ts_data *ts, char *buf, u8 position);
+ 
+ //fw
++#define STM_TS_FW_RECHECK_MS		60000
++#define STM_TS_FW_RECHECK_RETRY		5
+ int stm_ts_fw_update_on_probe(struct stm_ts_data *ts);
++void stm_ts_fw_recheck_work(struct work_struct *work);
+ int stm_ts_fw_update_on_hidden_menu(struct stm_ts_data *ts, int update_type);
+ int stm_ts_wait_for_echo_event(struct stm_ts_data *ts, u8 *cmd, u8 cmd_cnt, int delay);
+ int stm_ts_fw_wait_for_event(struct stm_ts_data *ts, u8 *result, u8 result_cnt);
+@@ -818,7 +825,7 @@
  #endif
  
  #if IS_ENABLED(CONFIG_INPUT_SEC_SECURE_TOUCH)
@@ -301,7 +370,7 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  #endif
 diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=Kbuild' '--exclude=include' orig/stm/stm_fw.c src/stm/stm_fw.c
 --- orig/stm/stm_fw.c	2026-11-11 20:37:40.317015269 +0200
-+++ src/stm/stm_fw.c	2026-11-11 20:43:37.192022542 +0200
++++ src/stm/stm_fw.c	2026-11-18 19:53:41.154376900 +0200
 @@ -508,7 +508,7 @@
  	return rc;
  }
@@ -311,6 +380,121 @@ diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude
  {
  	const struct stm_ts_header *header;
  	int retval;
+@@ -606,6 +606,9 @@
+ 		input_err(true, &ts->client->dev,
+ 				"%s: Firmware image %s not available\n", __func__,
+ 				fw_path);
++		/* a52sxq 6.12: first-stage probe, no /vendor/firmware yet: re-check once it is mounted */
++		if (retval == -ENOENT)
++			ts->fw_bin_missing = true;
+ 		retval = STM_TS_NOT_ERROR;
+ 		goto exit_fwload;
+ 	}
+@@ -925,4 +928,104 @@
+ 	return retval;
+ }
+ EXPORT_SYMBOL(stm_ts_fw_update_on_hidden_menu);
++
++/*
++ * a52sxq 6.12: stm_ts is loaded by first-stage init, before /vendor/firmware is mounted, so
++ * the request_firmware() in stm_ts_fw_update_on_probe() fails with -ENOENT (on 5.4 the module
++ * was loaded after the mount). This runs once, 60 s after a successful probe: it reads the
++ * bin header, fills the *_of_bin versions and, only if the IC is older than the bin (same
++ * compare as at probe, without the checksum case: probe already succeeded), updates through
++ * the existing fw_update command path (stm_ts_fw_update_on_hidden_menu). A corrupted IC is
++ * not covered here (probe fails first); that needs the bin in the first-stage ramdisk.
++ */
++void stm_ts_fw_recheck_work(struct work_struct *work)
++{
++	struct stm_ts_data *ts = container_of(work, struct stm_ts_data, work_fw_recheck.work);
++	const struct firmware *fw_entry = NULL;
++	const struct stm_ts_header *header;
++	int retval;
++
++	if (!ts->plat_data->firmware_name || ts->plat_data->bringup == 1)
++		return;
++
++	mutex_lock(&ts->modechange);
++
++	if (ts->plat_data->shutdown_called || !ts->probe_done || !ts->fw_bin_missing)
++		goto out;
++
++	if (ts->plat_data->power_state != SEC_INPUT_STATE_POWER_ON) {
++		/* screen off / LPM: do not touch the IC now, look again later (bounded) */
++		if (ts->fw_recheck_retry++ < STM_TS_FW_RECHECK_RETRY)
++			schedule_delayed_work(&ts->work_fw_recheck,
++					msecs_to_jiffies(STM_TS_FW_RECHECK_MS));
++		goto out;
++	}
++
++	retval = request_firmware(&fw_entry, ts->plat_data->firmware_name, &ts->client->dev);
++	if (retval) {
++		input_err(true, &ts->client->dev, "%s: Firmware image %s not available (%d)\n",
++				__func__, ts->plat_data->firmware_name, retval);
++		goto out;
++	}
++	ts->fw_bin_missing = false;
++
++	if (fw_entry->size < sizeof(struct stm_ts_header)) {
++		input_err(true, &ts->client->dev, "%s: bin too small (%zu)\n",
++				__func__, fw_entry->size);
++		release_firmware(fw_entry);
++		goto out;
++	}
++
++	header = (struct stm_ts_header *)fw_entry->data;
++
++	ts->fw_version_of_bin = (u16)header->fw_ver;
++	ts->fw_main_version_of_bin = (u16)header->ext_release_ver;
++	ts->config_version_of_bin = (u16)header->cfg_ver;
++	ts->project_id_of_bin = header->project_id;
++	ts->ic_name_of_bin = header->ic_name;
++	ts->module_version_of_bin = header->module_ver;
++	ts->plat_data->img_version_of_bin[2] = ts->module_version_of_bin;
++	ts->plat_data->img_version_of_bin[3] = ts->fw_main_version_of_bin & 0xFF;
++
++	input_info(true, &ts->client->dev,
++			"%s: [BIN] Firmware Ver: 0x%04X, Config Ver: 0x%04X, Main Ver: 0x%04X\n", __func__,
++			ts->fw_version_of_bin,
++			ts->config_version_of_bin,
++			ts->fw_main_version_of_bin);
++	input_info(true, &ts->client->dev,
++			"%s: [BIN] Project ID: 0x%02X, IC Name: 0x%02X, Module Ver: 0x%02X\n",
++			__func__, ts->project_id_of_bin,
++			ts->ic_name_of_bin, ts->module_version_of_bin);
++
++	release_firmware(fw_entry);
++
++	if (ts->plat_data->bringup == 2)
++		retval = STM_TS_NOT_ERROR;
++	else if ((ts->ic_name_of_ic == 0xFF) && (ts->project_id_of_ic == 0xFF) && (ts->module_version_of_ic == 0xFF))
++		retval = STM_TS_NEED_FW_UPDATE;
++	else if (ts->ic_name_of_ic != ts->ic_name_of_bin)
++		retval = STM_TS_NOT_UPDATE;
++	else if (ts->project_id_of_ic != ts->project_id_of_bin)
++		retval = STM_TS_NEED_FW_UPDATE;
++	else if (ts->module_version_of_ic != ts->module_version_of_bin)
++		retval = STM_TS_NOT_UPDATE;
++	else if ((ts->fw_main_version_of_ic < ts->fw_main_version_of_bin)
++			|| ((ts->config_version_of_ic < ts->config_version_of_bin))
++			|| ((ts->fw_version_of_ic < ts->fw_version_of_bin)))
++		retval = STM_TS_NEED_FW_UPDATE;
++	else
++		retval = STM_TS_NOT_ERROR;
++
++	if (retval != STM_TS_NEED_FW_UPDATE) {
++		input_info(true, &ts->client->dev, "%s: skip fw update\n", __func__);
++		goto out;
++	}
++
++	input_info(true, &ts->client->dev, "%s: IC is older than the bin, update\n", __func__);
++	retval = stm_ts_fw_update_on_hidden_menu(ts, TSP_BUILT_IN);
++	if (retval < 0)
++		input_err(true, &ts->client->dev, "%s: failed [%d]\n", __func__, retval);
++out:
++	mutex_unlock(&ts->modechange);
++}
+ MODULE_LICENSE("GPL");
 diff --color -ruN '--exclude=*.o' '--exclude=*.ko' '--exclude=*.mod*' '--exclude=.*' '--exclude=Module.symvers' '--exclude=modules.order' '--exclude=Kbuild' '--exclude=include' orig/stm/stm_i2c.c src/stm/stm_i2c.c
 --- orig/stm/stm_i2c.c	2026-11-11 20:37:40.317015269 +0200
 +++ src/stm/stm_i2c.c	2026-11-11 20:44:37.178058681 +0200

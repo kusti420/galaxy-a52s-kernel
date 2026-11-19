@@ -23,3 +23,10 @@
   from the phone's 5.4 tree.
 - New files: `src/glue/a52sxq_usb_glue.[ch]`; stubs `include/linux/samsung/sec_param.h`
   (empty), `include/linux/sec_debug.h` (no-op `battery_last_dcvs()`).
+- `0006-audit-1118-pdic-lpcharge-manager-leak.diff` (audit 2026-11-18, paths relative to `src/`):
+  - `usb/typec/common/pdic_param.c`: `is_lpcharge_pdic_param()` derives off-mode charging from
+    `/chosen/bootargs` (`androidboot.mode=charger` / `sec-battery.lpcharge=1`) when no module
+    param is given. As a module the `early_param("androidboot.mode")` is compiled out and the
+    bootloader passes nothing for pdic, so PDIC/MUIC/manager never saw LPM.
+  - `usb/typec/manager/usb_typec_manager_notifier.c`: `manager_event_notify()` frees
+    `event_work` on the duplicate-USB and repeated-water early exits (was a leak per event).

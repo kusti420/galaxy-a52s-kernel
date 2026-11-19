@@ -105,6 +105,10 @@
 			iommus = <&apps_smmu 0x2180 0x0020>;
 			memory-region = <&venus_iova>;
 			qcom,iommu-faults = "non-fatal";
+			/* 5.4: iommu_dma_enable_best_fit_algo() + CONFIG_IOMMU_IOVA_ALIGNMENT=9;
+			 * 6.12 reads these in qcom-iommu-util init_iovad_attr() */
+			qcom,iova-best-fit;
+			qcom,iova-max-align-shift = <9>;
 			buffer-types = <0xfff>;
 			virtual-addr-pool = <0x25800000 0xba800000>;
 		};
@@ -115,6 +119,8 @@
 			iommus = <&apps_smmu 0x2184 0x0020>;
 			memory-region = <&venus_iova>;
 			qcom,iommu-faults = "non-fatal";
+			qcom,iova-best-fit;
+			qcom,iova-max-align-shift = <9>;
 			qcom,iommu-vmid = <0xb>;	/* VMID_CP_NON_PIXEL */
 			buffer-types = <0x480>;
 			virtual-addr-pool = <0x01000000 0x24800000>;
@@ -127,6 +133,8 @@
 			iommus = <&apps_smmu 0x2181 0x0004>;
 			memory-region = <&venus_iova>;
 			qcom,iommu-faults = "non-fatal";
+			qcom,iova-best-fit;
+			qcom,iova-max-align-shift = <9>;
 			qcom,iommu-vmid = <0x9>;	/* VMID_CP_BITSTREAM */
 			buffer-types = <0x241>;
 			virtual-addr-pool = <0x00500000 0xdfb00000>;
@@ -139,6 +147,8 @@
 			iommus = <&apps_smmu 0x2183 0x0000>;
 			memory-region = <&venus_iova>;
 			qcom,iommu-faults = "non-fatal";
+			qcom,iova-best-fit;
+			qcom,iova-max-align-shift = <9>;
 			qcom,iommu-vmid = <0xa>;	/* VMID_CP_PIXEL */
 			buffer-types = <0x106>;
 			virtual-addr-pool = <0x00500000 0xdfb00000>;

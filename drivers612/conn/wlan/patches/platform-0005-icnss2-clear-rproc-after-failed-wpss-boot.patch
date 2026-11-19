@@ -1,0 +1,62 @@
+Subject: [PATCH] icnss2: clear priv->rproc after a failed WPSS boot
+
+icnss_wpss_load() and icnss_wpss_self_recovery() put the rproc when
+rproc_boot() fails but left the pointer in priv->rproc, so a later
+wpss_boot=0 (icnss_wpss_unload) put it a second time. A repeated
+wpss_boot=1 also took a second reference and raised rproc->power to 2.
+Clear the pointer, ignore a load request while the rproc is held, and
+take wpss_lock like icnss_wpss_unload() does. (audit 2026-11-18)
+---
+ icnss2/main.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+--- a/icnss2/main.c
++++ b/icnss2/main.c
+@@ -2785,12 +2785,19 @@
+ 	int ret;
+ 	struct icnss_priv *priv = icnss_get_plat_priv();
+ 
++	mutex_lock(&priv->wpss_lock);
++	if (!priv->rproc) {
++		mutex_unlock(&priv->wpss_lock);
++		return;
++	}
+ 	rproc_shutdown(priv->rproc);
+ 	ret = rproc_boot(priv->rproc);
+ 	if (ret) {
+ 		icnss_pr_err("Failed to self recover wpss rproc, ret: %d", ret);
+ 		rproc_put(priv->rproc);
++		priv->rproc = NULL;
+ 	}
++	mutex_unlock(&priv->wpss_lock);
+ }
+ 
+ /**
+@@ -5545,9 +5552,17 @@
+ 		return;
+ 	}
+ 
++	mutex_lock(&priv->wpss_lock);
++	if (priv->rproc) {	/* already booted by an earlier write */
++		mutex_unlock(&priv->wpss_lock);
++		return;
++	}
++
+ 	priv->rproc = rproc_get_by_phandle(rproc_phandle);
+ 	if (IS_ERR_OR_NULL(priv->rproc)) {
+ 		icnss_pr_err("rproc not found");
++		priv->rproc = NULL;
++		mutex_unlock(&priv->wpss_lock);
+ 		return;
+ 	}
+ 
+@@ -5555,7 +5570,9 @@
+ 	if (ret) {
+ 		icnss_pr_err("Failed to boot wpss rproc, ret: %d", ret);
+ 		rproc_put(priv->rproc);
++		priv->rproc = NULL;
+ 	}
++	mutex_unlock(&priv->wpss_lock);
+ }
+ 
+ static ssize_t wpss_boot_store(struct device *dev,

@@ -588,6 +588,10 @@ struct stm_ts_data {
 	struct delayed_work work_read_functions;
 	struct delayed_work reset_work;
 	struct delayed_work work_read_info;
+	/* a52sxq 6.12: one late re-check when the fw bin was not readable at (first-stage) probe */
+	struct delayed_work work_fw_recheck;
+	bool fw_bin_missing;
+	u8 fw_recheck_retry;
 	struct delayed_work debug_work;
 	struct delayed_work check_rawdata;
 #if IS_ENABLED(CONFIG_SEC_INPUT_GH_TRUSTED_TOUCH)
@@ -794,7 +798,10 @@ void stm_ts_init_proc(struct stm_ts_data *ts);
 ssize_t get_cmoffset_dump(struct stm_ts_data *ts, char *buf, u8 position);
 
 //fw
+#define STM_TS_FW_RECHECK_MS		60000
+#define STM_TS_FW_RECHECK_RETRY		5
 int stm_ts_fw_update_on_probe(struct stm_ts_data *ts);
+void stm_ts_fw_recheck_work(struct work_struct *work);
 int stm_ts_fw_update_on_hidden_menu(struct stm_ts_data *ts, int update_type);
 int stm_ts_wait_for_echo_event(struct stm_ts_data *ts, u8 *cmd, u8 cmd_cnt, int delay);
 int stm_ts_fw_wait_for_event(struct stm_ts_data *ts, u8 *result, u8 result_cnt);

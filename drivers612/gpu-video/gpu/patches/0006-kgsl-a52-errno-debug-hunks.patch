@@ -1,0 +1,26 @@
+--- a/kgsl.c
++++ b/kgsl.c
+@@ -512,6 +512,11 @@
+ 		ret = kgsl_mmu_get_gpuaddr(pagetable, memdesc);
+ 		if (ret) {
+ 			kgsl_process_private_put(process);
++#ifdef A52_KGSL_ERRNO_DEBUG
++			/* a52 debug: GPU VA allocation failed -> ENOSPC (28), visible in userspace logs */
++			if (ret == -ENOMEM)
++				ret = -ENOSPC;
++#endif
+ 			return ret;
+ 		}
+ 	}
+@@ -561,6 +566,11 @@
+ 
+ 		if (ret) {
+ 			kgsl_mem_entry_detach_process(entry);
++#ifdef A52_KGSL_ERRNO_DEBUG
++			/* a52 debug: IOMMU map (page tables / guard page) failed -> ENOBUFS (105) */
++			if (ret == -ENOMEM)
++				ret = -ENOBUFS;
++#endif
+ 			return ret;
+ 		}
+ 	}

@@ -1,0 +1,63 @@
+--- a/kgsl_pool.c
++++ b/kgsl_pool.c
+@@ -726,19 +726,53 @@
+ 
+ 	kgsl_pool_cache_init();
+ 
+-	for_each_child_of_node(node, child) {
+-		if (!kgsl_of_parse_mempool(&kgsl_pools[index], child))
+-			index++;
+-
+-		if (index == ARRAY_SIZE(kgsl_pools)) {
+-			of_node_put(child);
+-			break;
++	/*
++	 * a52sxq: the retry logic (kgsl_pool_alloc_page: "pool_idx > 0" -> kgsl_pools[pool_idx - 1],
++	 * kgsl_pool_get_retry_order) assumes kgsl_pools[] in ascending page order. The 6.12 board
++	 * tree lists qcom,gpu-mempool@3..@0 (the overlay merge reverses the children; 5.4 had @0..@3),
++	 * so the 1 MB pool became index 0 and a failed order-8 allocation returned -ENOMEM with no
++	 * fallback: on a fragmented phone every large GPU buffer failed after 3 MB (IchthysOS daily
++	 * phone 2026-11-18: "kgsl: out of memory: only allocated 3072Kb of 18496Kb"). Parse the
++	 * children in ascending qcom,mempool-page-size order instead of tree order.
++	 */
++	{
++		struct device_node *kids[ARRAY_SIZE(kgsl_pools)];
++		u32 sizes[ARRAY_SIZE(kgsl_pools)];
++		int n = 0, a, b;
++
++		for_each_child_of_node(node, child) {
++			u32 sz = 0;
++
++			if (n == ARRAY_SIZE(kgsl_pools)) {
++				of_node_put(child);
++				break;
++			}
++			of_property_read_u32(child, "qcom,mempool-page-size", &sz);
++			kids[n] = of_node_get(child);
++			sizes[n++] = sz;
++		}
++		for (a = 1; a < n; a++) {
++			struct device_node *kn = kids[a];
++			u32 ks = sizes[a];
++
++			for (b = a - 1; b >= 0 && sizes[b] > ks; b--) {
++				kids[b + 1] = kids[b];
++				sizes[b + 1] = sizes[b];
++			}
++			kids[b + 1] = kn;
++			sizes[b + 1] = ks;
++		}
++		for (a = 0; a < n; a++) {
++			if (!kgsl_of_parse_mempool(&kgsl_pools[index], kids[a]))
++				index++;
++			of_node_put(kids[a]);
+ 		}
+ 	}
+ 
+ 	kgsl_num_pools = index;
+ 	of_node_put(node);
+ 
++
+ 	/* Initialize shrinker */
+ 	kgsl_pool_shrinker_init();
+ }

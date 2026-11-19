@@ -36,7 +36,7 @@ Copyright (C) 2012, Samsung Electronics. All rights reserved.
 #define MDNIE_COLOR_BLINDE_CMD_SIZE 18
 #define MDNIE_COLOR_BLINDE_HBM_CMD_SIZE 24
 #define COORDINATE_DATA_SIZE 6
-#define MDNIE_SCR_CMD_SIZE 36
+#define MDNIE_SCR_CMD_SIZE 24 /* a52sxq: S6E3FC3 tables (night_mode_data rows, SCR block) are 24 bytes, as on 5.4; S23 has 36 */
 #define AFC_ROI_CMD_SIZE 12
 
 extern char mdnie_app_name[][NAME_STRING_MAX];

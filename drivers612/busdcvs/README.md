@@ -84,3 +84,9 @@ What to look at:
   moves the L3 vote to the EPSS shared register (0x90, was Qualcomm's OSM-style 0x920) and adds a
   300 MHz floor row to the gold/prime L3 tables (`A52_L3_VOTE_OFFSET=keep A52_L3_FLOOR=0` = old tree).
   Not run yet: regenerate android-r02.dtb (kexec/mkandroidtree.sh) and kexec-test before a real boot.
+- Audit 2026-11-18: dt-fix.sh also (a) restores ascending trip order in the PMIC temp-alarm zones
+  (`*_tz`; fdtoverlay reverses overlay-added children, qcom-spmi-temp-alarm takes the first critical
+  trip: 145 C instead of 115 C; `A52_TRIP_ORDER_FIX=0` = old tree) and (b) sets `bias-disable` on
+  the SD card-detect pin in `sdc2_on` as on the phone's 5.4 base (`A52_SDCD_BIAS_FIX=0` = old
+  tree). `out-ack/kx/android-r02.dtb` regenerated; old one kept as `android-r02-preAUDIT.dtb`.
+  Not run on a phone yet.

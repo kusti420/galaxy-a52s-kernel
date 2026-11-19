@@ -7,7 +7,10 @@
 # blockdev, df, chcon, ls -Z, dd (fault injection) and sync. Regular files stand in for the
 # block devices (A52S_TESTMODE=1). Every scenario checks the exit code, the messages, the
 # partitions and /vendor afterwards, that no other "partition" changed, and that nothing
-# under mmcblk* was touched.
+# under mmcblk* was touched. Second part (2026-11-18): the ROM-independent MODE=ak zips
+# (mk-ak-zips.sh) with the REAL ROM images (IchthysOS + LineageOS dumps, see the AK_* paths below;
+# skipped when they are missing), bin/a52boot as host build and as the shipped arm64 binary
+# (qemu-aarch64), plus a52boot on mkbootimg-made header v4 images.
 #   test/run-tests.sh [mksh|bash|all]      (default all)
 # Env: ABT = AOSP prebuilts/build-tools/linux-x86 (mksh as bin/sh, toybox, ziptool).
 set -uo pipefail
@@ -331,6 +334,449 @@ SC="$SH/truncated-zip"; new_root z1; head -c $(( $(stat -c %s "$ZK") / 2 )) "$ZK
 run_zip "$R/bad.zip" "$SH"
 expect_rc 1; expect_parts "$SI"; expect_no_addon; expect_no_backup; expect_safe
 done
+
+# ================================================================== MODE=ak (ROM-independent zip)
+# Real images: the zip is made from the real-boot build AK_SRC (default out/rbich5, built from the
+# IchthysOS images AK_ICH); it is installed over the IchthysOS images and over the LineageOS images
+# AK_LIN (alpha5's ROM, whose build out/rb24 = alpha5 has the same kernel, so its boot.img is the
+# expected boot image there). bin/a52boot runs as the host build (stubs/akexec-host) or, in the
+# arm64 scenarios, as the zip's own static arm64 binary under qemu-aarch64 (stubs/akexec-qemu).
+RB=$(cd "$TW/.." && pwd)
+TOP=$(cd "$RB/../.." && pwd)
+AK_SRC=${AK_SRC:-$RB/out/rbich5}
+AK_ICH=${AK_ICH:-$TOP/testdev-ichthys-202611112021}
+AK_LIN=${AK_LIN:-$TOP/testdev-PHONE2}
+AK_RB24=${AK_RB24:-$RB/out/rb24}
+AKB=$RB/anykernel/a52boot/out
+akmiss=""
+for f in "$AK_SRC/boot.img" "$AK_SRC/vendor-addon" "$AK_ICH/boot.img" "$AK_ICH/vbmeta.img" "$AK_LIN/boot.img" "$AK_LIN/vbmeta.img" "$AK_RB24/boot.img"; do
+	[ -e "$f" ] || akmiss="$akmiss $f"
+done
+command -v qemu-aarch64 > /dev/null || akmiss="$akmiss qemu-aarch64"
+if [ -n "$akmiss" ]; then
+	echo "== MODE=ak: SKIPPED (missing:$akmiss)"
+else
+echo "== MODE=ak: building zips from $AK_SRC (twice, for determinism)"
+DUMP=$AK_ICH CHECK_DUMPS=$AK_LIN "$TW/mk-ak-zips.sh" "$AK_SRC" "$T/ak" > "$T/mkak1.log" 2>&1 || { cat "$T/mkak1.log"; exit 1; }
+cp "$T/ak/SHA256SUMS" "$T/aksums1"
+DUMP=$AK_ICH "$TW/mk-ak-zips.sh" "$AK_SRC" "$T/ak" > "$T/mkak2.log" 2>&1 || { cat "$T/mkak2.log"; exit 1; }
+cmp -s "$T/aksums1" "$T/ak/SHA256SUMS" && ok "mk-ak-zips is deterministic" || bad "ak zips differ between two builds"
+grep -q 'byte-identical to the build' "$T/mkak1.log" && ok "mk-ak-zips self-check: the build's images rebuilt byte for byte from its ROM images" || bad "mk-ak-zips self-check"
+grep -q 'origin=match' "$T/mkak1.log" && ok "mk-ak-zips: LineageOS images give a matching origin" || bad "mk-ak-zips CHECK_DUMPS"
+ZA=$(ls "$T"/ak/a52s-k612-*-twrp.zip | grep -v restore)
+ZR=$T/ak/a52s-k612-restore-twrp.zip
+# kernel-only build (ADDON=vendor_boot, no vendor-addon/): AK_KO_SRC, default out/rbich7 (2026-11-19)
+AK_KO_SRC=${AK_KO_SRC:-$RB/out/rbich7}
+ZK=""
+if [ -f "$AK_KO_SRC/boot.img" ] && [ ! -d "$AK_KO_SRC/vendor-addon" ]; then
+	DUMP=$AK_ICH "$TW/mk-ak-zips.sh" "$AK_KO_SRC" "$T/akko" > "$T/mkak3.log" 2>&1 || { cat "$T/mkak3.log"; exit 1; }
+	ZK=$(ls "$T"/akko/a52s-k612-*-twrp.zip | grep -v restore)
+	unzip -p "$ZK" a52s-k612.conf | grep -qx 'ADDON=none' && ok "kernel-only zip: ADDON=none, no vendor-addon" || bad "kernel-only zip conf"
+	EXK=$T/exp-ko; mkdir -p "$EXK"; cp "$AK_KO_SRC"/{boot,vendor_boot,dtbo}.img "$EXK/"
+else
+	echo "NOTE: no kernel-only build at $AK_KO_SRC: kernel-only cases skipped"
+fi
+python3 -I - "$ZA" "$ZR" <<'PY' && ok "ak zip metadata: fixed dates, modes (update-binary + bin/a52boot 0755), no images inside" || bad "ak zip metadata"
+import sys, zipfile
+for z in sys.argv[1:]:
+    n = zipfile.ZipFile(z).namelist()
+    for i in zipfile.ZipFile(z).infolist():
+        assert i.date_time == (2008, 1, 1, 0, 0, 0) and i.extra == b"", i
+        m = i.external_attr >> 16
+        want = 0o100755 if i.filename in ("META-INF/com/google/android/update-binary", "bin/a52boot") else 0o100644
+        assert m == want, (i.filename, oct(m))
+        assert not i.filename.endswith(".img"), i.filename
+    for need in ("META-INF/com/android/metadata", "META-INF/com/google/android/update-binary", "a52s-k612.conf", "SHA256SUMS", "bin/a52boot"):
+        assert need in n, need
+    if "restore" not in z:
+        for need in ("kernel/Image", "kernel/vendor_boot.dtb", "kernel/vendor-cmdline.txt", "kernel/vendor-ramdisk-a52.cpio.lz4", "kernel/dtbo.raw"):
+            assert need in n, need
+PY
+unzip -p "$ZA" bin/a52boot > "$T/a52boot-zip" && cmp -s "$T/a52boot-zip" "$AKB/a52boot-arm64" && file "$T/a52boot-zip" | grep -q 'ARM aarch64.*statically linked' &&
+	ok "zip's bin/a52boot = the static arm64 build" || bad "bin/a52boot in the zip"
+
+# expected images: the build itself (IchthysOS), rb24's boot (LineageOS, same kernel)
+EXI=$T/exp-ich; mkdir -p "$EXI"; cp "$AK_SRC"/{boot,vendor_boot,dtbo}.img "$EXI/"
+EXL=$T/exp-lin; mkdir -p "$EXL"
+AKH=$AKB/a52boot-host
+mkdir -p "$T/akx"; "$AKH" extract "$AK_SRC/boot.img" "$AK_SRC/vendor_boot.img" "$AK_SRC/dtbo.img" "$T/akx" > /dev/null
+"$AKH" mkvendor "$AK_LIN/vendor_boot.img" "$T/akx/vendor_boot.dtb" "$T/akx/vendor-cmdline.txt" "$T/akx/vendor-ramdisk-a52.cpio.lz4" "$EXL/vendor_boot.img" > /dev/null
+"$AKH" mkdtbo "$AK_LIN/dtbo.img" "$T/akx/dtbo.raw" "$EXL/dtbo.img" > /dev/null
+cp "$AK_RB24/boot.img" "$EXL/boot.img"
+avbtool info_image --image "$EXL/vendor_boot.img" | grep -q "Partition Name: *vendor_boot" && ok "LineageOS expected vendor_boot: avbtool reads the footer" || bad "avbtool footer"
+
+# new_root_ak <name> <ROM image dir> <lineage|ichthys>: a stock phone with that ROM's images; data
+# not decrypted (/sdcard empty dir on rootfs, as TWRP 3.7.1 on IchthysOS), /cache mounted
+new_root_ak() {
+	R=$T/r/$1
+	rm -rf "$R"
+	mkdir -p "$R/blk/by-name" "$R/blk/mapper" "$R/sdcard" "$R/tmp" "$R/fake/parts" "$R/vendor" "$R/system_root" "$R/data/media/0" "$R/cache"
+	cp --sparse=always "$2/boot.img" "$R/blk/sda19"
+	cp --sparse=always "$2/vendor_boot.img" "$R/blk/sda21"
+	cp --sparse=always "$2/dtbo.img" "$R/blk/sda22"
+	cp "$2/vbmeta.img" "$R/blk/sde19"
+	head -c 65536 /dev/urandom > "$R/blk/sda18"
+	head -c 65536 /dev/urandom > "$R/blk/mmcblk1p1"
+	ln -s /dev/block/sda19 "$R/blk/by-name/boot"; ln -s /dev/block/sda21 "$R/blk/by-name/vendor_boot"
+	ln -s /dev/block/sda22 "$R/blk/by-name/dtbo"; ln -s /dev/block/sda18 "$R/blk/by-name/modem"
+	ln -s /dev/block/sde19 "$R/blk/by-name/vbmeta"
+	: > "$R/blk/dm-0"; : > "$R/blk/dm-1"; : > "$R/blk/dm-2"
+	ln -s /dev/block/dm-0 "$R/blk/mapper/system"; ln -s /dev/block/dm-1 "$R/blk/mapper/vendor"; ln -s /dev/block/dm-2 "$R/blk/mapper/product"
+	S=$R/fake/parts/dm-0.d; P=$R/fake/parts/dm-2.d; V=$R/fake/parts/dm-1.d
+	mkdir -p "$S/system" "$P/etc" "$V/lib/modules" "$V/etc/init/hw" "$V/bin"
+	if [ "$3" = lineage ]; then
+		printf 'ro.build.version.release=17\nro.build.version.sdk=37\nro.build.display.id=lineage_a52sxq-userdebug 17 CP2A.260605.016\nro.build.version.incremental=eng.lineage\n' > "$S/system/build.prop"
+		printf 'ro.lineage.version=24.0-20261028-NIGHTLY-a52sxq\nro.lineage.device=a52sxq\n' > "$P/etc/build.prop"
+		mkdir -p "$V/lib/modules/5.4-gki"
+		{ printf 'ROM 5.4 wlan module '; head -c 6000 /dev/urandom; printf 'vermagic=5.4.302-qgki SMP preempt mod_unload'; } > "$V/lib/modules/5.4-gki/qca_cld3_wlan.ko"
+		echo "/vendor/lib/modules/5.4-gki/qca_cld3_wlan.ko:" > "$V/lib/modules/5.4-gki/modules.dep"
+	else
+		printf 'ro.build.version.release=17\nro.build.version.sdk=37\nro.build.display.id=CP2A.260605.016\nro.build.version.incremental=ichthys202611112021\nro.lineage.device=a52sxq\n' > "$S/system/build.prop"
+		printf 'ro.lineage.device=a52sxq\n' > "$P/etc/build.prop"
+	fi
+	printf 'ro.product.vendor.device=a52sxq\nro.product.vendor.name=lineage_a52sxq\nro.vendor.build.version.release=17\nro.vendor.build.version.sdk=37\n' > "$V/build.prop"
+	head -c 9000 /dev/urandom > "$V/lib/modules/qca_cld3_wlan.ko"
+	echo "#!/vendor/bin/sh" > "$V/bin/modprobe"
+	echo "on boot" > "$V/etc/init/hw/init.target.rc"
+	echo "service macloader /vendor/bin/hw/macloader" > "$V/etc/init/wifi_sec.rc"
+	echo "service x /vendor/bin/x" > "$V/etc/init/hw.rc"
+	printf 'ro.product.device=a52sxq\nro.build.product=a52sxq\nro.boot.bootloader=A528BXXU5FWK4\n' > "$R/fake/props"
+	printf '/tmp tmpfs 2900000\n/sdcard rootfs 2000000\n/data/media/0 rootfs 2000000\n/cache /dev/block/sda29 75000\n/tmp/a52s-k612/vendor /dev/block/dm-1 300000\n/vendor /dev/block/dm-1 300000\n' > "$R/fake/df.conf"
+	: > "$R/fake/mounts"; : > "$R/fake/cmd.log"; : > "$R/fake/labels"
+	touch "$R/fake/ro.dm-0" "$R/fake/ro.dm-1" "$R/fake/ro.dm-2"
+	(cd "$R/blk" && sha256sum sda18 mmcblk1p1) > "$R/fake/untouchable.sha"
+}
+sdcard_ok() { # internal storage decrypted and mounted (backup goes there, raw images)
+	sed -i 's#^/sdcard .*#/sdcard /dev/block/dm-40 4000000#; s#^/data/media/0 .*#/data/media/0 /dev/block/dm-40 4000000#' "$R/fake/df.conf"
+}
+
+# run_ak <zip> <shell> [host|qemu]: like run_zip, with /data, /cache and the a52boot runner
+run_ak() {
+	unzip -p "$ZA" META-INF/com/google/android/update-binary > "$R/tmp/update-binary"   # same in both zips
+	chmod 755 "$R/tmp/update-binary"
+	local sh="" ex=/stubs/akexec-${3:-host} zp=${ZIPNAME:-package.zip}
+	[ "$2" = bash ] && sh="/usr/bin/bash --posix"
+	bwrap --unshare-all --uid 0 --gid 0 --cap-add ALL --die-with-parent \
+		--ro-bind /usr /usr --symlink usr/lib /lib --symlink usr/lib64 /lib64 --symlink usr/bin /bin \
+		--proc /proc --dev /dev --bind "$R/blk" /dev/block \
+		--bind "$R/sdcard" /sdcard --bind "$R/tmp" /tmp --bind "$R/fake" /fake \
+		--bind "$R/vendor" /vendor --bind "$R/system_root" /system_root \
+		--bind "$R/data" /data --bind "$R/cache" /cache \
+		--ro-bind "$ABT" /abt --ro-bind "$TBX" /tbx --ro-bind "$HERE/stubs" /stubs --ro-bind "$AKB" /akhost \
+		--ro-bind "$ABT/bin/sh" /system/bin/sh \
+		--ro-bind "$1" "/sideload/$zp" \
+		--clearenv --setenv PATH /stubs:/tbx --setenv A52S_TESTMODE 1 \
+		--setenv A52S_TEST_MOUNTS /fake/mounts --setenv A52S_TEST_EXEC "$ex" \
+		/usr/bin/bash -c "exec $sh /tmp/update-binary 3 3 /sideload/$zp 3>/fake/ui.txt" \
+		> "$R/fake/out.txt" 2>&1
+	RC=$?
+	sed -n 's/^ui_print //p' "$R/fake/ui.txt" | grep -v '^$' > "$R/fake/ui.msg"
+	cp "$R/tmp/a52s-k612.log" "$R/fake/last.log" 2>/dev/null
+}
+expect_rc() { [ "$RC" = "$1" ] && ok "$SC: exit $RC" || { bad "$SC: exit $RC (want $1)"; sed 's/^/      /' "$R/fake/ui.msg" "$R/fake/out.txt" | tail -n 25; }; }
+expect_akparts() { # <dir with boot/vendor_boot/dtbo.img>
+	local p dev
+	for p in boot vendor_boot dtbo; do
+		case $p in boot) dev=sda19;; vendor_boot) dev=sda21;; dtbo) dev=sda22;; esac
+		cmp -s "$1/$p.img" "$R/blk/$dev" || { bad "$SC: $p is not $1/$p.img"; return; }
+	done
+	ok "$SC: boot/vendor_boot/dtbo = $(basename "$1") byte for byte"
+}
+expect_ak_safe() {
+	(cd "$R/blk" && sha256sum -c --quiet "$R/fake/untouchable.sha") && ok "$SC: modem + mmcblk untouched" || bad "$SC: other partition changed"
+	cmp -s "$R/blk/sde19" "$VBM_SRC" && ok "$SC: vbmeta untouched" || bad "$SC: vbmeta changed"
+	grep -q mmcblk "$R/fake/cmd.log" && bad "$SC: a command named mmcblk" || ok "$SC: no command touched mmcblk"
+	[ -s "$R/fake/mounts" ] && bad "$SC: still mounted: $(cat "$R/fake/mounts")" || ok "$SC: everything unmounted"
+	[ -e "$R/tmp/a52s-k612" ] && bad "$SC: /tmp/a52s-k612 left behind" || ok "$SC: work dir removed"
+}
+ak_bk() { ls -d "$R"/cache/a52s-k612-backup/*/ "$R"/sdcard/a52s-k612-backup/*/ 2>/dev/null; }
+expect_ak_backup() { # <where: cache|sdcard> <dir with the images>
+	local d; d=$(ls -d "$R/$1"/a52s-k612-backup/*/ 2>/dev/null | tail -n 1)
+	[ -n "$d" ] || { bad "$SC: no backup in /$1"; return; }
+	for p in boot vendor_boot dtbo; do
+		if [ "$1" = cache ]; then
+			"$AKH" unpack "$d/$p.img.a52pack" "$T/unp.img" > /dev/null 2>&1 && cmp -s "$T/unp.img" "$2/$p.img" || { bad "$SC: /cache backup $p wrong"; return; }
+		else
+			cmp -s "$d/$p.img" "$2/$p.img" || { bad "$SC: /sdcard backup $p wrong"; return; }
+		fi
+	done
+	[ "$(grep -c . "$d/SHA256SUMS")" = 3 ] && [ -f "$d/info.txt" ] && [ -f "$d/install.log" ] || { bad "$SC: backup sums/info/log"; return; }
+	grep -q "^format: $( [ "$1" = cache ] && echo pack || echo raw)$" "$d/info.txt" || { bad "$SC: backup format line"; return; }
+	ok "$SC: backup in /$1 holds the previous images exactly"
+}
+expect_no_ak_backup() { [ -z "$(ak_bk)" ] && ok "$SC: no backup written" || bad "$SC: backup written: $(ak_bk)"; }
+expect_vendor_rom() { # vendor as the ROM had it (no add-on files, ROM files back)
+	local V=$R/fake/parts/dm-1.d
+	[ ! -e "$V/lib/modules/6.12" ] && [ ! -e "$V/etc/init/a52sxq-k612.rc" ] || { bad "$SC: add-on still in /vendor"; return; }
+	cmp -s "$V/lib/modules/5.4-gki/qca_cld3_wlan.ko" "$R/rom-54gki.ko" 2>/dev/null || [ ! -e "$R/rom-54gki.ko" ] || { bad "$SC: ROM 5.4-gki wlan.ko not back"; return; }
+	if [ ! -e "$R/rom-54gki.ko" ]; then [ ! -e "$V/lib/modules/5.4-gki" ] || { bad "$SC: 5.4-gki (created by the add-on) left"; return; }; fi
+	[ -f "$V/lib/modules/qca_cld3_wlan.ko" ] && [ -f "$V/etc/init/hw.rc" ] || { bad "$SC: ROM vendor files lost"; return; }
+	ok "$SC: /vendor back to the ROM's files"
+}
+expect_akaddon() {
+	local V=$R/fake/parts/dm-1.d
+	(cd "$AK_SRC/vendor-addon" && find . -type f | sed 's#^\./##' | sort) | while read -r f; do
+		cmp -s "$AK_SRC/vendor-addon/$f" "$V/$f" || echo "$f"
+	done > "$R/fake/addon.diff"
+	[ -s "$R/fake/addon.diff" ] && { bad "$SC: add-on files differ: $(head -n 3 "$R/fake/addon.diff")"; return; }
+	ok "$SC: add-on installed in /vendor"
+}
+
+for SH in $SHELLS; do
+echo "== MODE=ak, shell: $SH"
+VBM_SRC=$AK_ICH/vbmeta.img
+
+SC="$SH/ak-install-ichthys"; new_root_ak a1 "$AK_ICH" ichthys
+run_ak "$ZA" "$SH"
+expect_rc 0; expect_akparts "$EXI"; expect_akaddon; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+expect_msg "ROM: LineageOS-based"; expect_msg "Current kernel: 5.4"; expect_msg "the ROM's ramdisk (Android 17.0.0, patch level 2026-06)"
+[ -e "$R/fake/parts/dm-1.d/lib/modules/6.12/.a52-created-5.4-gki" ] && ok "$SC: 5.4-gki marked as created" || bad "$SC: no 5.4-gki marker"
+grep -q 'sdcard not mounted' "$R/fake/last.log" && ok "$SC: undecrypted /sdcard skipped" || bad "$SC: /sdcard reason not logged"
+
+SC="$SH/ak-reflash-same"
+run_ak "$ZA" "$SH"
+expect_rc 0; expect_akparts "$EXI"; expect_ak_safe; expect_msg "already hold these images"
+[ "$(ak_bk | wc -l)" = 1 ] && ok "$SC: no second backup" || bad "$SC: second backup"
+
+SC="$SH/ak-restore-ichthys"
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_ICH"; expect_vendor_rom; expect_ak_safe
+expect_msg "matches the current 6.12 images"; expect_msg "removed /vendor/lib/modules/5.4-gki (created"
+
+SC="$SH/ak-restore-again"   # nothing left to do: images = backup
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "already hold this backup's images"
+
+SC="$SH/ak-install-lineage-sdcard"; new_root_ak l1 "$AK_LIN" lineage; sdcard_ok; VBM_SRC=$AK_LIN/vbmeta.img
+cp "$R/fake/parts/dm-1.d/lib/modules/5.4-gki/qca_cld3_wlan.ko" "$R/rom-54gki.ko"
+run_ak "$ZA" "$SH"
+expect_rc 0; expect_akparts "$EXL"; expect_akaddon; expect_ak_backup sdcard "$AK_LIN"; expect_ak_safe
+expect_msg "ROM: LineageOS 24.0-20261028"; expect_msg "patch level 2026-10"
+d=$(ak_bk | tail -n 1); cmp -s "$d/vendor/lib/modules/5.4-gki/qca_cld3_wlan.ko" "$R/rom-54gki.ko" && ok "$SC: ROM 5.4-gki wlan.ko in the backup" || bad "$SC: 5.4-gki not backed up"
+[ -z "$(ls "$R"/cache/a52s-k612-backup 2>/dev/null)" ] && ok "$SC: nothing in /cache" || bad "$SC: /cache used"
+
+SC="$SH/ak-restore-lineage"
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_LIN"; expect_vendor_rom; expect_ak_safe; expect_msg "put back 2 ROM file"
+
+SC="$SH/ak-over-old-612-zip"   # LineageOS on rb24 = alpha5 (old zip), its raw backup of the ROM images on /sdcard
+new_root_ak l2 "$AK_LIN" lineage; sdcard_ok
+for p in boot vendor_boot dtbo; do cp --sparse=always "$AK_RB24/$p.img" "$R/blk/$(case $p in boot) echo sda19;; vendor_boot) echo sda21;; dtbo) echo sda22;; esac)"; done
+ob=$R/sdcard/a52s-k612-backup/20261117-120000; mkdir -p "$ob"
+for p in boot vendor_boot dtbo; do cp --sparse=always "$AK_LIN/$p.img" "$ob/$p.img"; (cd "$ob" && sha256sum $p.img >> SHA256SUMS); done
+printf 'a52sxq kernel backup, taken by: Linux 6.12 kernel alpha5 (install)\ndate: 20261117-120000\nkernel: Linux version 5.4.302-qgki\n' > "$ob/info.txt"
+run_ak "$ZA" "$SH"
+expect_rc 0; expect_akparts "$EXL"; expect_ak_safe; expect_msg "a 6.x kernel of this project: no new backup"; expect_msg "used by the restore zip): /sdcard/a52s-k612-backup/20261117-120000"
+grep -q 'removed_a52_fragments=1' "$R/fake/last.log" && ok "$SC: rb24's first-stage fragment replaced, not stacked" || bad "$SC: old fragment"
+SC="$SH/ak-restore-to-old-zip-backup"
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_LIN"; expect_ak_safe; expect_msg "Backup: /sdcard/a52s-k612-backup/20261117-120000"
+
+SC="$SH/ak-restore-wrong-rom"   # 6.12 over IchthysOS, only a LineageOS backup around
+new_root_ak w1 "$AK_ICH" ichthys; VBM_SRC=$AK_ICH/vbmeta.img
+for p in boot vendor_boot dtbo; do cp --sparse=always "$EXI/$p.img" "$R/blk/$(case $p in boot) echo sda19;; vendor_boot) echo sda21;; dtbo) echo sda22;; esac)"; done
+cp "$R/blk/sda19" "$R/b.before"
+mkdir -p "$R/cache/a52s-k612-backup/20261101-000000"; ob=$R/cache/a52s-k612-backup/20261101-000000
+for p in boot vendor_boot dtbo; do "$AKH" pack "$AK_LIN/$p.img" "$ob/$p.img.a52pack" > /dev/null; (cd "$AK_LIN" && sha256sum $p.img >> "$ob/SHA256SUMS"); done
+printf 'date: 20261101-000000\nkernel: Linux version 5.4.302-qgki\nformat: pack\n' > "$ob/info.txt"
+run_ak "$ZR" "$SH"
+expect_rc 1; expect_akparts "$EXI"; expect_ak_safe; expect_msg "no backup (1 looked at) holds the ROM images"; expect_msg "Nothing was written"
+grep -q 'origin=differs: boot header' "$R/fake/last.log" && ok "$SC: origin mismatch logged" || bad "$SC: origin reason"
+
+SC="$SH/ak-restore-damaged-backup"; new_root_ak w2 "$AK_ICH" ichthys
+run_ak "$ZA" "$SH" > /dev/null
+d=$(ak_bk | tail -n 1); printf '\x01' | dd of="$d/boot.img.a52pack" bs=1 seek=300000 conv=notrunc status=none
+run_ak "$ZR" "$SH"
+expect_rc 1; expect_akparts "$EXI"; expect_ak_safe; expect_msg "is damaged (checksums): skipped"
+
+SC="$SH/ak-restore-on-stock"; new_root_ak w3 "$AK_ICH" ichthys
+run_ak "$ZR" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "is not a 6.x kernel of this project"
+
+SC="$SH/ak-no-backup-space"; new_root_ak b1 "$AK_ICH" ichthys; sed -i 's#^/cache .*#/cache /dev/block/sda29 30000#' "$R/fake/df.conf"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_no_addon
+expect_msg "no place for a backup"; expect_msg "MB needed"; expect_msg "Nothing was written"
+
+SC="$SH/ak-nobackup-zipname"; new_root_ak b2 "$AK_ICH" ichthys; sed -i 's#^/cache .*#/cache /dev/block/sda29 30000#' "$R/fake/df.conf"
+ZIPNAME=k-nobackup.zip run_ak "$ZA" "$SH"
+expect_rc 0; expect_akparts "$EXI"; expect_no_ak_backup; expect_ak_safe; expect_msg "installing WITHOUT one"
+
+SC="$SH/ak-cache-not-writable"; new_root_ak b3 "$AK_ICH" ichthys; chmod 0555 "$R/cache"; touch "$R/cache/.ro"
+sed -i 's#^/cache .*#/cache rootfs 75000#' "$R/fake/df.conf"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "/cache not mounted"
+chmod 0755 "$R/cache"
+
+SC="$SH/ak-sdcard-is-microsd"; new_root_ak b4 "$AK_ICH" ichthys; sed -i 's#^/sdcard .*#/sdcard /dev/block/mmcblk1p1 9000000#' "$R/fake/df.conf"
+run_ak "$ZA" "$SH"
+expect_rc 0; expect_akparts "$EXI"; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+
+SC="$SH/ak-vbmeta-verification-on"; new_root_ak c1 "$AK_ICH" ichthys
+printf '\x00' | dd of="$R/blk/sde19" bs=1 seek=123 conv=notrunc status=none; cp "$R/blk/sde19" "$R/vbm"; VBM_SRC=$R/vbm
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "AVB verification is enabled"
+VBM_SRC=$AK_ICH/vbmeta.img
+
+SC="$SH/ak-rom-android16"; new_root_ak c2 "$AK_ICH" ichthys
+sed -i 's/^ro.build.version.release=.*/ro.build.version.release=16/; s/^ro.build.version.sdk=.*/ro.build.version.sdk=36/' "$R/fake/parts/dm-0.d/system/build.prop"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "not Android 17"
+
+SC="$SH/ak-rom-not-lineage"; new_root_ak c3 "$AK_ICH" ichthys
+sed -i '/ro.lineage/d' "$R/fake/parts/dm-0.d/system/build.prop" "$R/fake/parts/dm-2.d/etc/build.prop"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "not LineageOS-based"
+
+SC="$SH/ak-rom-lineage23"; new_root_ak c4 "$AK_LIN" lineage; VBM_SRC=$AK_LIN/vbmeta.img
+sed -i 's/^ro.lineage.version=.*/ro.lineage.version=23.2-20260901-NIGHTLY-a52sxq/' "$R/fake/parts/dm-2.d/etc/build.prop"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_LIN"; expect_ak_safe; expect_msg "is not LineageOS 24"
+VBM_SRC=$AK_ICH/vbmeta.img
+
+SC="$SH/ak-vendor-not-a52sxq"; new_root_ak c5 "$AK_ICH" ichthys
+sed -i 's/^ro.product.vendor.device=.*/ro.product.vendor.device=a52q/' "$R/fake/parts/dm-1.d/build.prop"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "not an a52sxq vendor"
+
+SC="$SH/ak-vendor-no-wifi_sec"; new_root_ak c6 "$AK_ICH" ichthys; rm "$R/fake/parts/dm-1.d/etc/init/wifi_sec.rc"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "lacks what the 6.12 add-on needs: etc/init/wifi_sec.rc"
+
+SC="$SH/ak-system-unmountable"; new_root_ak c7 "$AK_ICH" ichthys; rm -r "$R/fake/parts/dm-0.d"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "cannot mount system read-only"
+
+SC="$SH/ak-boot-header-v2"; new_root_ak c8 "$AK_ICH" ichthys
+printf '\x02' | dd of="$R/blk/sda19" bs=1 seek=40 conv=notrunc status=none; cp "$R/blk/sda19" "$R/b.v2"
+run_ak "$ZA" "$SH"
+expect_rc 1; cmp -s "$R/blk/sda19" "$R/b.v2" && ok "$SC: boot unchanged" || bad "$SC: boot changed"; expect_ak_safe
+expect_msg "boot image header version 2 is not supported"
+
+SC="$SH/ak-boot-is-not-boot"; new_root_ak c9 "$AK_ICH" ichthys; head -c 4096 /dev/zero | dd of="$R/blk/sda19" conv=notrunc status=none; cp "$R/blk/sda19" "$R/b.z"
+run_ak "$ZA" "$SH"
+expect_rc 1; cmp -s "$R/blk/sda19" "$R/b.z" && ok "$SC: boot unchanged" || bad "$SC: boot changed"; expect_ak_safe; expect_msg "does not hold a boot image"
+
+SC="$SH/ak-write-verify-fails"; new_root_ak f1 "$AK_ICH" ichthys; touch "$R/fake/corrupt.sda21"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "verification failed for: vendor_boot"; expect_msg "previous kernel was restored and verified"
+
+SC="$SH/ak-restore-write-fails"; rm -f "$R/fake/corrupt.sda21"; run_ak "$ZA" "$SH" > /dev/null; touch "$R/fake/corrupt.sda22"
+run_ak "$ZR" "$SH"
+expect_rc 1; expect_akparts "$EXI"; expect_ak_safe; expect_msg "verification failed for: dtbo"; expect_msg "previous kernel was restored and verified"
+
+SC="$SH/ak-low-tmp"; new_root_ak t1 "$AK_ICH" ichthys; sed -i 's#^/tmp .*#/tmp tmpfs 100000#' "$R/fake/df.conf"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "not enough space in /tmp"
+
+SC="$SH/ak-truncated-zip"; new_root_ak t2 "$AK_ICH" ichthys; head -c $(( $(stat -c %s "$ZA") / 2 )) "$ZA" > "$R/bad.zip"
+run_ak "$R/bad.zip" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe
+
+SC="$SH/ak-concurrent-run"; new_root_ak k1 "$AK_ICH" ichthys   # another install holds the lock (pid 1 = alive)
+mkdir -p "$R/tmp/a52s-k612.lock" "$R/tmp/a52s-k612/z"; echo 1 > "$R/tmp/a52s-k612.lock/pid"; echo other > "$R/tmp/a52s-k612/z/marker"; echo "other run" > "$R/tmp/a52s-k612.log"
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_msg "another a52s-k612 zip is being installed"
+[ -f "$R/tmp/a52s-k612/z/marker" ] && grep -q "other run" "$R/tmp/a52s-k612.log" && [ -d "$R/tmp/a52s-k612.lock" ] &&
+	ok "$SC: the other run's work dir, log and lock untouched" || bad "$SC: other run disturbed"
+SC="$SH/ak-stale-lock"; rm -rf "$R/tmp/a52s-k612" "$R/tmp/a52s-k612.log"; echo 99999 > "$R/tmp/a52s-k612.lock/pid"
+run_ak "$ZA" "$SH"
+expect_rc 0; expect_akparts "$EXI"; expect_ak_safe
+[ ! -e "$R/tmp/a52s-k612.lock" ] && ok "$SC: lock released" || bad "$SC: lock left"
+SC="$SH/ak-reinstall-addon-files-not-backed-up"   # ROM images again (backup exists), an older add-on rc on /vendor
+cp --sparse=always "$AK_ICH/boot.img" "$R/blk/sda19"; cp --sparse=always "$AK_ICH/vendor_boot.img" "$R/blk/sda21"; cp --sparse=always "$AK_ICH/dtbo.img" "$R/blk/sda22"
+echo "# older add-on rc" > "$R/fake/parts/dm-1.d/etc/init/a52sxq-k612.rc"
+run_ak "$ZA" "$SH"
+expect_rc 0; expect_akaddon; expect_akparts "$EXI"; expect_msg "already backed up"
+[ ! -e "$(ak_bk | tail -n 1)/vendor/etc/init/a52sxq-k612.rc" ] && ok "$SC: old add-on rc not saved as a ROM file" || bad "$SC: add-on rc in the backup"
+[ "$(ls "$(ak_bk | tail -n 1)" | grep -c '^install.*log$')" -ge 2 ] && ok "$SC: second run's log kept beside the first" || bad "$SC: install.log overwritten"
+
+if [ -n "$ZK" ]; then
+VBM_SRC=$AK_ICH/vbmeta.img
+SC="$SH/ak-ko-install-clean"; new_root_ak k2 "$AK_ICH" ichthys   # kernel-only on a ROM that never had an add-on
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_no_addon; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+expect_msg "nothing is installed into /vendor (no older add-on there)"
+grep -qE '^mount .*(-o rw|remount,rw)' "$R/fake/cmd.log" && bad "$SC: /vendor was mounted read-write" || ok "$SC: /vendor never mounted read-write"
+[ ! -e "$R/fake/parts/dm-1.d/lib/modules/5.4-gki" ] && ok "$SC: no 5.4-gki created" || bad "$SC: 5.4-gki created"
+SC="$SH/ak-ko-restore-clean"
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_ICH"; expect_vendor_rom; expect_ak_safe
+
+SC="$SH/ak-ko-over-addon-ichthys"; new_root_ak k3 "$AK_ICH" ichthys   # add-on build first (the daily-phone case), then kernel-only
+run_ak "$ZA" "$SH" > /dev/null
+[ -e "$R/fake/parts/dm-1.d/lib/modules/6.12/.a52-created-5.4-gki" ] || bad "$SC: setup (add-on install)"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_vendor_rom; expect_ak_safe
+expect_msg "add-on of an earlier install is not needed"; expect_msg "removed /vendor/lib/modules/5.4-gki (created"; expect_msg "removed /vendor/lib/modules/6.12 and"
+expect_msg "no new backup"
+SC="$SH/ak-ko-over-addon-restore"
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_ICH"; expect_vendor_rom; expect_ak_safe; expect_msg "not installed: nothing to remove"
+
+SC="$SH/ak-ko-over-addon-lineage"; new_root_ak k4 "$AK_LIN" lineage; sdcard_ok; VBM_SRC=$AK_LIN/vbmeta.img
+cp "$R/fake/parts/dm-1.d/lib/modules/5.4-gki/qca_cld3_wlan.ko" "$R/rom-54gki.ko"
+run_ak "$ZA" "$SH" > /dev/null
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_vendor_rom; expect_ak_safe; expect_msg "put back 2 ROM file"
+SC="$SH/ak-ko-over-addon-lineage-restore"
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_LIN"; expect_vendor_rom; expect_ak_safe
+
+SC="$SH/ak-ko-stale-wlan-only"; new_root_ak k5 "$AK_ICH" ichthys; VBM_SRC=$AK_ICH/vbmeta.img   # only a 6.x wlan.ko left on the 5.4-gki path
+mkdir -p "$R/fake/parts/dm-1.d/lib/modules/5.4-gki"
+{ head -c 3000 /dev/urandom; printf 'vermagic=6.12.81-4k SMP preempt'; } > "$R/fake/parts/dm-1.d/lib/modules/5.4-gki/qca_cld3_wlan.ko"
+echo "# drivers612/realboot" > "$R/fake/parts/dm-1.d/lib/modules/5.4-gki/modules.dep"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_vendor_rom; expect_ak_safe; expect_msg "removed the 6.x wlan.ko"
+
+SC="$SH/ak-ko-vendor-ro"; new_root_ak k6 "$AK_ICH" ichthys   # old add-on, but /vendor cannot go read-write: install still succeeds
+run_ak "$ZA" "$SH" > /dev/null
+touch "$R/fake/norw.dm-1"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_safe
+rm -f "$R/fake/norw.dm-1"; expect_msg "add-on stays in /vendor"
+VBM_SRC=$AK_ICH/vbmeta.img
+fi
+
+# the shipped static arm64 binary itself (qemu-aarch64): full install + restore
+SC="$SH/ak-arm64-install"; new_root_ak q1 "$AK_ICH" ichthys
+run_ak "$ZA" "$SH" qemu
+expect_rc 0; expect_akparts "$EXI"; expect_akaddon; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+SC="$SH/ak-arm64-restore"
+run_ak "$ZR" "$SH" qemu
+expect_rc 0; expect_akparts "$AK_ICH"; expect_vendor_rom; expect_ak_safe
+done
+
+# ------------------------------------------------------------------ a52boot on header v4 (synthetic)
+echo "== a52boot: boot/vendor_boot header v4 (mkbootimg-made)"
+V4=$T/v4; mkdir -p "$V4"
+head -c 300000 /dev/urandom > "$V4/k-old"; printf 'ARMd' | dd of="$V4/k-old" bs=1 seek=56 conv=notrunc status=none
+head -c 5000 /dev/urandom > "$V4/rd"; head -c 3000 /dev/urandom > "$V4/sig"
+head -c 7000 /dev/urandom > "$V4/vr1"; head -c 9000 /dev/urandom > "$V4/vr2"; printf 'bootconfig.x=1\n' > "$V4/bc"
+mkbootimg --header_version 4 --os_version 17.0.0 --os_patch_level 2026-06 --kernel "$V4/k-old" --ramdisk "$V4/rd" --cmdline 'x=1' -o "$V4/boot.img" 2> /dev/null &&
+avbtool add_hash_footer --image "$V4/boot.img" --partition_name boot --partition_size 67108864 > /dev/null 2>&1 &&
+mkbootimg --header_version 4 --vendor_boot "$V4/vb.img" --vendor_cmdline 'rom=1' --dtb "$T/akx/vendor_boot.dtb" \
+	--ramdisk_type platform --ramdisk_name rom1 --vendor_ramdisk_fragment "$V4/vr1" \
+	--ramdisk_type dlkm --ramdisk_name rom2 --vendor_ramdisk_fragment "$V4/vr2" --vendor_bootconfig "$V4/bc" 2> /dev/null &&
+truncate -s 33554432 "$V4/vb.img" || { bad "v4: mkbootimg/avbtool cannot make the test images"; V4=""; }
+if [ -n "$V4" ]; then
+	"$AKH" mkboot "$V4/boot.img" "$T/akx/Image" "$V4/nb.img" > "$V4/nb.out" 2>&1 && unpack_bootimg --boot_img "$V4/nb.img" --out "$V4/ub" > "$V4/ub.txt" &&
+	cmp -s "$V4/ub/kernel" "$T/akx/Image" && cmp -s "$V4/ub/ramdisk" "$V4/rd" && grep -q 'os patch level: 2026-06' "$V4/ub.txt" &&
+	grep -q '^command line args: x=1' "$V4/ub.txt" && avbtool info_image --image "$V4/nb.img" > /dev/null && "$AKH" info "$V4/nb.img" | grep -q avb_hash_ok=1 &&
+		ok "v4 boot: kernel replaced, ramdisk/os/patch/cmdline kept, AVB footer valid" || bad "v4 boot: $(cat "$V4/nb.out")"
+	"$AKH" mkvendor "$V4/vb.img" "$T/akx/vendor_boot.dtb" "$T/akx/vendor-cmdline.txt" "$T/akx/vendor-ramdisk-a52.cpio.lz4" "$V4/nv.img" > "$V4/nv.out" 2>&1 &&
+	"$AKH" mkvendor "$V4/nv.img" "$T/akx/vendor_boot.dtb" "$T/akx/vendor-cmdline.txt" "$T/akx/vendor-ramdisk-a52.cpio.lz4" "$V4/nv2.img" > "$V4/nv2.out" 2>&1 &&
+	cmp -s "$V4/nv.img" "$V4/nv2.img" && grep -q removed_a52_fragments=1 "$V4/nv2.out" &&
+	unpack_bootimg --boot_img "$V4/nv.img" --out "$V4/uv" > "$V4/uv.txt" &&
+	cmp -s "$V4/uv/vendor_ramdisk00" "$V4/vr1" && cmp -s "$V4/uv/vendor_ramdisk01" "$V4/vr2" && cmp -s "$V4/uv/vendor_ramdisk02" "$T/akx/vendor-ramdisk-a52.cpio.lz4" &&
+	grep -q 'name: a52sxq-k612' "$V4/uv.txt" && cmp -s "$V4/uv/bootconfig" "$V4/bc" && cmp -s "$V4/uv/dtb" "$T/akx/vendor_boot.dtb" &&
+		ok "v4 vendor_boot: ROM fragments + bootconfig kept, ours added as 'a52sxq-k612', re-run replaces it (idempotent)" || bad "v4 vendor_boot: $(cat "$V4/nv.out" "$V4/nv2.out" | tail -n 3)"
+	"$AKH" mkboot "$V4/boot.img" "$V4/rd" "$V4/x.img" > /dev/null 2>&1 && bad "a52boot took a non-Image kernel" || ok "a52boot refuses a kernel without the ARMd magic"
+	printf '\x01' | dd of="$V4/nb.img" bs=1 seek=$(( 67108864 - 64 - 4096 + 100 )) conv=notrunc status=none
+	"$AKH" mkboot "$V4/boot.img" "$T/akx/Image" "$V4/nb.img" > /dev/null 2>&1; "$AKH" info "$V4/nb.img" | grep -q avb_hash_ok=1 && ok "a52boot output replaces a partially written file" || bad "rewrite"
+fi
+fi
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"

@@ -1,0 +1,38 @@
+diff --color -ruN a/Kbuild b/Kbuild
+--- a/Kbuild	2026-11-18 19:51:23.792785363 +0200
++++ b/Kbuild	2026-11-18 19:52:26.395149172 +0200
+@@ -29,6 +29,10 @@
+ obj-$(CONFIG_QSEECOM) += qseecom_dlkm.o
+ qseecom_dlkm-objs := qseecom/qseecom.o
+ qseecom_dlkm-$(CONFIG_COMPAT) += qseecom/qseecom_32bit_impl.o
++# a52sxq: CONFIG_QSEECOM=m on the make line is not a C macro; without it qseecom.c
++# compiles out its kernel API and never registers the qseecom_proxy ops (the listener
++# service for smcinvoke; 5.4 smcinvoke called qseecom.c directly)
++CFLAGS_qseecom/qseecom.o += -DCONFIG_QSEECOM=1
+ 
+ include $(SSG_MODULE_ROOT)/config/sec-kernel_defconfig_smcinvoke.conf
+ LINUXINCLUDE += -include $(SSG_MODULE_ROOT)/config/sec-kernel_defconfig_smcinvoke.h
+diff --color -ruN a/smcinvoke/compat/smcinvoke.c b/smcinvoke/compat/smcinvoke.c
+--- a/smcinvoke/compat/smcinvoke.c	2026-11-18 19:51:23.793527755 +0200
++++ b/smcinvoke/compat/smcinvoke.c	2026-11-18 19:52:26.395463442 +0200
+@@ -3454,7 +3454,7 @@
+ 	}
+ 	smcinvoke_pdev = pdev;
+ 
+-#if IS_ENABLED(CONFIG_QSEECOM_COMPAT) && IS_ENABLED(CONFIG_QSEECOM_PROXY)
++#if 0 /* a52sxq: qseecom_dlkm provides the proxy ops; do not overwrite them with the -EOPNOTSUPP stub (last writer wins) */
+ 	/*If the api fails to get the func ops, print the error and continue
+ 	* Do not treat it as fatal*/
+ 	rc = get_qseecom_kernel_fun_ops();
+diff --color -ruN a/smcinvoke/si_core_xts/smci.c b/smcinvoke/si_core_xts/smci.c
+--- a/smcinvoke/si_core_xts/smci.c	2026-11-18 19:51:23.795438560 +0200
++++ b/smcinvoke/si_core_xts/smci.c	2026-11-18 19:52:26.395689767 +0200
+@@ -1966,7 +1966,7 @@
+ 		goto exit_destroy_cdev;
+ 	}
+ 
+-#if IS_ENABLED(CONFIG_QSEECOM_COMPAT) && IS_ENABLED(CONFIG_QSEECOM_PROXY)
++#if 0 /* a52sxq: see compat/smcinvoke.c */
+ 	ret = get_qseecom_kernel_fun_ops();
+ 	if (ret)
+ 		pr_err("failed to get qseecom kernel func ops %d\n", ret);

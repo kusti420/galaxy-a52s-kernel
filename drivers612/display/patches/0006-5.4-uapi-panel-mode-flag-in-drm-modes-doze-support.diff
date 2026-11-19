@@ -1,0 +1,188 @@
+diff --color -ruN a/msm/dsi/dsi_drm.c b/msm/dsi/dsi_drm.c
+--- a/msm/dsi/dsi_drm.c	2026-11-19 19:15:57.497397221 +0200
++++ b/msm/dsi/dsi_drm.c	2026-11-19 19:15:57.498987066 +0200
+@@ -1628,3 +1628,21 @@
+ 
+ 	return 0;
+ }
++
++/*
++ * a52sxq: 5.4 UAPI compatibility (see a52_drm_ioctl() in msm_drv.c): is this DSI connector's
++ * panel a command-mode panel? 1 = command, 0 = video, -1 = not a DSI panel / unknown.
++ */
++int a52_dsi_conn_panel_cmd_mode(struct drm_connector *connector)
++{
++	struct sde_connector *c_conn;
++	struct dsi_display *display;
++
++	if (!connector || connector->connector_type != DRM_MODE_CONNECTOR_DSI)
++		return -1;
++	c_conn = to_sde_connector(connector);
++	display = c_conn->display;
++	if (!display || !display->panel)
++		return -1;
++	return display->panel->panel_mode == DSI_OP_CMD_MODE ? 1 : 0;
++}
+diff --color -ruN a/msm/msm_drv.c b/msm/msm_drv.c
+--- a/msm/msm_drv.c	2026-11-19 19:15:57.496387179 +0200
++++ b/msm/msm_drv.c	2026-11-19 19:15:57.498184945 +0200
+@@ -1906,6 +1906,146 @@
+ 			DRM_UNLOCKED),
+ };
+ 
++/*
++ * a52sxq: the 5.4 display UAPI told userspace the panel type in drm_mode_modeinfo.flags
++ * (DRM_MODE_FLAG_VID_MODE_PANEL 1 << 29, DRM_MODE_FLAG_CMD_MODE_PANEL 1 << 30; 5.4
++ * dsi_drm.c convert_to_drm_mode). The ROM's composer (hardware/qcom-caf/sm8350/display,
++ * sdm hw_device_drm.cpp PopulateDisplayAttributes) sets smart_panel only from that flag, and
++ * HWCSession::GetDozeSupport() = HasSmartPanelConfig(): without it the composer reports "no doze",
++ * SurfaceFlinger sends ON for DOZE, CONNECTOR_PROP_LP never becomes LP1 and the panel never enters
++ * LPM (AOD at full power, 120 Hz; pm_suspend then blanks the non-LP connector). The r7 techpack
++ * moved the information into the mode blob (panel_mode_capabilities) and the GKI DRM core rejects
++ * unknown mode flags (drm_mode_validate_basic: ~DRM_MODE_FLAG_ALL -> MODE_BAD), so the flag cannot
++ * live in the kernel's own modes. Translate at the ioctl boundary instead:
++ *  - GETCONNECTOR: add the flag to every mode copied out for a DSI connector;
++ *  - CREATEPROPBLOB of a mode / SETCRTC: strip the two bits again before the core sees them.
++ */
++#define A52_MODE_FLAG_VID_PANEL	(1U << 29)
++#define A52_MODE_FLAG_CMD_PANEL	(1U << 30)
++#define A52_MODE_FLAG_PANEL	(A52_MODE_FLAG_VID_PANEL | A52_MODE_FLAG_CMD_PANEL)
++int a52_dsi_conn_panel_cmd_mode(struct drm_connector *connector);
++
++static long a52_createblob(struct file *filp, void __user *uarg, bool *handled)
++{
++	struct drm_file *file_priv = filp->private_data;
++	struct drm_device *dev = file_priv->minor->dev;
++	struct drm_mode_create_blob cb;
++	struct drm_mode_modeinfo m;
++	struct drm_property_blob *blob;
++
++	*handled = false;
++	if (copy_from_user(&cb, uarg, sizeof(cb)) || cb.length != sizeof(m))
++		return 0;
++	if (copy_from_user(&m, u64_to_user_ptr(cb.data), sizeof(m)) ||
++	    !(m.flags & A52_MODE_FLAG_PANEL))
++		return 0;
++
++	/* the body of drm_mode_createblob_ioctl() with the cleaned mode */
++	*handled = true;
++	m.flags &= ~A52_MODE_FLAG_PANEL;
++	blob = drm_property_create_blob(dev, sizeof(m), &m);
++	if (IS_ERR(blob))
++		return PTR_ERR(blob);
++	mutex_lock(&dev->mode_config.blob_lock);
++	cb.blob_id = blob->base.id;
++	if (copy_to_user(uarg, &cb, sizeof(cb))) {
++		mutex_unlock(&dev->mode_config.blob_lock);
++		drm_property_blob_put(blob);
++		return -EFAULT;
++	}
++	list_add_tail(&blob->head_file, &file_priv->blobs);
++	mutex_unlock(&dev->mode_config.blob_lock);
++	return 0;
++}
++
++static void a52_getconnector_fixup(struct file *filp, void __user *uarg, u32 in_count)
++{
++	struct drm_file *file_priv = filp->private_data;
++	struct drm_device *dev = file_priv->minor->dev;
++	struct drm_mode_get_connector gc;
++	struct drm_mode_modeinfo __user *um;
++	struct drm_connector *conn;
++	u32 i, flags, add;
++	int cmd;
++
++	if (copy_from_user(&gc, uarg, sizeof(gc)) || !gc.modes_ptr || !gc.count_modes ||
++	    in_count < gc.count_modes)		/* the core copied modes only when they all fit */
++		return;
++	conn = drm_connector_lookup(dev, file_priv, gc.connector_id);
++	if (!conn)
++		return;
++	cmd = a52_dsi_conn_panel_cmd_mode(conn);
++	drm_connector_put(conn);
++	if (cmd < 0)
++		return;
++	add = cmd ? A52_MODE_FLAG_CMD_PANEL : A52_MODE_FLAG_VID_PANEL;
++	um = u64_to_user_ptr(gc.modes_ptr);
++	for (i = 0; i < gc.count_modes; i++) {
++		if (get_user(flags, &um[i].flags))
++			return;
++		if (put_user((flags & ~A52_MODE_FLAG_PANEL) | add, &um[i].flags))
++			return;
++	}
++}
++
++static long a52_drm_ioctl_common(struct file *filp, unsigned int cmd, unsigned long arg,
++		long (*fn)(struct file *, unsigned int, unsigned long))
++{
++	void __user *uarg = (void __user *)arg;
++	u32 in_count = 0;
++	long ret;
++
++	switch (cmd) {
++	case DRM_IOCTL_MODE_CREATEPROPBLOB: {
++		bool handled;
++
++		ret = a52_createblob(filp, uarg, &handled);
++		if (handled)
++			return ret;
++		break;
++	}
++	case DRM_IOCTL_MODE_SETCRTC: {
++		struct drm_mode_crtc c;
++
++		/* legacy modeset with a mode taken from GETCONNECTOR (_IOWR: the core copies the struct back anyway) */
++		if (!copy_from_user(&c, uarg, sizeof(c)) && c.mode_valid &&
++		    (c.mode.flags & A52_MODE_FLAG_PANEL)) {
++			c.mode.flags &= ~A52_MODE_FLAG_PANEL;
++			if (copy_to_user(uarg, &c, sizeof(c)))
++				return -EFAULT;
++		}
++		break;
++	}
++	case DRM_IOCTL_MODE_GETCONNECTOR: {
++		struct drm_mode_get_connector gc;
++
++		if (!copy_from_user(&gc, uarg, sizeof(gc)))
++			in_count = gc.count_modes;
++		break;
++	}
++	default:
++		break;
++	}
++
++	ret = fn(filp, cmd, arg);
++	if (!ret && cmd == DRM_IOCTL_MODE_GETCONNECTOR)
++		a52_getconnector_fixup(filp, uarg, in_count);
++	return ret;
++}
++
++static long a52_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++	return a52_drm_ioctl_common(filp, cmd, arg, drm_ioctl);
++}
++
++#ifdef CONFIG_COMPAT
++static long a52_drm_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++	/* the three structs have the same layout for 32-bit callers (u64 pointers) */
++	return a52_drm_ioctl_common(filp, cmd, arg, drm_compat_ioctl);
++}
++#endif
++
+ static const struct file_operations fops = {
+ 	.owner              = THIS_MODULE,
+ 	.open               = drm_open,
+@@ -1913,8 +2053,10 @@
+ #if (KERNEL_VERSION(6, 10, 0) <= LINUX_VERSION_CODE)
+ 	.fop_flags          = FOP_UNSIGNED_OFFSET,
+ #endif
+-	.unlocked_ioctl     = drm_ioctl,
+-	.compat_ioctl       = drm_compat_ioctl,
++	.unlocked_ioctl     = a52_drm_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl       = a52_drm_compat_ioctl,
++#endif
+ 	.poll               = drm_poll,
+ 	.read               = drm_read,
+ #if (KERNEL_VERSION(6, 12, 0) > LINUX_VERSION_CODE)

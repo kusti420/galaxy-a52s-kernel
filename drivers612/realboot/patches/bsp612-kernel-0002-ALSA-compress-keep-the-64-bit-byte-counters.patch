@@ -1,0 +1,46 @@
+a52sxq: ALSA: compress: keep the 64-bit byte counters across a 32-bit copied_total
+
+NOT APPLIED. Needs a GKI Image rebuild + rehearsal (changes vmlinux, not a module). To apply:
+copy to bsp612/patches/kernel/ (assemble.sh applies it to bsp612/kernel), then build.sh gki;
+mind the "-dirty" localversion gotcha so that vermagic stays 6.12.81-4k-g8a69376da734.
+
+snd_compr_update_tstamp() overwrites runtime->total_bytes_transferred (u64) with the uapi
+tstamp's __u32 copied_total after the driver's pointer() returned. After 4 GiB in one
+compressed-offload session (gapless playback) snd_compr_calc_avail() underflows: poll always
+reports POLLOUT, write accepts everything and unplayed data is overwritten. The 5.4 kernel
+(CONFIG_AUDIO_QGKI) did not overwrite the driver's 64-bit value. Extend the 32-bit value
+instead: keep the upper bits and carry on a wrap. Function body only, no KMI change.
+(audit 2026-11-18, confirmed 49; upstream fixed it in 6.16 with the tstamp64 series)
+
+--- a/sound/core/compress_offload.c
++++ b/sound/core/compress_offload.c
+@@ -179,15 +179,25 @@
+ static int snd_compr_update_tstamp(struct snd_compr_stream *stream,
+ 		struct snd_compr_tstamp *tstamp)
+ {
++	u64 *ctr, v;
++
+ 	if (!stream->ops->pointer)
+ 		return -ENOTSUPP;
+ 	stream->ops->pointer(stream, tstamp);
+ 	pr_debug("dsp consumed till %d total %d bytes\n",
+ 		tstamp->byte_offset, tstamp->copied_total);
+-	if (stream->direction == SND_COMPRESS_PLAYBACK)
+-		stream->runtime->total_bytes_transferred = tstamp->copied_total;
+-	else
+-		stream->runtime->total_bytes_available = tstamp->copied_total;
++	/*
++	 * a52sxq: copied_total is 32 bits in the uapi struct, the runtime counters are 64 bits.
++	 * Extend instead of truncating: keep the upper 32 bits (the driver's pointer() may have
++	 * stored the full value already, as msm-compress-q6-v2 does) and carry on a wrap.
++	 */
++	ctr = stream->direction == SND_COMPRESS_PLAYBACK ?
++		&stream->runtime->total_bytes_transferred :
++		&stream->runtime->total_bytes_available;
++	v = (*ctr & ~0xffffffffULL) | tstamp->copied_total;
++	if (v < *ctr)
++		v += 1ULL << 32;
++	*ctr = v;
+ 	return 0;
+ }
+ 

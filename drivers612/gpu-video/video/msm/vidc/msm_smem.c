@@ -3,6 +3,7 @@
  * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
  */
 
+#include <linux/version.h>
 #include <linux/dma-heap.h>
 #include <linux/qcom_dma_heap.h>
 #include <linux/dma-buf.h>
@@ -593,12 +594,35 @@ int msm_smem_cache_operations(struct dma_buf *dbuf,
 				offset, size);
 		break;
 	case SMEM_CACHE_INVALIDATE:
+#if (KERNEL_VERSION(6, 1, 0) <= LINUX_VERSION_CODE)
+		/*
+		 * a52sxq 6.12 port: since 6.1 arm64's arch_sync_dma_for_device()
+		 * only CLEANS, whatever the direction; the 5.4 idiom below
+		 * (end_cpu_access with DMA_FROM_DEVICE -> sync_for_device ->
+		 * clean + invalidate) invalidates nothing any more, so a CPU
+		 * reader of a dequeued buffer (decoder YUV through
+		 * MediaCodec.getOutputImage, encoder bitstream) could see the
+		 * cache lines of the buffer's previous use: selftest "video"
+		 * HEVC decode, 7-9 of 90 frames with the picture of ~10 frames
+		 * earlier, 2 of 7 suite runs on rbich7 (2026-11-19). Only
+		 * sync_for_cpu with a direction other than DMA_TO_DEVICE
+		 * invalidates now (same change as kgsl_sharedmem.c
+		 * _dma_cache_op).
+		 */
+		rc = dma_buf_begin_cpu_access_partial(dbuf, DMA_FROM_DEVICE,
+				offset, size);
+		if (rc)
+			break;
+		rc = dma_buf_end_cpu_access_partial(dbuf, DMA_FROM_DEVICE,
+				offset, size);
+#else
 		rc = dma_buf_begin_cpu_access_partial(dbuf, DMA_TO_DEVICE,
 				offset, size);
 		if (rc)
 			break;
 		rc = dma_buf_end_cpu_access_partial(dbuf, DMA_FROM_DEVICE,
 				offset, size);
+#endif
 		break;
 	default:
 		s_vpr_e(sid, "%s: cache (%d) operation not supported\n",

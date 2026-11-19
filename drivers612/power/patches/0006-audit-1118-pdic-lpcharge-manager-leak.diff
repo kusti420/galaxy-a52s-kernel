@@ -1,0 +1,63 @@
+--- a/usb/typec/common/pdic_param.c
++++ b/usb/typec/common/pdic_param.c
+@@ -22,6 +22,8 @@
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/slab.h>
++#include <linux/of.h>
++#include <linux/string.h>
+ #include <linux/usb/typec/common/pdic_param.h>
+ 
+ static const char * const pdic_param_mode[] = {
+@@ -154,6 +156,24 @@
+ 		goto out;
+ 	}
+ 
++#if !IS_BUILTIN(CONFIG_PDIC_NOTIFIER)
++	{
++		/*
++		 * a52sxq 6.12: as a module the early_param("androidboot.mode") above is compiled
++		 * out and the bootloader passes no pdic_notifier_module.pdic_param_lpcharge=, so
++		 * derive off-mode charging (LPM) from the cmdline ABL writes to /chosen/bootargs
++		 * (it appends "androidboot.mode=charger" and "sec-battery.lpcharge=1"). Cached.
++		 */
++		const char *args = NULL;
++
++		if (of_chosen && !of_property_read_string(of_chosen, "bootargs", &args) && args &&
++		    (strstr(args, "androidboot.mode=charger") || strstr(args, "sec-battery.lpcharge=1")))
++			ret = 1;
++		pdic_param_lpcharge = ret;	/* single store: no transient 0 for a concurrent caller */
++		goto out;
++	}
++#endif
++
+ 	ret = lpcharge;
+ 
+ out:
+--- a/usb/typec/manager/usb_typec_manager_notifier.c
++++ b/usb/typec/manager/usb_typec_manager_notifier.c
+@@ -177,14 +177,14 @@
+ 					wVbus_time_update(typec_manager.water.wVbus_det);
+ #endif
+ 				} else if (!is_hiccup_event_saved)
+-					return;
++					goto out;	/* a52sxq: was return, leaked event_work */
+ 			}
+ 		}
+ 		break;
+ 	case PDIC_NOTIFY_DEV_USB:
+ 		if (event_work->event.sub2 == typec_manager.usb.notified_dr) {
+ 			pr_info("%s: Duplicate event(%s)\n", __func__, pdic_usbstatus_string(event_work->event.sub2));
+-			return;
++			goto out;	/* a52sxq: was return, leaked event_work */
+ 		}
+ 		typec_manager.usb.notified_dr = event_work->event.sub2;
+ 		break;
+@@ -239,6 +239,7 @@
+ 		break;
+ 	}
+ 
++out:
+ 	kfree(event_work);
+ }
+ 

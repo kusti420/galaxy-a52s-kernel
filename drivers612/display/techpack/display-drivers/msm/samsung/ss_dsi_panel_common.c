@@ -4150,6 +4150,8 @@ int ss_panel_off_post(struct samsung_display_driver_data *vdd)
 
 	if (vdd->finger_mask)
 		vdd->finger_mask = false;
+	/* a52sxq: no stale mask_brightness request across panel off */
+	WRITE_ONCE(vdd->ichthys_sysfs_mask_req, 0);
 
 	/* To prevent panel off without finger off */
 	if (vdd->br_info.common_br.finger_mask_hbm_on)

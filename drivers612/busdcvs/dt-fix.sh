@@ -80,3 +80,60 @@ if [ "${A52_SE8_UNRESERVE:-1}" = 1 ] && fdtget "$D" $TP qcom,gpios-reserved >/de
 		echo "dt-fix: TLMM gpios-reserved '$old' -> '${new% }' (SE8 USB-PD pins freed)"
 	fi
 fi
+
+# --- PMIC temp-alarm trips (audit 2026-11-18): fdtoverlay reverses children an overlay adds
+# (trip2,trip1,trip0). qcom-spmi-temp-alarm takes the FIRST critical trip as its stage-2 threshold
+# (5.4: 115 C; reversed: 145 C -> thresh 3, every stage +10 C, pm8350c S2 not overridden). Restore
+# ascending order in the *_tz zones only (the only ones whose driver depends on trip order).
+# Env A52_TRIP_ORDER_FIX=0 keeps the tree as is.
+if [ "${A52_TRIP_ORDER_FIX:-1}" = 1 ]; then
+	for z in $(fdtget -l "$D" /soc/thermal-zones | grep '_tz$'); do
+		T=/soc/thermal-zones/$z/trips
+		kids=$(fdtget -l "$D" $T 2>/dev/null) || continue
+		sorted=$(for k in $kids; do echo "$(fdtget -ti "$D" $T/$k temperature) $k"; done | sort -k1,1n -k2,2 | cut -d' ' -f2)
+		if [ "$(echo $kids)" = "$(echo $sorted)" ]; then continue; fi
+		# check every trip before the first one is touched
+		for k in $kids; do
+			for p in $(fdtget -p "$D" $T/$k); do
+				case $p in type|temperature|hysteresis|phandle) ;; *) echo "dt-fix: $T/$k has $p" >&2; exit 1;; esac
+			done
+		done
+		for k in $(printf '%s\n' $sorted | tac); do	# fdtput -c inserts in front
+			ty=$(fdtget -ts "$D" $T/$k type); te=$(fdtget -ti "$D" $T/$k temperature); hy=$(fdtget -ti "$D" $T/$k hysteresis)
+			ph=$(fdtget -tu "$D" $T/$k phandle 2>/dev/null || true)
+			fdtput -r "$D" $T/$k; fdtput -c "$D" $T/$k
+			fdtput -ts "$D" $T/$k type "$ty"; fdtput -ti "$D" $T/$k temperature $te; fdtput -ti "$D" $T/$k hysteresis $hy
+			if [ -n "$ph" ]; then fdtput -tu "$D" $T/$k phandle $ph; fi
+		done
+		[ "$(echo $(fdtget -l "$D" $T))" = "$(echo $sorted)" ] || { echo "dt-fix: $T reorder failed" >&2; exit 1; }
+		echo "dt-fix: $T trips reordered ascending"
+	done
+fi
+
+# --- SD card detect (audit 2026-11-18): the phone's 5.4 base has bias-disable on gpio91 in sdc2_on
+# (external pull-up, active-low CD); Qualcomm's 6.12 base has bias-pull-up, which draws current for
+# as long as a card sits in the tray. An overlay cannot delete a base property, hence here.
+SDCD=/soc/pinctrl@f000000/sdc2_on/sd-cd
+if [ "${A52_SDCD_BIAS_FIX:-1}" = 1 ] && fdtget "$D" $SDCD bias-pull-up >/dev/null 2>&1; then
+	[ "$(fdtget "$D" $SDCD pins)" = gpio91 ] || { echo "dt-fix: $SDCD is not gpio91" >&2; exit 1; }
+	fdtput -d "$D" $SDCD bias-pull-up
+	fdtput -ts "$D" $SDCD bias-disable
+	echo "dt-fix: $SDCD bias-pull-up -> bias-disable (as the phone's 5.4 base)"
+fi
+
+# Thermal cooling-maps: Qualcomm 5.4 trees use THERMAL_MAX_LIMIT (0xfffffffe = "straight to max state") in the
+# PMIC-temp and BCL zones (pm7325_tz, pm8350c_tz, pm8350c-bcl-lvl1/2, pmr735a_tz); 6.12 rejects it ("binding cdev
+# kgsl/cdsp to trip N failed: -22") so those zones never throttled anything. Replace with THERMAL_NO_LIMIT
+# (lower 0, upper max_state). Env A52_COOL_MAX_FIX=0 keeps the tree as is.
+if [ "${A52_COOL_MAX_FIX:-1}" = 1 ]; then
+	T=$(mktemp); dtc -q -I dtb -O dts -o "$T" "$D" 2>/dev/null
+	python3 -I "$(dirname "$0")/cool-max-fix.py" "$T" > "$T.fix" || { rm -f "$T" "$T.fix"; echo "dt-fix: cool-max-fix failed" >&2; exit 1; }
+	n=0
+	while read -r p cells; do
+		# shellcheck disable=SC2086
+		fdtput -tx "$D" "$p" cooling-device $cells || { rm -f "$T" "$T.fix"; echo "dt-fix: fdtput $p failed" >&2; exit 1; }
+		n=$((n + 1))
+	done < "$T.fix"
+	rm -f "$T" "$T.fix"
+	if [ "$n" -gt 0 ]; then echo "dt-fix: $n cooling-maps 0xfffffffe (5.4 THERMAL_MAX_LIMIT) -> THERMAL_NO_LIMIT"; fi
+fi

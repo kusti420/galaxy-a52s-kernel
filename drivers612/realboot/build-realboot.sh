@@ -82,6 +82,21 @@
 #   MODULE_FAILURES=ignore (default: androidboot.first_stage_console=2, a first-stage module
 #                     that fails is logged and skipped) | fatal (AOSP default: reboot loop)
 #   EXTRA_CMDLINE=    appended to the vendor_boot command line
+#   ADDON=vendor      (default on 6.18; 6.12 default is vendor_boot since 2026-11-19) the audio set, the wlan.ko and the rc live in the vendor add-on (written
+#                     into /vendor from a 5.4 boot or TWRP)
+#   ADDON=vendor_boot (2026-11-17) ROM-independent: NOTHING on /vendor. The audio set and wlan.ko are
+#                     appended to the FIRST stage (vendor_boot /lib/modules, loaded by the ROM's own
+#                     first-stage init, before any SELinux policy); a52sxq_dsp_boot attaches the audio
+#                     devices again once the ADSP runs (rescan_after_adsp=1) and writes the bus DCVS
+#                     tunables itself (built-in table from busdcvs.conf) at the WALT boost release,
+#                     through kernfs + the attribute's store() (no VFS: under enforcing SELinux a
+#                     kernel_write() from the kworker is denied, rb28 2026-11-17). Needs REF >= s84
+#                     (pinctrl_lpi_dlkm defers until its hw-vote clock is bound, else no card).
+#                     Wi-Fi: icnss2 probes the already-loaded wlan driver only at FW ready, i.e. after
+#                     macloader wrote /sys/wifi/mac_addr and then wpss_boot, so the MAC is the EFS one;
+#                     macloader's own finit_module() of /vendor/lib/modules/5.4-gki/... then fails
+#                     harmlessly (5.4 vermagic, or EEXIST). The gate property is ro.boot.a52sxq.<kt>vb,
+#                     so an old add-on rc left on /vendor stays inert. No vendor-addon/ output.
 #   SYNC_STATE_ARGS   bootargs that let interconnect/clk providers sync_state after a timeout (bus DCVS floor;
 #                     default "fw_devlink.sync_state=timeout deferred_probe_timeout=30", empty = off; both
 #                     kernels parse both: drivers/base/core.c fw_devlink_sync_state_setup, dd.c)
@@ -96,6 +111,20 @@
 #                     (default: keep_bootcon initcall_debug ignore_loglevel softlockup_panic=1).
 #                     DIAG_WDT=off adds a52bc.wdt=off (disable the hypervisor watchdog at the
 #                     param stage; default: observe only). kernel-diag/README.md: how to read it.
+#   BTSLIM=1          (6.12 default since 2026-11-19; 0 = off) slimbus + slim-qcom-ngd-ctrl + bt_fm_slim in the first stage after stage wlanb
+#                     (Bluetooth audio over SLIMbus; modules only, see the comment at the option)
+#   WDT=1 QRNG=1 HALL=1 VOLKEY=1 BWCOMPAT=1 ADSPFAC=1 THERMAL_X="adctm secth qmi bclmap"
+#                     (2026-11-19, all default off until proven) parity items: see the comments at the options
+#   GPU_BUSY_UP=<pct> (default unset; REF >= s97) adreno_tz governor steps up one level when >= pct busy (b5)
+#   KSU=1             (default 0) KernelSU-Next LKM: /ksuinit + /kernelsu.ko in the vendor ramdisk, rdinit=/ksuinit
+#                     (KSU_DIR=<dir> default modules/kernelsu/out); see the comment at the option
+#   USBAUDIO=1        (default 0) snd-usb-audio-qmi in the first stage after stage wlanb (USB audio offload)
+#   DIST_OVERRIDE=<dir> thermal modules found there replace the out/dist ones (soc-repo audit modules)
+#   DEBUG=1           (default 0) adds androidboot.a52sxq.debug=1 to the vendor_boot command line:
+#                     a52sxq_dsp_boot then creates /sys/devices/system/cpu/a52kmsg, the kernel log
+#                     for root/system/shell on user builds (no dmesg there). Off by default since
+#                     the 2026-11-18 audit: every SELinux domain can open files in that directory.
+#                     Never for a release or a daily-phone build. Independent of DIAG.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd); TOP=$(cd "$HERE/../.." && pwd)
 KSER=${KERNEL:-612}
@@ -106,7 +135,11 @@ PB=${ANDROID_TREE:-$HOME/android}/prebuilts
 SYNC_ARGS="${SYNC_STATE_ARGS-fw_devlink.sync_state=timeout deferred_probe_timeout=30}"
 if [ "$KSER" = 612 ]; then
 	KV=6.12; KT=k612; KDESC="Qualcomm 6.12 (GKI 6.12.81 + r70 BSP)"
-	REF=${REF:-s76}; REFRD=$TOP/drivers612/androidboot/out/$REF-rd.cpio.gz
+	REF=${REF:-s95}; REFRD=$TOP/drivers612/androidboot/out/$REF-rd.cpio.gz
+	# 6.12 defaults since 2026-11-19 (each proven on white cable: rb50..rb56): the kernel-only layout, Bluetooth
+	# SLIMbus audio, the thermal cooling stack, the audit builds of the dist thermal modules. DEBUG/DIAG stay opt-in.
+	ADDON=${ADDON:-vendor_boot}; BTSLIM=${BTSLIM:-1}; THERMAL=${THERMAL:-1}
+	[ -n "${DIST_OVERRIDE+x}" ] || { [ -d "$TOP/bsp612/out/audit-soc-modules" ] && DIST_OVERRIDE=$TOP/bsp612/out/audit-soc-modules; }
 	BSP=$TOP/bsp612; DIST=$BSP/out/dist; KCONFIG=$BSP/out/lahaina/.config
 	SYMVERS=$BSP/out/gki/Module.symvers
 	CLANG=$PB/clang/host/linux-x86/clang-r547379/bin
@@ -118,7 +151,7 @@ if [ "$KSER" = 612 ]; then
 	DIAG_KERNEL=1   # DIAG=1 uses the a52bc Image (kernel-diag/)
 	# Wi-Fi: wlan.ko sits in the ROM's fixed macloader path /vendor/lib/modules/5.4-gki itself
 	WLD=5.4-gki
-	MODEM_PACK_DEF=$TOP/drivers612/modem/out/pack-modem-txfix.tgz   # rb13+: kx-m2data3 pack + IPA TX fix 0002
+	MODEM_PACK_DEF=$TOP/drivers612/modem/out/pack-modem-audit2.tgz   # rb51+: txfix pack + audit ipam/ipanetm/rmnet_shs + glink_pkt 0013
 	MODEM_DRB_DEF=$TOP/drivers612/modem/out/stage-radio/dev_ril_bridge.ko
 	MODEM_TESTED_DTB2_DEF=
 else
@@ -150,14 +183,19 @@ else
 	MODEM_TESTED_DTB2_DEF=$TOP/logs/kx-m2k618-p1-p1-194536/kexec.dtb          # the 6.18 modem run (modem up, no data call)
 fi
 DIAG=${DIAG:-0}
+DEBUG=${DEBUG:-0}; case "$DEBUG" in 0|1) ;; *) echo "DEBUG=0|1" >&2; exit 2;; esac
 SYSMAP=$DIST/System.map
 if [ "$DIAG" = 1 ]; then
 	if [ "$DIAG_KERNEL" = 1 ]; then IMAGE=${IMAGE:-$BSP/out/diag/Image}; SYSMAP=$(dirname "$IMAGE")/System.map; fi
 	DIAG_BOOTARGS=${DIAG_BOOTARGS:-keep_bootcon initcall_debug ignore_loglevel softlockup_panic=1}
+	# DIAG_BOOTARGS=none: the DIAG Image (the only proven 6.12 Image) + its RAM console node, but no debug words
+	[ "$DIAG_BOOTARGS" = none ] && DIAG_BOOTARGS=
 	[ "${DIAG_WDT:-}" = off ] && { [ "$DIAG_KERNEL" = 1 ] || { echo "DIAG_WDT=off needs the a52bc kernel (6.12)" >&2; exit 2; }; DIAG_BOOTARGS="$DIAG_BOOTARGS a52bc.wdt=off"; }
 fi
 [ "$DIAG" = 1 ] && [ "$DIAG_KERNEL" = 1 ] || DIAG_KERNEL=0
 IMAGE=${IMAGE:-$DIST/Image}
+BUSDCVS_CONF=$TOP/drivers612/busdcvs/busdcvs.conf
+ADDON=${ADDON:-vendor}; case "$ADDON" in vendor|vendor_boot) ;; *) echo "ADDON=vendor|vendor_boot" >&2; exit 2;; esac
 SELINUX=${SELINUX:-enforcing}; USB_EXTCON=${USB_EXTCON:-samsung}; MODEM=${MODEM:-0}
 case "$MODEM" in 0|1) ;; *) echo "MODEM=0|1" >&2; exit 2;; esac
 # SDCARD=1 (default since 2026-11-15, both kernels): microSD host (cqhci + sdhci-msm), proven read-only
@@ -193,7 +231,7 @@ if [ "$MODEM" = 1 ]; then for f in "$MODEM_PACK" "$MODEM_DRB" "$MODEM_TESTED_DTB
 	[ -f "$f" ] || fail "MODEM=1: missing $f"; done
 	[ -z "$MODEM_TESTED_DTB2" ] || [ -f "$MODEM_TESTED_DTB2" ] || fail "MODEM=1: missing $MODEM_TESTED_DTB2"; fi
 say "realboot $NAME ($KV), $(date '+%F %T'); NOT FLASHED. dump=$DUMP ref=$REFRD image=$IMAGE"
-say "options: SELINUX=$SELINUX USB_EXTCON=$USB_EXTCON MODEM=$MODEM SDCARD=$SDCARD IGNORE_UNUSED=$IGNORE_UNUSED DIAG=$DIAG${DIAG_BOOTARGS:+ ($DIAG_BOOTARGS)}$( [ "$DIAG" = 1 ] && [ "$DIAG_KERNEL" = 0 ] && echo ' [bootargs only: no a52bc kernel for this kernel]')"
+say "options: SELINUX=$SELINUX USB_EXTCON=$USB_EXTCON MODEM=$MODEM SDCARD=$SDCARD IGNORE_UNUSED=$IGNORE_UNUSED DEBUG=$DEBUG DIAG=$DIAG${DIAG_BOOTARGS:+ ($DIAG_BOOTARGS)}$( [ "$DIAG" = 1 ] && [ "$DIAG_KERNEL" = 0 ] && echo ' [bootargs only: no a52bc kernel for this kernel]')"
 
 # ---------------------------------------------------------------- 1. the phone's images
 say "== 1. phone images ($DUMP)"
@@ -280,6 +318,22 @@ python3 -I "$HERE/tools/cpiox.py" "$REFRD" "$W/ref" >> "$R"
 # the realboot DSP starter (replaces helper2.sh's "@adsp" job), built against this kernel in a
 # work copy (both kernels from the same source file)
 mkdir -p "$W/dspboot"; cp "$HERE/modules/dspboot/a52sxq_dsp_boot.c" "$W/dspboot/"; cp "$DSPBOOT_KBUILD" "$W/dspboot/Kbuild"
+if [ "$ADDON" = vendor_boot ]; then
+	# bus DCVS tunables as a C table (the vendor rc's "write /sys/<path> <value>" lines, same order)
+	python3 -I - "$TOP/drivers612/busdcvs/busdcvs.conf" "$W/dspboot/a52sxq_tunables.h" <<'PYEOF'
+import sys
+rows = []
+for l in open(sys.argv[1]):
+    l = l.strip()
+    if not l or l.startswith('#'): continue
+    p, _, v = l.partition(' '); v = v.strip()
+    assert p and v and '"' not in v and '\\' not in v, l
+    rows.append('\t{ "/sys/%s", "%s" },' % (p, v))
+open(sys.argv[2], 'w').write('/* generated by build-realboot.sh from busdcvs.conf */\nstatic const struct a52_tunable a52_tunables[] = {\n' + '\n'.join(rows) + '\n};\n')
+PYEOF
+	echo 'ccflags-y += -DA52_TUNABLES' >> "$W/dspboot/Kbuild"
+	say "ADDON=vendor_boot: a52sxq_dsp_boot with $(grep -c '{ "/sys/' "$W/dspboot/a52sxq_tunables.h") built-in bus DCVS tunables"
+fi
 "${KMAKE[@]}" M="$W/dspboot" KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost modules > "$W/dspboot.log" 2>&1 \
 	|| { tail -20 "$W/dspboot.log"; fail "a52sxq_dsp_boot build"; }
 cp "$W/dspboot/a52sxq_dsp_boot.ko" "$W/a52sxq_dsp_boot.ko"; "$CLANG/llvm-strip" --strip-debug "$W/a52sxq_dsp_boot.ko"
@@ -321,8 +375,114 @@ if [ "$SDCARD" = 1 ]; then
 		SD_EXTRA+=(--extra-after "camera:$f"); done   # dist modules are stripped already (no .debug_*)
 	say "SDCARD=1: cqhci + sdhci-msm ($(find "$DIST/lib/modules/$KREL" -name sdhci-msm.ko | sed "s|$DIST/lib/modules/$KREL/||")) added to the first stage (after the camera stage)"
 fi
+# THERMAL=1: Qualcomm's thermal cooling stack (none of it was ever loaded: the DT cooling-maps of every CPU zone had
+# no cooling device, only LMh in qcom-cpufreq-hw + the TSENS 125 C reset protected the CPUs). After stage dcvs
+# (needs sched-walt, kgsl devfreq, qmi_helpers). msm_lmh_dcvs left out: qcom-cpufreq-hw owns the dcvsh IRQs.
+TH_EXTRA=()
+if [ "${THERMAL:-0}" = 1 ]; then
+	# TH_MODS= overrides the list (A/B of single modules; default = all 9)
+	TH_MODS=${TH_MODS:-thermal_pause cpu_hotplug qti_cpufreq_cdev cpu_voltage_cooling qti_devfreq_cdev qcom-spmi-temp-alarm bcl_pmic5 qti_qmi_cdev qti_qmi_sensor}
+	for m in $TH_MODS; do
+		f=$(find "$DIST/lib/modules/$KREL" -name "$m.ko" | head -1); [ -n "$f" ] || fail "$m.ko not in dist"
+		# DIST_OVERRIDE=<dir>: a newer stripped build of a dist module (e.g. bsp612/out/audit-soc-modules) wins
+		if [ -n "${DIST_OVERRIDE:-}" ] && [ -f "$DIST_OVERRIDE/$m.ko" ]; then f=$DIST_OVERRIDE/$m.ko; say "THERMAL: $m.ko from DIST_OVERRIDE ($(sha256sum < "$f" | cut -c1-16))"; fi
+		TH_EXTRA+=(--extra-after "dcvs:$f"); done
+	say "THERMAL=1: $(echo $TH_MODS | wc -w) thermal cooling modules added to the first stage after stage dcvs: $TH_MODS"
+fi
+# BTSLIM=1 (2026-11-18, default 0 until proven): Bluetooth audio over SLIMbus (SCO, A2DP offload). slimbus +
+# slim-qcom-ngd-ctrl (soc-repo dist) + bt_fm_slim (drivers612/conn/bt/btfmslim; depends slimbus, btpower) right
+# after stage wlanb (btpower is its last module), BEFORE the modem set (which must stay the tail). Modules only:
+# the SLIM_7 back ends also need qcom,wcn-btfm = <1> on the sound node and the btfmslim codec registered at
+# probe (it is: rb43 lists component btfmslim_slave + 4 DAIs at 4.26 s). bam_dma = the ngd's slimbam DMA
+# controller@3a84000 (rb43 without it: "Failed to request RX dma channel", capability exchange timed-out).
+# The tree gets qcom,wcn-btfm = <1> on the sound node below (the only DT difference to the tested tree).
+BT_EXTRA=()
+if [ "${BTSLIM:-0}" = 1 ]; then
+	mkdir -p "$W/btslim"
+	for m in bam_dma slimbus slim-qcom-ngd-ctrl; do
+		f=$(find "$DIST/lib/modules/$KREL" -name "$m.ko" | head -1); [ -n "$f" ] || fail "BTSLIM=1: $m.ko not in dist"
+		BT_EXTRA+=(--extra-after "wlanb:$f"); done
+	BTFM=${BTFM_KO:-$TOP/drivers612/conn/bt/btfmslim/bt_fm_slim.ko}; [ -f "$BTFM" ] || fail "BTSLIM=1: no $BTFM (drivers612/conn/bt/build.sh btfmslim)"
+	cp "$BTFM" "$W/btslim/bt_fm_slim.ko"; "$CLANG/llvm-strip" --strip-debug "$W/btslim/bt_fm_slim.ko"
+	BT_EXTRA+=(--extra-after "wlanb:$W/btslim/bt_fm_slim.ko")
+	say "BTSLIM=1: bam_dma, slimbus, slim-qcom-ngd-ctrl, bt_fm_slim ($(sha256sum < "$BTFM" | cut -c1-16)) added to the first stage after stage wlanb"
+fi
+# USBAUDIO=1 (2026-11-19, default 0 until proven): USB-C audio through the ADSP (USB audio offload, 5.4
+# CONFIG_SND_USB_AUDIO_QMI=y). snd-usb-audio-qmi (soc-repo dist; depends qmi_helpers, qcom_ipc_logging, dwc3-msm:
+# all earlier in the list) right after stage wlanb, before the BT and modem sets. Node /soc/usb_audio_qmi_dev
+# (qcom,usb-audio-qmi-dev) is in the tree with the 5.4 values.
+UA_EXTRA=()
+if [ "${USBAUDIO:-0}" = 1 ]; then
+	f=$(find "$DIST/lib/modules/$KREL" -name "snd-usb-audio-qmi.ko" | head -1); [ -n "$f" ] || fail "USBAUDIO=1: snd-usb-audio-qmi.ko not in dist"
+	UA_EXTRA+=(--extra-after "wlanb:$f")
+	say "USBAUDIO=1: snd-usb-audio-qmi ($(sha256sum < "$f" | cut -c1-16)) added to the first stage after stage wlanb"
+fi
+# ---- 2026-11-19 parity options (each default 0 until proven on white cable; PARITY-2026-11-18.md) ----
+X_EXTRA=(); mkdir -p "$W/xmod"
+xmod() {   # <stage> <file.ko> [name.ko]: stripped copy into the first stage after <stage>
+	local n=${3:-$(basename "$2")}; [ -f "$2" ] || fail "missing module $2"
+	cp "$2" "$W/xmod/$n"; "$CLANG/llvm-strip" --strip-debug "$W/xmod/$n"; X_EXTRA+=(--extra-after "$1:$W/xmod/$n")
+}
+distko() { local f; f=$(find "$DIST/lib/modules/$KREL" -name "$1.ko" | head -1); [ -n "$f" ] || fail "$1.ko not in dist"; echo "$f"; }
+# WDT=1: the hypervisor watchdog as on 5.4 (hh_virt_wdt built in there): qcom_wdt_core + gh_virt_wdt right after
+# stage secure (depends minidump, qcom-scm). Kernel-petted (RT kthread, 9.36 s; bark 11 s, bite +3 s), disabled across
+# suspend by the driver. qcom_soc_wdt stays out and is blocklisted: the ABL disables /soc/qcom,wdt@17c10000.
+if [ "${WDT:-0}" = 1 ]; then
+	xmod secure "$(distko qcom_wdt_core)"; xmod secure "$(distko gh_virt_wdt)"
+	say "WDT=1: qcom_wdt_core + gh_virt_wdt added to the first stage after stage secure; qcom_soc_wdt blocklisted"
+fi
+# QRNG=1: hardware RNG (5.4 HW_RANDOM_MSM_LEGACY): qrng_dlkm (platform driver msm-rng) + the 5.4 node properties
+if [ "${QRNG:-0}" = 1 ]; then
+	xmod secure "$TOP/drivers612/secure/securemsm/src/qrng_dlkm.ko"
+	say "QRNG=1: qrng_dlkm added to the first stage after stage secure (+ /soc/rng@10d3000 as qcom,msm-rng)"
+fi
+# VOLKEY=1: /sys/power/volkey_wakeup (5.4 Samsung: RESIN wake on/off, default off; IchthysOS Abyss writes it)
+if [ "${VOLKEY:-0}" = 1 ]; then
+	xmod secure "$HERE/modules/out/a52sxq_volkey.ko"
+	say "VOLKEY=1: a52sxq_volkey added to the first stage after stage secure"
+fi
+# THERMAL_X="adctm secth qmi bclmap adspfac-free list": thermal extras, each separable
+#   adctm  = qcom-spmi-adc-tm5 after stage powerpd (zones quiet/camera/rear-cam/xo-therm-usr)
+#   secth  = sec_thermistor after stage powerpd (ap/wf/pa thermistors; values to be checked on a real boot)
+#   qmi    = qti_qmi_sensor with index 30 named msm_skin_therm as Samsung's 5.4 table (replaces the dist module)
+#   bclmap = pm8350c-bcl-lvl0 cooling maps on the cpuN_pause devices instead of the cpuN-isolate placeholders (DT)
+THERMAL_X=${THERMAL_X:-}
+for t in $THERMAL_X; do case "$t" in adctm|secth|qmi|bclmap) ;; *) fail "THERMAL_X: unknown item $t";; esac; done
+case " $THERMAL_X " in *" adctm "*) xmod powerpd "$(distko qcom-spmi-adc-tm5)";; esac
+case " $THERMAL_X " in *" secth "*) xmod powerpd "$TOP/drivers612/power/src/sec_thermistor/sec_thermistor.ko";; esac
+if [ "${THERMAL:-0}" = 1 ]; then case " $THERMAL_X " in *" qmi "*)
+	QS=$HERE/modules/qmisensor/qti_qmi_sensor.stripped.ko; [ -f "$QS" ] || fail "THERMAL_X=qmi: no $QS"
+	for i in "${!TH_EXTRA[@]}"; do case "${TH_EXTRA[$i]}" in dcvs:*/qti_qmi_sensor.ko) cp "$QS" "$W/xmod/qti_qmi_sensor.ko"; TH_EXTRA[$i]="dcvs:$W/xmod/qti_qmi_sensor.ko";; esac; done
+	say "THERMAL_X=qmi: qti_qmi_sensor.ko from modules/qmisensor ($(sha256sum < "$QS" | cut -c1-16))";; esac; fi
+[ -n "$THERMAL_X" ] && say "THERMAL_X: $THERMAL_X"
+# ADSPFAC=1: Samsung adsp_factory (netlink 23 + /sys/class/sensors/*: factory_ssc restarted every 11 s without it)
+if [ "${ADSPFAC:-0}" = 1 ]; then
+	xmod powerpd "$TOP/drivers612/sensors-factory/adsp_factory_dlkm.ko"
+	say "ADSPFAC=1: adsp_factory_dlkm added to the first stage after stage powerpd"
+fi
+# BWCOMPAT=1: /sys/class/devfreq/soc:qcom,cpu-{cpu-llcc,llcc-ddr}-bw compat nodes for the ROM's powerhint.json
+# (11 nodes, 1870 failed Power HAL writes per boot), forwarded to bus_dcvs
+if [ "${BWCOMPAT:-0}" = 1 ]; then
+	xmod dcvs "$HERE/modules/out/a52sxq_bwcompat.ko"
+	say "BWCOMPAT=1: a52sxq_bwcompat added to the first stage after stage dcvs"
+fi
 python3 -I "$HERE/tools/modplan.py" --ref "$W/ref" --first "$FIRST_STAGES" --late audio --wlan wlan \
-	--extra-after "dsp:$W/a52sxq_dsp_boot.ko" "${MODEM_EXTRA[@]}" "${SD_EXTRA[@]}" --drop "seaprobe testguard hhwdt a52susp a52_modem_guard" --out "$W/plan" | tee -a "$R"
+	--extra-after "dsp:$W/a52sxq_dsp_boot.ko" "${X_EXTRA[@]}" "${UA_EXTRA[@]}" "${BT_EXTRA[@]}" "${MODEM_EXTRA[@]}" "${SD_EXTRA[@]}" "${TH_EXTRA[@]}" --drop "seaprobe testguard hhwdt a52susp a52_modem_guard" --out "$W/plan" | tee -a "$R"
+if [ "$ADDON" = vendor_boot ]; then
+	# the vendor add-on's two groups move to the END of the first stage (the tested prefix stays):
+	# the audio set in its tested order, then wlan.ko (file name wlan.ko again; module name "wlan")
+	cp "$W/plan/late.load" "$W/plan/addon-late.load"; cp "$W/plan/wlan.load" "$W/plan/addon-wlan.load"
+	for m in $(cat "$W/plan/late.load"); do
+		[ -f "$W/plan/first/$m" ] && fail "ADDON=vendor_boot: $m already in the first stage"
+		mv "$W/plan/late/$m" "$W/plan/first/$m"; echo "$m" >> "$W/plan/first.load"; done
+	[ "$(cat "$W/plan/wlan.load")" = qca_cld3_wlan.ko ] || fail "ADDON=vendor_boot: wlan group is not qca_cld3_wlan.ko"
+	[ -f "$W/plan/first/wlan.ko" ] && fail "ADDON=vendor_boot: wlan.ko already in the first stage"
+	mv "$W/plan/wlan/qca_cld3_wlan.ko" "$W/plan/first/wlan.ko"; echo wlan.ko >> "$W/plan/first.load"
+	cat "$W/plan/late.params" "$W/plan/wlan.params" 2>/dev/null >> "$W/plan/first.params" || true
+	echo "options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify+qcom,msm-audio-apr+qcom,audio-ref-clk+qcom,msm-cdc-pinctrl+qcom,q6core-audio+qcom,adsp-loader hold_late=qcom,wcd938x-codec" >> "$W/plan/first.params"
+	: > "$W/plan/late.load"; : > "$W/plan/wlan.load"; : > "$W/plan/late.params"
+	say "ADDON=vendor_boot: $(wc -l < "$W/plan/addon-late.load") audio modules + wlan.ko appended to the first stage ($(wc -l < "$W/plan/first.load") modules); a52sxq_dsp_boot rescan_after_adsp=1"
+fi
 for st in debug susp; do [ -f "$W/ref/a52/mods/$st.list" ] && say "stage $st of $REF NOT in the real boot: $(tr '\n' ' ' < "$W/ref/a52/mods/$st.list")"; done
 cat "$W/plan/first.load" "$W/plan/late.load" "$W/plan/wlan.load" | grep -qx 'a52susp.ko\|seaprobe.ko\|testguard.ko\|hhwdt.ko\|a52_modem_guard.ko' && fail "test module planned"
 {	# GPU + bus DCVS (both kernels) (drivers612/busdcvs/README.md): devfreq governors before msm_kgsl (kgsl looks its
@@ -341,7 +501,9 @@ if [ "$MODEM" = 1 ]; then
 	for m in $MODEM_MODS qcom_va_minidump; do grep -qx "$m.ko" "$W/plan/first.load" || fail "MODEM=1: $m.ko not in the first stage"; done
 	# the tested prefix (rb11's first stage) is untouched: the modem set comes after it, in pack order
 	NM=$(echo $MODEM_MODS | wc -w)
-	[ "$(tail -n "$NM" "$W/plan/first.load" | sed 's/\.ko$//' | tr '\n' ' ')" = "$MODEM_MODS " ] || fail "MODEM=1: the modem modules are not the tail of modules.load in pack order"
+	# ADDON=vendor_boot: the add-on group (audio + wlan) follows the modem set
+	NADD=0; [ "$ADDON" = vendor_boot ] && NADD=$(( $(wc -l < "$W/plan/addon-late.load") + 1 ))
+	[ "$(head -n -"$NADD" "$W/plan/first.load" | tail -n "$NM" | sed 's/\.ko$//' | tr '\n' ' ')" = "$MODEM_MODS " ] || fail "MODEM=1: the modem modules are not the tail of the tested modules.load in pack order"
 	for m in $MODEM_MODS; do
 		[ "$m" = dev_ril_bridge ] && src=$W/dev_ril_bridge.ko || src=$W/modempack/m/$m.ko
 		cmp -s "$src" "$W/plan/first/$m.ko" || fail "MODEM=1: $m.ko is not the tested file"; done
@@ -349,11 +511,11 @@ if [ "$MODEM" = 1 ]; then
 	grep -qE '^(rmnet|ipa|gsim|msm_sharedmem|msm_memshare|glink_pkt|dev_ril)' "$W/plan/late.load" "$W/plan/wlan.load" && fail "MODEM=1: a modem module in the vendor add-on"
 	say "MODEM=1: $NM modem/data modules are the last $NM lines of modules.load (byte-identical to the run's pack; qcom_va_minidump already in the first stage, same file)"
 fi
-for k in "$W"/plan/{first,late,wlan}/*.ko; do strings "$k" | grep -q "^vermagic=$KREL " || fail "wrong vermagic: $k"; done
+for k in $(ls "$W"/plan/{first,late,wlan}/*.ko 2>/dev/null); do strings "$k" | grep -q "^vermagic=$KREL " || fail "wrong vermagic: $k"; done
 # modules.dep/alias/softdep, flat paths, symbols checked against the kernel's System.map
 depmod_dir() {   # <outdir> <dir with .ko>...
 	local out=$1; shift; rm -rf "$out"; mkdir -p "$out/lib/modules/$KREL"
-	for d in "$@"; do cp "$d"/*.ko "$out/lib/modules/$KREL/"; done
+	for d in "$@"; do ls "$d"/*.ko > /dev/null 2>&1 || continue; cp "$d"/*.ko "$out/lib/modules/$KREL/"; done
 	depmod -b "$out" -F "$DIST/System.map" -e "$KREL" 2> "$out.err" || true
 	grep -v "^depmod: WARNING: could not open modules\.\(order\|builtin\)" "$out.err" > "$out.unresolved" || true
 }
@@ -372,11 +534,21 @@ BLOCK="qcom_edac qcom-dload-mode gh_virt_wdt qcom_wdt_core tz_log_dlkm sdhci-msm
 # MODEM=1: msm_sharedmem is rmt_storage's UIO buffer: loaded, so not blocked
 [ "$MODEM" = 1 ] && BLOCK=${BLOCK% msm_sharedmem}
 [ "$SDCARD" = 1 ] && BLOCK=${BLOCK/ sdhci-msm cqhci/}
+[ "${WDT:-0}" = 1 ] && BLOCK="${BLOCK/ gh_virt_wdt qcom_wdt_core/} qcom_soc_wdt"
 for b in $BLOCK; do echo "blocklist $b"; done > "$LM/modules.blocklist"
 for b in $BLOCK; do grep -qx "$b.ko" "$LM/modules.load" && fail "blocked module $b in modules.load"; done
 # no SD host driver in any set (phone 1 has a microSD, mmcblk1, that nothing may touch)
 [ "$SDCARD" = 1 ] || { ls "$W"/plan/{first,late,wlan}/ | grep -q '^sdhci\|^cqhci\|^mmc' && fail "SD/MMC host module in the module plan"; }
 grep -q 'sdhci-msm\|cqhci' "$DIST/lib/modules/$KREL/modules.builtin" && fail "sdhci-msm/cqhci built into the kernel"
+# GPU_BUSY_UP=<percent> (2026-11-19, default unset): b5 workaround for the adreno_tz governor leaving a busy GPU on
+# the lowest OPP on 6.12 (needs REF >= s97, whose governor_msm_adreno_tz has a52_busy_up_pct, soc-repo patch 0018):
+# when TZ does not ask for a faster level and the window was at least <percent> busy, step one level up.
+if [ -n "${GPU_BUSY_UP:-}" ]; then
+	case "$GPU_BUSY_UP" in *[!0-9]*) fail "GPU_BUSY_UP: a number 1..100";; esac
+	strings "$W/plan/first/governor_msm_adreno_tz.ko" | grep -q '^parm=a52_busy_up_pct:' || fail "GPU_BUSY_UP: the governor of REF=$REF has no a52_busy_up_pct (needs s97+)"
+	echo "options governor_msm_adreno_tz a52_busy_up_pct=$GPU_BUSY_UP" >> "$W/plan/first.params"
+	say "GPU_BUSY_UP=$GPU_BUSY_UP: modules.options governor_msm_adreno_tz a52_busy_up_pct=$GPU_BUSY_UP"
+fi
 cp "$W/plan/first.params" "$LM/modules.options"
 # The test loaded every module with a plain insmod in list order, so no softdep ever applied.
 # libmodprobe would honour the "pre:" ones and pull e.g. qcom_hwspinlock before smem, qcom-pdc
@@ -385,6 +557,7 @@ mv "$LM/modules.softdep" "$LM/modules.softdep.depmod"; : > "$LM/modules.softdep"
 say "softdeps NOT used (tested order kept): $(grep -vc '^#' "$LM/modules.softdep.depmod") in modules.softdep.depmod"
 grep -q '^testguard\|^hhwdt\|^seaprobe\|^a52susp' "$LM/modules.load" && fail "test module in modules.load"
 say "first stage: $(wc -l < "$LM/modules.load") modules ($(du -sb "$LM" | cut -f1) bytes); options: $(tr '\n' ';' < "$LM/modules.options")"
+if [ "$ADDON" = vendor ]; then
 # vendor add-on: late dir with deps reduced to modules of the same dir (the first-stage ones are
 # loaded already; libmodprobe would try to open their files otherwise)
 VA=$O/vendor-addon; mkdir -p "$VA/lib/modules/$KV" "$VA/lib/modules/$WLD" "$VA/lib/modules/5.4-gki" "$VA/etc/init"
@@ -439,7 +612,6 @@ if [ "$WLD" != 5.4-gki ]; then
 	grep -q '{ "bind", *MS_BIND }' ${ANDROID_TREE:-$HOME/android}/system/core/init/builtins.cpp || fail "init has no bind mount flag?"
 	say "vendor rc: on post-fs bind /vendor/lib/modules/$WLD over /vendor/lib/modules/5.4-gki (macloader path; the phone's 6.12 wlan.ko there stays)"
 fi
-BUSDCVS_CONF=$TOP/drivers612/busdcvs/busdcvs.conf
 {
 	# bus DCVS tunables + end of the boot boost + interconnect sync_state, once Android has booted
 	# (drivers612/busdcvs/busdcvs.conf; Qualcomm's post_boot does the same; vendor rc writes run as
@@ -472,6 +644,24 @@ $MPS --label 5.4-gki --dir "$VA/lib/modules/$WLD" --as /vendor/lib/modules/5.4-g
 	&& fail "libmodprobe would load wlan from 5.4-gki (races macloader)"
 echo "modprobe dry run 5.4-gki ($WLD): libmodprobe resolves nothing there (macloader loads qca_cld3_wlan.ko by path)" >> "$W/modprobesim.txt"
 tee -a "$R" < "$W/modprobesim.txt" > /dev/null; cat "$W/modprobesim.txt"
+else
+	# ADDON=vendor_boot: no vendor add-on; the first stage holds everything (checked like the rest)
+	VA=$W/no-vendor-addon; rm -rf "$VA"; mkdir -p "$VA"
+	for m in $(cat "$W/plan/addon-late.load") wlan.ko; do grep -qx "$m" "$LM/modules.load" || fail "ADDON=vendor_boot: $m not in modules.load"; done
+	[ "$(tail -n1 "$LM/modules.load")" = wlan.ko ] || fail "ADDON=vendor_boot: wlan.ko is not the last first-stage module"
+	grep -qx 'options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify+qcom,msm-audio-apr+qcom,audio-ref-clk+qcom,msm-cdc-pinctrl+qcom,q6core-audio+qcom,adsp-loader hold_late=qcom,wcd938x-codec' "$LM/modules.options" || fail "ADDON=vendor_boot: no rescan_after_adsp/hold_until_adsp options"
+	modinfo -p "$W/a52sxq_dsp_boot.ko" | grep -q '^rescan_after_adsp:' || fail "a52sxq_dsp_boot.ko has no rescan_after_adsp"
+	modinfo -p "$W/a52sxq_dsp_boot.ko" | grep -q '^tunables:' || fail "a52sxq_dsp_boot.ko has no built-in tunables"
+	cp "$W/plan/plan.txt" "$O/module-plan.txt"
+	python3 -I "$HERE/tools/loadsim.py" --krel "$KREL" --symvers "$SYMVERS" --builtin "$DIST/lib/modules/$KREL/modules.builtin" \
+		"first:$LM:$LM/modules.load" > "$W/loadsim.txt" || { cat "$W/loadsim.txt"; fail "insmod simulation"; }
+	tee -a "$R" < "$W/loadsim.txt" > /dev/null; cat "$W/loadsim.txt"; cp "$W/loadsim.txt" "$O/insmod-simulation.txt"
+	MPS="python3 -I $HERE/tools/modprobesim.py"
+	$MPS --label first-stage --dir "$LM" --as /lib/modules --load-file modules.load > "$W/modprobesim.txt" 2>&1 \
+		|| { cat "$W/modprobesim.txt"; fail "libmodprobe dry run (modprobesim.py)"; }
+	tee -a "$R" < "$W/modprobesim.txt" > /dev/null; cat "$W/modprobesim.txt"
+	say "ADDON=vendor_boot: no vendor add-on, no vendor rc; first stage $(wc -l < "$LM/modules.load") modules ($(du -sb "$LM" | cut -f1) bytes)"
+fi
 
 # ---------------------------------------------------------------- 4. device tree
 say "== 4. device tree"
@@ -578,6 +768,37 @@ if [ "$MODEM" = 1 ]; then
 	say "MODEM=1 rmtfs UIO: /soc/qcom,rmtfs_sharedmem@0 qcom,sharedmem-uio reg-names rmtfs size $(fdtget -t x "$T/rb.dtb" /soc/qcom,rmtfs_sharedmem@0 reg | awk '{print $NF}') (dynamic buffer, no fixed rmtfs region)"
 fi
 # real-boot additions: the DSP starter node, the Qualcomm bootargs, a marker
+if [ "${BTSLIM:-0}" = 1 ]; then
+	SND=/soc/qcom,msm-audio-apr/qcom,q6core-audio/sound
+	fdtget "$T/rb.dtb" $SND qcom,model > /dev/null || fail "BTSLIM=1: no $SND"
+	[ "$(fdtget "$T/rb.dtb" /soc/slim@3ac0000/ngd@1/btfmslim-driver compatible)" = slim217,221 ] || fail "BTSLIM=1: no btfmslim child under slim@3ac0000/ngd@1"
+	fdtput -t u "$T/rb.dtb" $SND qcom,wcn-btfm 1
+	say "BTSLIM=1: $SND qcom,wcn-btfm = <1> (BT back ends, codec btfmslim_slave: SLIMBUS_7_RX/TX with the 99916b9 machine_dlkm = the 5.4 set; + SLIMBUS_8_TX with the s88 one)"
+fi
+if [ "${QRNG:-0}" = 1 ]; then
+	N=/soc/rng@10d3000; fdtget "$T/rb.dtb" $N reg > /dev/null || fail "QRNG=1: no $N"
+	GEM=$(fdtget -tx "$T/rb.dtb" /soc/interconnect@9100000 phandle); CN2=$(fdtget -tx "$T/rb.dtb" /soc/interconnect@1500000 phandle)
+	RPMH=$(fdtget -tx "$T/rb.dtb" /soc/rsc@18200000/drv@2/qcom,rpmhclk phandle)
+	[ -n "$GEM" ] && [ -n "$CN2" ] && [ -n "$RPMH" ] || fail "QRNG=1: provider phandles"
+	fdtput -t s "$T/rb.dtb" $N compatible qcom,msm-rng
+	fdtput -t x "$T/rb.dtb" $N qcom,no-qrng-config
+	fdtput -t s "$T/rb.dtb" $N interconnect-names data_path
+	fdtput -t x "$T/rb.dtb" $N interconnects 0x$GEM 0x2 0x$CN2 0x20f
+	fdtput -t s "$T/rb.dtb" $N clock-names km_clk_src
+	fdtput -t x "$T/rb.dtb" $N clocks 0x$RPMH 0x18
+	say "QRNG=1: $N = qcom,msm-rng with the 5.4 qrng properties (km_clk_src = rpmh HWKM, icc data_path gem_noc -> cnoc2 hwkm)"
+fi
+if [ "${HALL:-0}" = 1 ]; then
+	fdtget "$T/rb.dtb" /soc/hall_keys/hall linux,code > /dev/null || fail "HALL=1: no /soc/hall_keys/hall"
+	fdtput -t s "$T/rb.dtb" /soc/hall_keys status okay
+	fdtput -t s "$T/rb.dtb" /soc/hall_keys label hall
+	fdtput -t x "$T/rb.dtb" /soc/hall_keys/hall linux,code 0
+	say "HALL=1: /soc/hall_keys okay, input 'hall', SW_LID (gpio-keys, built in; 5.4: Samsung hall_ic, SW_LID)"
+fi
+case " ${THERMAL_X:-} " in *" bclmap "*)
+	for n in 4 5 6 7; do ph=$(fdtget -t u "$T/rb.dtb" /soc/qcom,cpu-pause/cpu$n-pause phandle) || fail "THERMAL_X=bclmap: no cpu$n-pause"
+		fdtput -t u "$T/rb.dtb" /soc/thermal-zones/pm8350c-bcl-lvl0/cooling-maps/vph_cpu$n cooling-device $ph 1 1; done
+	say "THERMAL_X=bclmap: pm8350c-bcl-lvl0 vph_cpu4..7 -> cpuN-pause cooling devices";; esac
 fdtput -c "$T/rb.dtb" /soc/a52sxq-dsp-boot
 fdtput -t s "$T/rb.dtb" /soc/a52sxq-dsp-boot compatible "a52sxq,dsp-boot"
 fdtput -t x "$T/rb.dtb" /soc/a52sxq-dsp-boot qcom,adsp-rproc "$(fdtget -t x "$T/rb.dtb" "$(fdtget "$T/rb.dtb" /__symbols__ adsp_pas)" phandle)"
@@ -669,13 +890,33 @@ FWPATH=/vendor/firmware_mnt/image,/vendor/firmware
 # ab-s18 got -ENOENT from that path, unexplained); last entry, so nothing else is looked up there first
 [ "$MODEM" = 1 ] && FWPATH=$FWPATH,/vendor/firmware-modem/image
 VC="console=null androidboot.hardware=qcom androidboot.memcg=1 androidboot.usbcontroller=a600000.dwc3 loop.max_part=7 firmware_class.path=$FWPATH iptable_raw.raw_before_defrag=1 ip6table_raw.raw_before_defrag=1 printk.devkmsg=on"
-[ "$IGNORE_UNUSED" = 1 ] && VC="$VC clk_ignore_unused pd_ignore_unused regulator_ignore_unused"
-VC="$VC androidboot.a52sxq.$KT=1"
+# IGNORE_UNUSED=1 all three, 0 none, or a list of the ones to KEEP: "clk pd regulator" (A/B of single words)
+case "$IGNORE_UNUSED" in 1) IGN="clk pd regulator";; 0) IGN=;; *) IGN=$IGNORE_UNUSED;; esac
+for w in $IGN; do case "$w" in clk|pd|regulator) VC="$VC ${w}_ignore_unused";; *) fail "IGNORE_UNUSED: $w";; esac; done
+# the gate of the vendor add-on rc; ADDON=vendor_boot sets a different one, so an add-on rc left on
+# /vendor by an earlier install stays inert (nothing may come from /vendor)
+[ "$ADDON" = vendor ] && VC="$VC androidboot.a52sxq.$KT=1" || VC="$VC androidboot.a52sxq.${KT}vb=1"
 # first-stage init loads modules.load strictly: the first module whose init fails ends in
 # LOG(FATAL) -> reboot to the bootloader, every boot. "2" (IGNORE_FAILURE, userdebug init only)
 # logs the failure and goes on; the ROM is userdebug. MODULE_FAILURES=fatal leaves it out.
 [ "${MODULE_FAILURES:-ignore}" = ignore ] && VC="$VC androidboot.first_stage_console=2"
 [ "$SELINUX" = permissive ] && VC="$VC androidboot.selinux=permissive"
+# DEBUG=1: a52sxq_dsp_boot's kernel-log file /sys/devices/system/cpu/a52kmsg (off without this flag)
+[ "$DEBUG" = 1 ] && { VC="$VC androidboot.a52sxq.debug=1"; say "DEBUG=1: androidboot.a52sxq.debug=1 (a52kmsg kernel log for root/system/shell): NOT for a release or daily build"; }
+# KSU=1 (2026-11-19, default 0; IchthysOS line, proven by hand as rbich20 on broken screen): KernelSU-Next as an LKM.
+# /ksuinit (static, 0755) + /kernelsu.ko (0644) at the ROOT of the vendor ramdisk fragment and rdinit=/ksuinit:
+# ksuinit runs as PID 1, resolves the module's unexported symbols from kallsyms, insmods it and execs the ROM's
+# /init; its crash guard skips KSU for one boot when pstore holds a panic record. boot.img is unchanged.
+KSU=${KSU:-0}; case "$KSU" in 0|1) ;; *) fail "KSU=0|1";; esac
+if [ "$KSU" = 1 ]; then
+	KSUD=${KSU_DIR:-$HERE/modules/kernelsu/out}
+	[ -f "$KSUD/ksuinit" ] && [ -f "$KSUD/kernelsu.ko" ] || fail "KSU=1: no $KSUD/ksuinit + kernelsu.ko"
+	file -b "$KSUD/ksuinit" | grep -q 'ELF 64-bit.*ARM aarch64.*statically linked' || fail "KSU=1: ksuinit is not a static aarch64 executable"
+	strings "$KSUD/kernelsu.ko" | grep -q "^vermagic=$KREL " || fail "KSU=1: kernelsu.ko vermagic is not $KREL"
+	echo " $VC " | grep -q ' rdinit=' && fail "KSU=1: the command line already has an rdinit="
+	VC="$VC rdinit=/ksuinit"
+	say "KSU=1: rdinit=/ksuinit; ksuinit $(sha256sum < "$KSUD/ksuinit" | cut -c1-16), kernelsu.ko $(sha256sum < "$KSUD/kernelsu.ko" | cut -c1-16) at the root of the vendor ramdisk fragment"
+fi
 [ -n "${EXTRA_CMDLINE:-}" ] && VC="$VC $EXTRA_CMDLINE"
 printf '%s\n' "$VC" > "$W/vendor-cmdline.txt"
 case " $VC $QCOM_BOOTARGS " in *" a52."*|*" a52sxq-"*|*" loglevel=7 "*|*" earlycon"*|*" log_buf_len="*) fail "test-only argument in the cmdline";; esac
@@ -738,6 +979,7 @@ if [ "${CACHE_FSM:-0}" = 1 ]; then
 	# every first_stage_mount entry must use a /dev/block/by-name/ path or a logical partition name
 	awk -F'\t' '$0 !~ /^#/ && $3 != "emmc" && $NF ~ /first_stage_mount/ && $1 ~ /^\// && $1 !~ /^\/dev\/block\/by-name\// {print "bad first-stage device: " $1; bad=1} END {exit bad}' "$VR/first_stage_ramdisk/fstab.qcom" || fail "first-stage fstab entry with a path first stage cannot resolve"
 fi
+if [ "$KSU" = 1 ]; then install -m 0755 "$KSUD/ksuinit" "$VR/ksuinit"; install -m 0644 "$KSUD/kernelsu.ko" "$VR/kernelsu.ko"; fi
 : > "$VR/force_debuggable"
 printf '# drivers612/realboot: loaded by init after all build.prop files (unlocked bootloader only)\nro.bpf.kver_override=%s\n' "$KVER" > "$VR/adb_debug.prop"
 find "$VR" -exec touch -h -d @0 {} +   # reproducible cpio (no build-time mtimes)
@@ -770,6 +1012,14 @@ grep -q "^os patch level: $OSP$" "$W/chk-b.info" || fail "patch level not kept"
 python3 -I "$HERE/tools/cpiox.py" "$W/chk-vb/vendor_ramdisk" "$W/chk-vr" >> "$R"
 [ "$(sort "$W/chk-vr/lib/modules/modules.load" | md5sum)" = "$(sort "$LM/modules.load" | md5sum)" ] || fail "vendor ramdisk read-back: modules.load differs"
 [ -f "$W/chk-vr/first_stage_ramdisk/fstab.qcom" ] && [ -f "$W/chk-vr/force_debuggable" ] || fail "vendor ramdisk read-back incomplete"
+if [ "$KSU" = 1 ]; then
+	cmp -s "$W/chk-vr/ksuinit" "$KSUD/ksuinit" && cmp -s "$W/chk-vr/kernelsu.ko" "$KSUD/kernelsu.ko" || fail "KSU=1: ksuinit/kernelsu.ko read-back differs"
+	[ "$(stat -c %a "$W/chk-vr/ksuinit")" = 755 ] && [ "$(stat -c %a "$W/chk-vr/kernelsu.ko")" = 644 ] || fail "KSU=1: modes in the vendor ramdisk are not 755/644"
+	grep -q ' rdinit=/ksuinit' "$O/vendor-cmdline.txt" 2>/dev/null || echo " $VC " | grep -q ' rdinit=/ksuinit ' || fail "KSU=1: rdinit missing from the vendor cmdline"
+	say "KSU=1 read-back: /ksuinit 0755 + /kernelsu.ko 0644 in the vendor ramdisk (cmp OK)"
+else
+	[ ! -e "$W/chk-vr/ksuinit" ] && [ ! -e "$W/chk-vr/kernelsu.ko" ] || fail "KSU=0 but ksuinit/kernelsu.ko in the vendor ramdisk"
+fi
 [ "$(sed -n 's/^vendor command line args: //p' "$W/chk-vb.info")" = "$VC" ] || fail "vendor_boot read-back: cmdline differs"
 [ "$(fdtget "$W/chk-vb/dtb" /chosen bootargs)" = "$DT_BOOTARGS" ] || fail "vendor_boot read-back: dtb bootargs differ"
 [ "$(sed -n 's/^ro.bpf.kver_override=//p' "$W/chk-vr/adb_debug.prop")" = "$KVER" ] || fail "adb_debug.prop kver"
@@ -793,11 +1043,12 @@ rm -rf "$W/fmt-b" "$W/fmt-vb"
 
 # ---------------------------------------------------------------- 8. summary
 ( cd "$O" && sha256sum boot.img vendor_boot.img dtbo.img > SHA256SUMS
-  find vendor-addon -type f | LC_ALL=C sort | xargs sha256sum > vendor-addon.SHA256SUMS )
+  [ "$ADDON" = vendor ] && { find vendor-addon -type f | LC_ALL=C sort | xargs sha256sum > vendor-addon.SHA256SUMS; } || true )
 cp "$W/vendor_boot.dtb" "$O/vendor_boot.dtb"; cp "$W/realboot.dtbo" "$O/realboot.dtbo"
 cp "$W/vendor-cmdline.txt" "$W/dt-bootargs.txt" "$O/"; cp "$LM/modules.load" "$O/first-stage.modules.load"
 [ -f "$T/vs-tested.diff" ] && cp "$T/vs-tested.diff" "$O/dtb-vs-tested.diff"
-printf 'name=%s kernel=%s krel=%s ref=%s image=%s tree=%s diag=%s modem=%s sdcard=%s wlan=%s\n' "$NAME" "$KV" "$KREL" "$REFRD" "$IMAGE" "$TREF" "$DIAG" "$MODEM" "$SDCARD" "$WLD" > "$O/BUILDINFO"
+printf 'name=%s kernel=%s krel=%s ref=%s image=%s tree=%s diag=%s modem=%s sdcard=%s wlan=%s addon=%s debug=%s btslim=%s\n' "$NAME" "$KV" "$KREL" "$REFRD" "$IMAGE" "$TREF" "$DIAG" "$MODEM" "$SDCARD" "$WLD" "$ADDON" "$DEBUG" "${BTSLIM:-0}" > "$O/BUILDINFO"
+sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
 if [ "$DIAG_KERNEL" = 1 ]; then cp "$(dirname "$IMAGE")/BUILDINFO" "$O/diag-kernel.BUILDINFO"; fi
 say "== summary"
 sed 's/^/  /' "$O/SHA256SUMS" | tee -a "$R"

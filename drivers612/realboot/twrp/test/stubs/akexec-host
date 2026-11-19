@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+# test stub (A52S_TEST_EXEC): runs the zip's a52boot call with the host build of the same source
+shift
+exec /akhost/a52boot-host "$@"

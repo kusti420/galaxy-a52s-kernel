@@ -1,0 +1,103 @@
+a52sxq 6.12 audio: Samsung MBHC button thresholds and jack config from 5.4 (2026-11-18)
+
+Offline parity audit (drivers612/PARITY-2026-11-18.md, P1 item 4, machine-driver part only).
+Compiled only.
+
+asoc/lahaina.c:
+- def_wcd_mbhc_cal() reads mbhc-button-thres (<&det_zones normal factory> x 8) from the
+  wcd938x codec node as Samsung's 5.4 does; first cell (CONFIG_SEC_FACTORY is off). The
+  board tree gives 13/88/138/225/450/450/450/450 instead of the Qualcomm defaults
+  75/150/237/500/....
+- wcd_mbhc_cfg: detect_extn_cable = false, linein_th = 59000 (5.4 values).
+Not ported: moisture_en = true, impedance table / impedance gain offset, slow detect,
+sec_wcd_sysfs_cb (they need the Samsung hunks in wcd-mbhc-v2/adc, bolero and rx-macro).
+
+Apply in audio-kernel/ with patch -p1, after a52-parity-fe-pcm-bt-slim.patch.
+
+--- a/asoc/lahaina.c	2026-11-18 21:01:43.067137868 +0200
++++ b/asoc/lahaina.c	2026-11-18 21:01:43.068099344 +0200
+@@ -934,7 +934,7 @@
+ static int dmic_2_3_gpio_cnt;
+ static int dmic_4_5_gpio_cnt;
+ 
+-static void *def_wcd_mbhc_cal(void);
++static void *def_wcd_mbhc_cal(struct snd_soc_component *component);
+ 
+ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime*);
+ static int msm_int_wsa_init(struct snd_soc_pcm_runtime*);
+@@ -947,7 +947,7 @@
+ static struct wcd_mbhc_config wcd_mbhc_cfg = {
+ 	.read_fw_bin = false,
+ 	.calibration = NULL,
+-	.detect_extn_cable = true,
++	.detect_extn_cable = false,	/* a52sxq: as on Samsung 5.4 (Qualcomm: true) */
+ 	.mono_stero_detection = false,
+ 	.swap_gnd_mic = NULL,
+ 	.hs_ext_micbias = true,
+@@ -959,7 +959,8 @@
+ 	.key_code[5] = 0,
+ 	.key_code[6] = 0,
+ 	.key_code[7] = 0,
+-	.linein_th = 5000,
++	.linein_th = 59000,	/* a52sxq: as on Samsung 5.4 (Qualcomm: 5000) */
++	/* a52sxq: Samsung 5.4 has moisture_en = true; not changed here, see PARITY-FIXES.md */
+ 	.moisture_en = false,
+ 	.mbhc_micbias = MIC_BIAS_2,
+ 	.anc_micbias = MIC_BIAS_2,
+@@ -5873,11 +5874,14 @@
+ 	return entry;
+ }
+ 
+-static void *def_wcd_mbhc_cal(void)
++static void *def_wcd_mbhc_cal(struct snd_soc_component *component)
+ {
+ 	void *wcd_mbhc_cal;
+ 	struct wcd_mbhc_btn_detect_cfg *btn_cfg;
++	struct device *cdev = component ? component->dev : NULL;
++	struct of_phandle_args args;
+ 	u16 *btn_high;
++	int i, ret;
+ 
+ 	wcd_mbhc_cal = kzalloc(WCD_MBHC_CAL_SIZE(WCD_MBHC_DEF_BUTTONS,
+ 				WCD9XXX_MBHC_DEF_RLOADS), GFP_KERNEL);
+@@ -5899,6 +5903,31 @@
+ 	btn_high[6] = 500;
+ 	btn_high[7] = 500;
+ 
++	if (!cdev || !cdev->of_node)
++		return wcd_mbhc_cal;
++
++	/*
++	 * a52sxq: Samsung 5.4 takes the button thresholds from the codec node:
++	 * mbhc-button-thres = <&det_zones normal factory> x 8 (#list-det-cells = 2).
++	 * CONFIG_SEC_FACTORY is off in the ROM kernel, so the first cell is used.
++	 */
++	for (i = 0; i < WCD_MBHC_DEF_BUTTONS; i++) {
++		ret = of_parse_phandle_with_args(cdev->of_node,
++			"mbhc-button-thres", "#list-det-cells", i, &args);
++		if (ret < 0) {
++			pr_info("%s: btn_high[%d] = %d (default)\n",
++					__func__, i, btn_high[i]);
++			continue;
++		}
++		of_node_put(args.np);
++		if (args.args_count < 1)
++			continue;
++
++		btn_high[i] = args.args[0];
++		pr_info("%s: btn_high[%d] = %d (modified)\n",
++				__func__, i, btn_high[i]);
++	}
++
+ 	return wcd_mbhc_cal;
+ }
+ 
+@@ -8109,7 +8138,7 @@
+ 	msm_common_dai_link_init(rtd);
+ 	pr_err("%s : codec_reg_done = true \n",__func__);
+ 
+-	mbhc_calibration = def_wcd_mbhc_cal();
++	mbhc_calibration = def_wcd_mbhc_cal(component);
+ 	if (!mbhc_calibration)
+ 		return -ENOMEM;
+ 	wcd_mbhc_cfg.calibration = mbhc_calibration;

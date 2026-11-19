@@ -1776,7 +1776,7 @@ diff --color -urN -x '*.o' -x '.*' -x Makefile $ANDROID_TREE/kernel/samsung/sm73
  extern struct msm_vidc_drv *vidc_driver;
 diff --color -urN -x '*.o' -x '.*' -x Makefile $ANDROID_TREE/kernel/samsung/sm7325/techpack/video/msm/vidc/msm_vidc_res_parse.c msm/vidc/msm_vidc_res_parse.c
 --- $ANDROID_TREE/kernel/samsung/sm7325/techpack/video/msm/vidc/msm_vidc_res_parse.c	2026-07-17 18:14:47.307060466 +0300
-+++ msm/vidc/msm_vidc_res_parse.c	2026-11-11 20:41:17.869598921 +0200
++++ msm/vidc/msm_vidc_res_parse.c	2026-11-18 19:51:50.181890114 +0200
 @@ -4,7 +4,6 @@
   */
  
@@ -1874,15 +1874,19 @@ diff --color -urN -x '*.o' -x '.*' -x Makefile $ANDROID_TREE/kernel/samsung/sm73
  
  	if (!dev || !cb || !res) {
  		d_vpr_e("%s: Invalid Input params\n", __func__);
-@@ -1011,7 +1010,6 @@
+@@ -1010,8 +1009,10 @@
+ 	 /*
  	  * When memory is fragmented, below configuration increases the
  	  * possibility to get a mapping for buffer in the configured CB.
++	  * 6.12: iommu_dma_enable_best_fit_algo() is gone; the replacement is
++	  * the CB node's DT properties qcom,iova-best-fit and
++	  * qcom,iova-max-align-shift (a52sxq-video.dtsi).
  	  */
 -	iommu_dma_enable_best_fit_algo(cb->dev);
  
  	 /*
  	 * configure device segment size and segment boundary to ensure
-@@ -1021,8 +1019,8 @@
+@@ -1021,8 +1022,8 @@
  	if (!dev->dma_parms)
  		dev->dma_parms =
  			devm_kzalloc(dev, sizeof(*dev->dma_parms), GFP_KERNEL);

@@ -10,6 +10,9 @@ MK=(make -C "$BSP/kernel" O="$BSP/out/lahaina" ARCH=arm64 LLVM="$CLANG/" KCONFIG
     M="$HERE/src" KBUILD_EXTRA_SYMBOLS="$SOC/build/Module.symvers"
     SOCINCLUDE="-I$SOC/include -I$SOC/include/uapi" CONFIG_ARCH_LAHAINA=y CONFIG_ARCH_YUPIK=y)
 if [ "${1:-}" = clean ]; then "${MK[@]}" clean; exit; fi
+# ABI gate: the uapi headers must keep the 5.4 layout/numbers the vendor ipacm was built with
+# (abi54/linux = kernel_a52sxq_bone include/uapi/linux; allowed differences: abi54/EXCEPTIONS).
+"$HERE/abi-check.py" || { echo "ABI gate failed: not building"; exit 1; }
 "${MK[@]}" ${KEEP_GOING:+-k} modules > "$HERE/build.log" 2>&1; rc=$?
 echo "make rc=$rc; $(find "$HERE/src" -name '*.ko' | wc -l) modules; $(grep -c 'error:' "$HERE/build.log") compile errors; $(grep -c 'ERROR: modpost' "$HERE/build.log") modpost errors; $(grep -c 'warning:' "$HERE/build.log") warnings"
 [ $rc = 0 ] || exit $rc

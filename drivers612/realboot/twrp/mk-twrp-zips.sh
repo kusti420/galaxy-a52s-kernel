@@ -68,6 +68,7 @@ stage_common() { # <dir> <mode> <title> <images src dir>
 		echo "MODE=$2"
 		echo "TITLE=$3"
 		echo "EXPECT_ROM=24.0-$STOCK"
+		echo "ALLOW_ICHTHYS=${ALLOW_ICHTHYS:-0}"
 		echo "NEED_TMP_KB=$((kb + 16384))"
 	} > "$d/a52s-k612.conf"
 }

@@ -1,0 +1,49 @@
+diff --git a/drivers612/audio/audio-kernel/asoc/codecs/bolero/bolero-cdc.c b/drivers612/audio/audio-kernel/asoc/codecs/bolero/bolero-cdc.c
+index 6d55b37..ce7c71d 100644
+--- a/drivers612/audio/audio-kernel/asoc/codecs/bolero/bolero-cdc.c
++++ b/drivers612/audio/audio-kernel/asoc/codecs/bolero/bolero-cdc.c
+@@ -1378,6 +1378,35 @@ static int bolero_probe(struct platform_device *pdev)
+ 	struct clk *lpass_core_hw_vote = NULL;
+ 	struct clk *lpass_audio_hw_vote = NULL;
+ 
++	/*
++	 * a52sxq 6.12 (2026-11-18): the two hw-vote clocks come from audio-ref-clk siblings
++	 * (vote_lpass_core_hw / vote_lpass_audio_hw). Below, a failed devm_clk_get() is swallowed
++	 * (clock NULL, probe 0). On the real boot bolero-cdc probed 2 ms BEFORE its providers, so
++	 * both votes stayed NULL: bolero_runtime_resume() voted nothing and
++	 * bolero_check_core_votes() still said "ok". Every macro register access outside an active
++	 * stream then hit an unclocked LPASS block = silent SoC reset: the audio HAL reads all
++	 * mixer controls at start ("IIR0 Band1" is the first with a raw register read), harmless at
++	 * boot while the votes are still up, fatal on any later HAL restart (`stop`/`start`,
++	 * audioserver crash, tinymix). Defer until the providers are bound; a clock that is absent
++	 * from the DT (-ENOENT) keeps the old behaviour. Same fix as pinctrl-lpi (rb31).
++	 */
++	{
++		static const char * const votes[] = { "lpass_core_hw_vote", "lpass_audio_hw_vote" };
++		struct clk *c;
++		int i;
++
++		for (i = 0; i < ARRAY_SIZE(votes); i++) {
++			c = clk_get(&pdev->dev, votes[i]);
++			if (IS_ERR(c)) {
++				if (PTR_ERR(c) == -EPROBE_DEFER)
++					return dev_err_probe(&pdev->dev, -EPROBE_DEFER,
++						"%s provider not bound yet\n", votes[i]);
++			} else {
++				clk_put(c);
++			}
++		}
++	}
++
+ 	priv = devm_kzalloc(&pdev->dev, sizeof(struct bolero_priv),
+ 			    GFP_KERNEL);
+ 	if (!priv)
+@@ -1452,7 +1481,7 @@ static int bolero_probe(struct platform_device *pdev)
+ 	lpass_core_hw_vote = devm_clk_get(&pdev->dev, "lpass_core_hw_vote");
+ 	if (IS_ERR(lpass_core_hw_vote)) {
+ 		ret = PTR_ERR(lpass_core_hw_vote);
+-		dev_dbg(&pdev->dev, "%s: clk get %s failed %d\n",
++		dev_warn(&pdev->dev, "%s: clk get %s failed %d: macro registers are NOT clock-voted\n",
+ 			__func__, "lpass_core_hw_vote", ret);
+ 		lpass_core_hw_vote = NULL;
+ 		ret = 0;

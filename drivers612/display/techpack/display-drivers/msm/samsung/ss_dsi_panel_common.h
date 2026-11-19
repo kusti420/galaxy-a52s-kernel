@@ -2573,6 +2573,10 @@ struct samsung_display_driver_data {
 	bool support_optical_fingerprint;
 	bool finger_mask_updated;
 	int finger_mask;
+	/* a52sxq / IchthysOS: one-shot request written by the mask_brightness sysfs store and
+	 * taken (xchg) by sde_connector_pre_kickoff at the next kickoff, as the 5.4 store +
+	 * dsi_display_pre_kickoff did. 0 = none, 1 = mask off, level + 1 = mask on at level. */
+	int ichthys_sysfs_mask_req;
 	int panel_hbm_entry_delay; /* HBM entry delay after cmd tx, Unit = vsync */
 	int panel_hbm_entry_after_vsync_pre; /* Delay after last VSYNC before cmd Tx, Unit = us */
 	int panel_hbm_entry_after_vsync; /* Delay after last VSYNC after cmd Tx, Unit = us */

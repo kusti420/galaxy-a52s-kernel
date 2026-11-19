@@ -199,7 +199,9 @@ fi
 # inherited watchdog: keep petting while first-stage init loads the rest (max 600 s), off after
 # switch root (as the test helper, which switched it off before Android)
 ( i=0; while [ ! -e /tmp/rh-switched ] && [ $i -lt 120 ]; do pet; sleep 5; i=$((i + 1)); done
-  [ -e $WRAW ] && echo "5 2 0" > $WRAW && log "inherited watchdog disabled" ) &
+  # WDT=1 builds: gh_virt_wdt owns the watchdog by now (loaded by first-stage init): leave it alone
+  if [ -d /sys/module/gh_virt_wdt ]; then log "gh_virt_wdt loaded: watchdog left to the kernel driver"
+  else [ -e $WRAW ] && echo "5 2 0" > $WRAW && log "inherited watchdog disabled"; fi ) &
 touch /old/a52/go
 T0=$(cut -d. -f1 /proc/uptime)
 
@@ -346,7 +348,15 @@ usbloop &
 
 # ---- vendor add-on into init's /dev tmpfs, as soon as first-stage init has mounted it
 A=/proc/1/root/dev/.a52addon
-addcopy() { mkdir -p $A && cp -a /a52/addon/vendor $A/ && [ "$(find $A/vendor -type f | wc -l)" = "$(find /a52/addon/vendor -type f | wc -l)" ]; }
+addcopy() { mkdir -p $A && cp -a /a52/addon/vendor $A/ && [ "$(find $A/vendor -type f | wc -l)" = "$(find /a52/addon/vendor -type f | wc -l)" ] && addhide; }
+# ADDON=vendor_boot: the overlay layer HIDES the 6.x files of an earlier install (overlayfs whiteouts =
+# char 0:0 in the upper lowerdir), so the phone's /vendor looks like it never had an add-on
+addhide() {
+	[ "${ADDON:-vendor}" = vendor_boot ] || return 0
+	for w in lib/modules/6.12 lib/modules/6.18 lib/modules/6.18-wlan lib/modules/5.4-gki etc/init/a52sxq-k612.rc etc/init/a52sxq-k618.rc; do
+		[ -e $A/vendor/$w ] || mknod $A/vendor/$w c 0 0 || return 1; done
+	cp /a52/rh/tone.dex $A/tone.dex 2>/dev/null; return 0
+}
 i=0; ADD=0
 while [ $i -lt 1200 ]; do grep -q "^tmpfs /dev tmpfs" /proc/1/mounts 2>/dev/null && break; usleep 50000; i=$((i + 1)); done
 addcopy && ADD=1
@@ -358,7 +368,8 @@ while [ $i -lt 2400 ]; do
 	if [ -e /proc/1/root/system/bin/init ] && [ -d /proc/1/root/vendor/etc ] && [ ! -e /proc/1/root/system/system ]; then
 		touch /tmp/rh-switched
 		# first-stage init may have moved /dev under the copy: check, copy again if needed
-		[ -f $A/vendor/etc/init/a52sxq-$K.rc ] && [ -f $A/vendor/lib/modules/$V/modules.dep ] || { addcopy && ADD=1 || ADD=0; }
+		if [ "${ADDON:-vendor}" = vendor_boot ]; then [ -c $A/vendor/lib/modules/$V ] || { addcopy && ADD=1 || ADD=0; }
+		else [ -f $A/vendor/etc/init/a52sxq-$K.rc ] && [ -f $A/vendor/lib/modules/$V/modules.dep ] || { addcopy && ADD=1 || ADD=0; }; fi
 		if [ $ADD = 1 ] && /a52/a52ovl /vendor/lib/modules /dev/.a52addon/vendor/lib/modules:/vendor/lib/modules \
 				/vendor/etc/init /dev/.a52addon/vendor/etc/init:/vendor/etc/init > /tmp/a52ovl.log 2>&1; then OVL=1; fi
 		ARGS="/a52/bind/fstab.qcom /vendor/etc/fstab.qcom"
@@ -373,7 +384,12 @@ case $BOUND in
 *) log "test fstab NOT bound (state $BOUND, poll $i): leaving"; /leave nobind;;
 esac
 # 6.18 (WLD=6.18-wlan): the rc binds $WLD over 5.4-gki later (post-fs); 5.4-gki must exist as its mount point
-if [ $OVL = 1 ] && [ -f /proc/1/root/vendor/etc/init/a52sxq-$K.rc ] && [ -f /proc/1/root/vendor/lib/modules/$V/modules.dep ] && [ -f /proc/1/root/vendor/lib/modules/$WLD/qca_cld3_wlan.ko ] \
+if [ "${ADDON:-vendor}" = vendor_boot ]; then
+	F=/proc/1/root/vendor
+	if [ $OVL = 1 ] && [ ! -e $F/lib/modules/$V ] && [ ! -e $F/lib/modules/5.4-gki ] && [ ! -e $F/etc/init/a52sxq-k612.rc ] && [ ! -e $F/etc/init/a52sxq-k618.rc ] && [ -d $F/lib/modules ]; then
+		log "rh: addon=vendor_boot: phone's /vendor 6.x files HIDDEN from init (lib/modules: $(ls $F/lib/modules | tr '\n' ' '); etc/init a52sxq*: $(ls $F/etc/init | grep -c a52sxq))"
+	else touch /tmp/rh-hide-fail; log "rh: FAIL addon=vendor_boot hide overlay (copy=$ADD ovl=$OVL: $(cat /tmp/a52ovl.log | tr '\n' ' '))"; fi
+elif [ $OVL = 1 ] && [ -f /proc/1/root/vendor/etc/init/a52sxq-$K.rc ] && [ -f /proc/1/root/vendor/lib/modules/$V/modules.dep ] && [ -f /proc/1/root/vendor/lib/modules/$WLD/qca_cld3_wlan.ko ] \
 		&& [ -d /proc/1/root/vendor/lib/modules/5.4-gki ]; then
 	log "rh: vendor add-on visible to init: /vendor/etc/init/a52sxq-$K.rc, /vendor/lib/modules/$V, /vendor/lib/modules/$WLD (RAM overlay); 5.4-gki holds: $(ls /proc/1/root/vendor/lib/modules/5.4-gki 2>/dev/null | tr '\n' ' ')"
 else

@@ -29,9 +29,387 @@
  endif
  
  #MSM - Vendor SI
+--- a/drivers/platform/msm/include/uapi/linux/msm_ipa.h
++++ b/drivers/platform/msm/include/uapi/linux/msm_ipa.h
+@@ -138,20 +138,30 @@
+ #define IPA_IOCTL_ADD_UC_ACT_ENTRY              83
+ #define IPA_IOCTL_DEL_UC_ACT_ENTRY              84
+ #define IPA_IOCTL_SET_SW_FLT                    85
++/*
++ * a52sxq: the vendor ipacm/libipanat were built with the 5.4 header, so every
++ * number, enum value and struct layout the 5.4 header has must stay as it is
++ * there (drivers612/conn/data/abi-check.py compares the two). Numbers the 5.4
++ * header uses and this driver does not handle stay reserved:
++ * 86 GET_HW_FEATURE_SUPPORT, 91 FLT_MEM_PERIPHERAL_SET_PRIO_HIGH,
++ * 94 QUERY_CACHED_DRIVER_MSG, 96 ADD_DEL_DSCP_PCP_MAPPING,
++ * 97 SEND_VLAN_MUXID_MAPPING, 98 SEND_TUNNEL_TEMPLATE_INFO,
++ * 99 QUERY_TUNNEL_FEATURE. r30-only ioctls start at 100.
++ */
+ #define IPA_IOCTL_SET_PKT_THRESHOLD             87
+ #define IPA_IOCTL_ADD_EoGRE_MAPPING             88
+ #define IPA_IOCTL_DEL_EoGRE_MAPPING             89
+ #define IPA_IOCTL_SET_IPPT_SW_FLT               90
+ #define IPA_IOCTL_ADD_MACSEC_MAPPING            92
+ #define IPA_IOCTL_DEL_MACSEC_MAPPING            93
+-#define IPA_IOCTL_SET_NAT_EXC_RT_TBL_IDX        94
+-#define IPA_IOCTL_SET_CONN_TRACK_EXC_RT_TBL_IDX 95
+-#define IPA_IOCTL_COAL_EVICT_POLICY             96
+-#define IPA_IOCTL_SET_EXT_ROUTER_MODE           97
++#define IPA_IOCTL_SET_EXT_ROUTER_MODE           95
++#define IPA_IOCTL_SET_NAT_EXC_RT_TBL_IDX        100
++#define IPA_IOCTL_SET_CONN_TRACK_EXC_RT_TBL_IDX 101
++#define IPA_IOCTL_COAL_EVICT_POLICY             102
+ /**
+  * max size of the header to be inserted
+  */
+-#define IPA_HDR_MAX_SIZE 255
++#define IPA_HDR_MAX_SIZE 64 /* a52sxq: 5.4 ABI (r30: 255) */
+ 
+ /**
+  * max size of the name of the resource (routing table, header)
+@@ -219,6 +229,11 @@
+ #define IPA_CV2X_SUPPORT
+ 
+ /**
++ *  Max number of delegated IDUs for prefix delegation FR (5.4 ABI)
++ */
++#define IPA_PREFIX_MAPPING_MAX 16
++
++/**
+  * the attributes of the rule (routing or filtering)
+  */
+ #define IPA_FLT_TOS			(1ul << 0)
+@@ -923,14 +938,9 @@
+ #define IPA_SOCKV5_EVENT_MAX IPA_SOCKV5_EVENT_MAX
+ };
+ 
+-enum ipa_warning_limit_event {
+-	IPA_WARNING_LIMIT_REACHED = IPA_SOCKV5_EVENT_MAX,
+-	IPA_WARNING_LIMIT_EVENT_MAX,
+-#define IPA_WARNING_LIMIT_EVENT_MAX IPA_WARNING_LIMIT_EVENT_MAX
+-};
+-
++/* a52sxq: 5.4 event values from here on; the r30-only event is last */
+ enum ipa_sw_flt_event {
+-	IPA_SW_FLT_EVENT = IPA_WARNING_LIMIT_EVENT_MAX,
++	IPA_SW_FLT_EVENT = IPA_SOCKV5_EVENT_MAX,
+ 	IPA_SW_FLT_EVENT_MAX
+ #define IPA_SW_FLT_EVENT_MAX IPA_SW_FLT_EVENT_MAX
+ };
+@@ -968,13 +978,32 @@
+ #define IPA_MACSEC_EVENT_MAX IPA_MACSEC_EVENT_MAX
+ };
+ 
++enum ipa_done_restore_event {
++	IPA_DONE_RESTORE_EVENT = IPA_MACSEC_EVENT_MAX,
++	IPA_DONE_RESTORE_EVENT_MAX
++#define IPA_DONE_RESTORE_EVENT_MAX IPA_DONE_RESTORE_EVENT_MAX
++};
++
+ enum ipa_ext_route_evt {
+-	IPA_SET_EXT_ROUTER_MODE_EVENT = IPA_MACSEC_EVENT_MAX,
++	IPA_SET_EXT_ROUTER_MODE_EVENT = IPA_DONE_RESTORE_EVENT_MAX,
+ 	IPA_SET_EXT_ROUTER_MODE_EVENT_MAX
+ #define IPA_SET_EXT_ROUTER_MODE_EVENT_MAX IPA_SET_EXT_ROUTER_MODE_EVENT_MAX
+ };
+ 
+-#define IPA_EVENT_MAX_NUM (IPA_SET_EXT_ROUTER_MODE_EVENT_MAX)
++enum ipa_eth_pdu_evt {
++	IPA_ENABLE_ETH_PDU_MODE_EVENT = IPA_SET_EXT_ROUTER_MODE_EVENT_MAX,
++	IPA_ENABLE_ETH_PDU_MODE_EVENT_MAX
++#define IPA_ENABLE_ETH_PDU_MODE_EVENT_MAX IPA_ENABLE_ETH_PDU_MODE_EVENT_MAX
++};
++
++/* r30-only, not in the 5.4 header: after the last 5.4 event */
++enum ipa_warning_limit_event {
++	IPA_WARNING_LIMIT_REACHED = IPA_ENABLE_ETH_PDU_MODE_EVENT_MAX,
++	IPA_WARNING_LIMIT_EVENT_MAX,
++#define IPA_WARNING_LIMIT_EVENT_MAX IPA_WARNING_LIMIT_EVENT_MAX
++};
++
++#define IPA_EVENT_MAX_NUM (IPA_WARNING_LIMIT_EVENT_MAX)
+ #define IPA_EVENT_MAX ((int)IPA_EVENT_MAX_NUM)
+ 
+ /**
+@@ -1088,6 +1117,35 @@
+ #define IPA_HW_v5_5 IPA_HW_v5_5
+ #define IPA_HW_v6_0 IPA_HW_v6_0
+ 
++/*
++ * a52sxq: 5.4 ABI. The 5.4 struct ipa_rule_attrib ends in p_exception +
++ * struct ipa_field_val_equation_gen (164 bytes, r30: 152). The driver does
++ * not read them; they keep every struct that embeds the attrib at the 5.4
++ * size and member offsets.
++ */
++enum ipa_exception_type {
++	FIELD_IP_PROTOCOL  = 0,
++	FIELD_TCP_SRC_PORT = 1,
++	FIELD_TCP_DST_PORT = 2,
++	FIELD_UDP_SRC_PORT = 3,
++	FIELD_UDP_DST_PORT = 4,
++	FIELD_ETHER_TYPE   = 5,
++	FIELD_MAX
++};
++
++enum ipa_data_flow_type {
++	FLOW_UPLINK   = 0,
++	FLOW_DOWNLINK = 1,
++	FLOW_MAX
++};
++
++struct ipa_field_val_equation_gen {
++	enum ipa_data_flow_type  flow;
++	enum ipa_ip_type         inner_iptype;
++	enum ipa_exception_type  field;
++	uint32_t                 value;
++};
++
+ /**
+  * struct ipa_rule_attrib - attributes of a routing/filtering
+  * rule, all in LE
+@@ -1120,7 +1178,8 @@
+  * @payload_length: Payload length.
+  * @ext_attrib_mask: Extended attributes.
+  * @l2tp_udp_next_hdr: next header in L2TP tunneling
+- * @frag_encoding: is-frag equation
++ * @p_exception : exception to enable for mpls-pppoe (5.4 ABI, unused)
++ * @fld_val_eq: for finding a value at a particular offset (5.4 ABI, unused)
+  */
+ struct ipa_rule_attrib {
+ 	uint32_t attrib_mask;
+@@ -1165,8 +1224,8 @@
+ 	__u16 payload_length;
+ 	__u32 ext_attrib_mask;
+ 	__u8 l2tp_udp_next_hdr;
+-	__u8 is_frag_encoding;
+-	__u32 padding2;
++	__u8 p_exception;
++	struct ipa_field_val_equation_gen fld_val_eq;
+ };
+ 
+ 
+@@ -1670,7 +1729,9 @@
+ 	uint32_t input_ip_version :1;
+ 	uint32_t output_ip_version :1;
+ 	uint32_t second_pass :1;
+-	uint32_t reserved :28;
++	uint32_t is_mpls :1;		/* 5.4 ABI names, unused here */
++	uint32_t tag_remove_len :4;
++	uint32_t reserved :23;
+ };
+ 
+ /**
+@@ -1680,7 +1741,10 @@
+  */
+ struct ipa_eogre_header_remove_procparams {
+ 	uint32_t hdr_len_remove:8; /* 44 bytes for IPV6, 24 for IPV4 */
+-	uint32_t reserved:24;
++	uint32_t outer_ip_version :1;	/* 5.4 ABI names, unused here */
++	uint32_t is_mpls :1;
++	uint32_t tag_add_len :4;
++	uint32_t reserved :18;
+ };
+ 
+ /**
+@@ -1704,7 +1768,40 @@
+ struct ipa_eth_II_to_eth_II_ex_procparams {
+ 	uint32_t input_ethhdr_negative_offset : 8;
+ 	uint32_t output_ethhdr_negative_offset : 8;
+-	uint32_t reserved : 16;
++	uint32_t output_dscp_pcp_update : 1;	/* 5.4 ABI name, unused here */
++	uint32_t reserved : 15;
++};
++
++/* a52sxq: 5.4 ABI, tail members of struct ipa_hdr_proc_ctx_add (unused here) */
++struct ipa_wwan_to_eth_II_ex_procparams {
++	uint32_t input_ethhdr_negative_offset : 8;
++	uint32_t output_ethhdr_negative_offset : 8;
++	uint32_t output_dscp_pcp_update : 1;
++	uint32_t input_ethhdr_valid : 1;
++	uint32_t reserved : 14;
++};
++
++struct ipa_gre_header_add_procparams {
++	uint32_t eth_hdr_retained :1;
++	uint32_t input_ip_version :1;
++	uint32_t output_ip_version :1;
++	uint32_t second_pass :1;
++	uint32_t is_mpls :1;
++	uint32_t tag_remove_len :4;
++	uint32_t reserved :23;
++};
++
++struct ipa_gre_header_remove_procparams {
++	uint32_t hdr_len_remove :8;
++	uint32_t outer_ip_version :1;
++	uint32_t is_mpls :1;
++	uint32_t tag_add_len :4;
++	uint32_t reserved :18;
++};
++
++struct ipa_gre_hdr_proc_ctx_params {
++	struct ipa_gre_header_add_procparams hdr_add_param;
++	struct ipa_gre_header_remove_procparams hdr_remove_param;
+ };
+ 
+ #define L2TP_USER_SPACE_SPECIFY_DST_PIPE
+@@ -1730,6 +1827,9 @@
+ 	struct ipa_l2tp_hdr_proc_ctx_params l2tp_params;
+ 	struct ipa_eogre_hdr_proc_ctx_params eogre_params;
+ 	struct ipa_eth_II_to_eth_II_ex_procparams generic_params;
++	/* a52sxq: 5.4 ABI tail (60 bytes, r30: 48); not read by this driver */
++	struct ipa_wwan_to_eth_II_ex_procparams generic_params_v2;
++	struct ipa_gre_hdr_proc_ctx_params gre_params;
+ };
+ 
+ #define IPA_L2TP_HDR_PROC_SUPPORT
+@@ -2662,7 +2762,7 @@
+  */
+ struct ipa_ioc_vlan_iface_info {
+ 	char name[IPA_RESOURCE_NAME_MAX];
+-	uint8_t vlan_id;
++	uint16_t vlan_id;	/* a52sxq: 5.4 ABI (r30: uint8_t) */
+ };
+ 
+ /**
+@@ -2834,6 +2934,7 @@
+ 	char name[IPA_RESOURCE_NAME_MAX];
+ 	uint8_t mac_addr[IPA_MAC_ADDR_SIZE];
+ 	int16_t if_index;
++	uint8_t ast_update;	/* a52sxq: 5.4 ABI (42 bytes) */
+ };
+ 
+ /**
+@@ -2845,7 +2946,8 @@
+  */
+ enum ipa_wlan_hdr_attrib_type {
+ 	WLAN_HDR_ATTRIB_MAC_ADDR,
+-	WLAN_HDR_ATTRIB_STA_ID
++	WLAN_HDR_ATTRIB_STA_ID,
++	WLAN_HDR_ATTRIB_TA_PEER_ID	/* a52sxq: 5.4 ABI */
+ };
+ 
+ /**
+@@ -2861,6 +2963,7 @@
+ 	union {
+ 		uint8_t mac_addr[IPA_MAC_ADDR_SIZE];
+ 		uint8_t sta_id;
++		uint16_t ta_peer_id;	/* a52sxq: 5.4 ABI, puts u at offset 6 */
+ 	} u;
+ };
+ 
+@@ -3335,6 +3438,7 @@
+ 	union {
+ 		struct ipa_pdn_ip_collision_cfg {
+ 			__u32 pdn_ip_addr;
++			__u16 vlan_id;	/* a52sxq: 5.4 ABI */
+ 		} collison_cfg;
+ 
+ 		struct ipa_pdn_ip_passthrough_cfg {
+@@ -3469,6 +3573,10 @@
+ 	char pdn_name[IPA_RESOURCE_NAME_MAX];
+ 	uint32_t ipv6_addr[4];
+ 	uint32_t ipv6_mask[4];
++	/* a52sxq: 5.4 ABI tail; no handler for this ioctl in the driver */
++	int num_of_idu_prefix_mapping;
++	uint32_t idu_wan_ip[IPA_PREFIX_MAPPING_MAX][4];
++	uint32_t idu_client_prefix[IPA_PREFIX_MAPPING_MAX][4];
+ };
+ 
+ /**
+--- a/drivers/platform/msm/include/uapi/linux/rmnet_ipa_fd_ioctl.h
++++ b/drivers/platform/msm/include/uapi/linux/rmnet_ipa_fd_ioctl.h
+@@ -37,8 +37,13 @@
+ #define WAN_IOCTL_ADD_OFFLOAD_CONNECTION     18
+ #define WAN_IOCTL_RMV_OFFLOAD_CONNECTION     19
+ #define WAN_IOCTL_GET_WAN_MTU                20
+-#define WAN_IOCTL_SET_DATA_QUOTA_WARNING     21
+-#define WAN_IOCTL_NOTIFY_NAT_MOVE_RES        22
++/*
++ * a52sxq: 5.4 numbers (vendor ipacm): 21 is NOTIFY_NAT_MOVE_RES and 22 is
++ * NOTIFY_DUAL_BACKHAUL_INFO (not handled here, reserved). The r30-only
++ * SET_DATA_QUOTA_WARNING moved from 21 to 23.
++ */
++#define WAN_IOCTL_NOTIFY_NAT_MOVE_RES        21
++#define WAN_IOCTL_SET_DATA_QUOTA_WARNING     23
+ 
+ /* User space may not have this defined. */
+ #ifndef IFNAMSIZ
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa.c
+@@ -7072,14 +7072,39 @@
+ #endif
+ };
+ 
++/*
++ * a52sxq: the vendor ipacm is built with the 5.4 msm_ipa.h (see
++ * drivers612/conn/data/abi-check.py). These are its sizes, confirmed in the
++ * shipped binary; the V2 rule ioctls reject anything larger than the
++ * driver's own *_i structs.
++ */
++static_assert(sizeof(struct ipa_rule_attrib) == 164);
++static_assert(sizeof(struct ipa_hdr_add) == 120);
++static_assert(sizeof(struct ipa_ioc_copy_hdr) == 108);
++static_assert(offsetof(struct ipa_ioc_copy_hdr, hdr_len) == 96);
++static_assert(sizeof(struct ipa_ioc_tx_intf_prop) == 212);
++static_assert(offsetof(struct ipa_ioc_tx_intf_prop, dst_pipe) == 168);
++static_assert(offsetof(struct ipa_ioc_tx_intf_prop, hdr_name) == 176);
++static_assert(sizeof(struct ipa_ioc_rx_intf_prop) == 176);
++static_assert(sizeof(struct ipa_rt_rule_add) == 192);
++static_assert(sizeof(struct ipa_flt_rule_add) == 384);
++static_assert(sizeof(struct ipa_rt_rule_add_i) >= 196);
++static_assert(sizeof(struct ipa_rt_rule_add_ext_i) >= 200);
++static_assert(sizeof(struct ipa_rt_rule_mdfy_i) >= 192);
++static_assert(sizeof(struct ipa_flt_rule_add_i) >= 388);
++static_assert(sizeof(struct ipa_flt_rule_mdfy_i) >= 384);
++
+ static int ipa3_get_qmp(struct device *dev)
+ {
+ 	ipa3_ctx->qmp = qmp_get(dev);
+ 	if (IS_ERR(ipa3_ctx->qmp)) {
+ 		if (PTR_ERR(ipa3_ctx->qmp) != -ENODEV)
+ 			IPAERR("fail to get QMP Node: %ld\n", PTR_ERR(ipa3_ctx->qmp));
++		/* a52sxq: PTR_ERR was taken after the NULL, swallowing a defer */
++		int err = PTR_ERR(ipa3_ctx->qmp);
++
+ 		ipa3_ctx->qmp = NULL;
+-		return PTR_ERR(ipa3_ctx->qmp);
++		return err == -EPROBE_DEFER ? err : 0;
+ 	}
+ 	return 0;
+ }
 --- a/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c
 +++ b/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c
-@@ -6568,6 +6568,15 @@
+@@ -1456,6 +1456,8 @@
+ 	.notifier_call = ipa3_rmnet_mem_notifier,
+ 	.priority = INT_MAX,
+ };
++/* a52sxq: COAL_CONS and WAN_CONS share the block; register it once */
++static atomic_t ipa3_rmnet_mem_blk_users = ATOMIC_INIT(0);
+ #endif
+ 
+ /**
+@@ -1846,7 +1848,8 @@
+ 				IPADBG("Temp pool capacity for client:%d, value:%u\n",
+ 						sys_in->client,
+ 						atomic_read(&ipa3_ctx->ipa_temp_pool_capacity));
+-				rmnet_mem_register_notifier(&ipa3_rmnet_mem_blk);
++				if (atomic_inc_return(&ipa3_rmnet_mem_blk_users) == 1)
++					rmnet_mem_register_notifier(&ipa3_rmnet_mem_blk);
+ #endif
+ 			}
+ 			atomic_set(&ep->sys->repl->pending, 0);
+@@ -3947,7 +3950,8 @@
+ #ifdef CONFIG_IPA_RMNET_MEM
+ 		if (sys->ep->client == IPA_CLIENT_APPS_WAN_CONS ||
+ 			sys->ep->client == IPA_CLIENT_APPS_WAN_COAL_CONS) {
+-			rmnet_mem_unregister_notifier(&ipa3_rmnet_mem_blk);
++			if (atomic_dec_if_positive(&ipa3_rmnet_mem_blk_users) == 0)
++				rmnet_mem_unregister_notifier(&ipa3_rmnet_mem_blk);
+ 		}
+ #endif
+ 	}
+@@ -6568,6 +6572,15 @@
  				napi_schedule(&tx_pkt->sys->napi_tx);
  			}
  		} else if (ipa_net_initialized && sys->napi_tx_enable) {
@@ -47,3 +425,92 @@
  			if(!atomic_cmpxchg(&tx_pkt->sys->in_napi_context, 0, 1))
  				napi_schedule(&tx_pkt->sys->napi_tx);
  		} else {
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa_qmi_service.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa_qmi_service.c
+@@ -714,7 +714,12 @@
+ 		req.is_ssr_bootup = 1;
+ 	}
+ 
+-	req.hw_fiter_stats_info_valid = true;
++	/*
++	 * a52sxq: only advertise the FnR region to the modem when the whole
++	 * Q6 range fits in it (5.4 never sent this TLV).
++	 */
++	req.hw_fiter_stats_info_valid =
++		IPA_MEM_PART(stats_fnr_size) >= IPA_Q6_FNR_STATS_SIZE;
+ 	req.hw_filter_stats_info.hw_filter_stats_start_addr =
+ 		IPA_MEM_PART(stats_fnr_ofst);
+ 	req.hw_filter_stats_info.hw_filter_stats_size = IPA_Q6_FNR_STATS_SIZE;
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa_utils.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa_utils.c
+@@ -6692,6 +6692,10 @@
+ 	.end_ofst		= 0x4850,
+ };
+ 
++/*
++ * a52sxq: NAT/PDN/quota/tethering/FnR offsets are the 5.4 values (the SRAM
++ * map the deployed MPSS was validated with), not the r30 ones.
++ */
+ static struct ipa3_mem_partition ipa_4_11_mem_part = {
+         .uc_ofst                        = 0x0,
+         .uc_size                        = 0x80,
+@@ -6743,14 +6747,14 @@
+         .apps_hdr_proc_ctx_size         = 0x200,
+         .apps_hdr_proc_ctx_size_ddr     = 0x0,
+         .nat_tbl_ofst                   = 0x17A0,
+-        .nat_tbl_size                   = 0x800,
+-        .pdn_config_ofst                = 0x24A8,
++        .nat_tbl_size                   = 0x500,
++        .pdn_config_ofst                = 0x1CA8,
+         .pdn_config_size                = 0x50,
+-        .stats_quota_q6_ofst            = 0x2500,
++        .stats_quota_q6_ofst            = 0x1D00,
+         .stats_quota_q6_size            = 0x30,
+-        .stats_quota_ap_ofst            = 0x2530,
++        .stats_quota_ap_ofst            = 0x1D30,
+         .stats_quota_ap_size            = 0x48,
+-        .stats_tethering_ofst           = 0x2578,
++        .stats_tethering_ofst           = 0x1D78,
+         .stats_tethering_size           = 0x238,
+         .stats_flt_v4_ofst              = 0,
+         .stats_flt_v4_size              = 0,
+@@ -6760,8 +6764,8 @@
+         .stats_rt_v4_size               = 0,
+         .stats_rt_v6_ofst               = 0,
+         .stats_rt_v6_size               = 0,
+-        .stats_fnr_ofst                 = 0x27B0,
+-        .stats_fnr_size                 = 0x0,
++        .stats_fnr_ofst                 = 0x1FB0,
++        .stats_fnr_size                 = 0x800,
+         .stats_drop_ofst                = 0x27B0,
+         .stats_drop_size                = 0x20,
+         .modem_comp_decomp_ofst         = 0x0,
+--- a/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
++++ b/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
+@@ -4124,13 +4124,21 @@
+ 		/* Clean up netdev resources in AFTER_SHUTDOWN for remoteproc
+ 		 * enabled targets. */
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
+-		IPAWANINFO("rmnet_ipa unregister_netdev\n");
+-		if (IPA_NETDEV())
++		if (atomic_read(&rmnet_ipa3_ctx->is_initialized)) {
++			/*
++			 * a52sxq: a failed modem start sends BEFORE_POWERUP
++			 * then AFTER_SHUTDOWN only (rproc unprepares the
++			 * subdevices). No BEFORE_SHUTDOWN unbound rmnet_ipa,
++			 * so the netdev must stay or it never comes back.
++			 */
++			IPAWANINFO("AFTER_SHUTDOWN w/o BEFORE_SHUTDOWN: keep rmnet_ipa0\n");
++		} else if (IPA_NETDEV()) {
++			IPAWANINFO("rmnet_ipa unregister_netdev\n");
+ 			unregister_netdev(IPA_NETDEV());
+-		ipa3_wwan_deregister_netdev_pm_client();
+-		if (IPA_NETDEV())
++			ipa3_wwan_deregister_netdev_pm_client();
+ 			free_netdev(IPA_NETDEV());
+-		rmnet_ipa3_ctx->wwan_priv = NULL;
++			rmnet_ipa3_ctx->wwan_priv = NULL;
++		}
+ #endif
+ 		if (atomic_read(&rmnet_ipa3_ctx->is_ssr) &&
+ 			ipa3_ctx_get_type(IPA_HW_TYPE) < IPA_HW_v4_0)

@@ -17,6 +17,60 @@
  ifeq ($(CONFIG_CNSS2_DEBUG),y)
  KBUILD_CPPFLAGS += -DCONFIG_CNSS2_DEBUG
  endif
+--- a/cnss_prealloc/cnss_prealloc.c
++++ b/cnss_prealloc/cnss_prealloc.c
+@@ -999,7 +999,7 @@
+ {
+ 
+ 	void *mem = NULL;
+-	gfp_t gfp_mask = __GFP_ZERO;
++	gfp_t gfp_mask = __GFP_NOWARN;	/* qdf memsets; mempool forbids __GFP_ZERO */
+ 	unsigned long irq_flags;
+ 	int i;
+ 	int ret = 0;
+@@ -1009,11 +1009,11 @@
+ 
+ 	if (in_interrupt() || !preemptible() || rcu_preempt_depth())
+ 		gfp_mask |= GFP_ATOMIC;
+-	else {
+-		gfp_mask |= GFP_KERNEL;
+-		if (cnss_force_prealloc_pool)
+-			gfp_mask &= ~__GFP_DIRECT_RECLAIM;
+-	}
++	else
++		/* Never sleep in mempool_alloc() waiting for the reserve: return
++		 * NULL so qdf falls back to kzalloc (the 5.4 wcnss_prealloc contract).
++		 */
++		gfp_mask |= GFP_KERNEL & ~__GFP_DIRECT_RECLAIM;
+ 
+ 	if (size > cnss_pool_alloc_threshold()) {
+ 
+@@ -1037,6 +1037,11 @@
+ 							       irq_flags);
+ 					break;
+ 				}
++				/* Slab-backed pools (WCN6750): do not burn a bigger
++				 * class's reserve on a small request; let qdf kzalloc it.
++				 */
++				if (!cnss_force_prealloc_pool)
++					break;
+ 			}
+ 		}
+ 	}
+@@ -1045,10 +1050,9 @@
+ 		mem = NULL;
+ 	}
+ 
+-	if (!mem && size > cnss_pool_alloc_threshold()) {
+-		pr_err("cnss_prealloc: not available for size %zu, flag %x\n",
+-		       size, gfp_mask);
+-	}
++	if (!mem && size > cnss_pool_alloc_threshold())
++		pr_debug_ratelimited("cnss_prealloc: not available for size %zu, flag %x\n",
++				     size, gfp_mask);
+ 
+ 	return mem;
+ }
 --- a/icnss2/Makefile
 +++ b/icnss2/Makefile
 @@ -16,3 +16,4 @@
@@ -66,7 +120,55 @@
  	set_bit(ICNSS_WLFW_EXISTS, &priv->state);
  	clear_bit(ICNSS_FW_DOWN, &priv->state);
  	clear_bit(ICNSS_FW_READY, &priv->state);
-@@ -6683,6 +6687,7 @@
+@@ -2781,12 +2785,19 @@
+ 	int ret;
+ 	struct icnss_priv *priv = icnss_get_plat_priv();
+ 
++	mutex_lock(&priv->wpss_lock);
++	if (!priv->rproc) {
++		mutex_unlock(&priv->wpss_lock);
++		return;
++	}
+ 	rproc_shutdown(priv->rproc);
+ 	ret = rproc_boot(priv->rproc);
+ 	if (ret) {
+ 		icnss_pr_err("Failed to self recover wpss rproc, ret: %d", ret);
+ 		rproc_put(priv->rproc);
++		priv->rproc = NULL;
+ 	}
++	mutex_unlock(&priv->wpss_lock);
+ }
+ 
+ /**
+@@ -5541,9 +5552,17 @@
+ 		return;
+ 	}
+ 
++	mutex_lock(&priv->wpss_lock);
++	if (priv->rproc) {	/* already booted by an earlier write */
++		mutex_unlock(&priv->wpss_lock);
++		return;
++	}
++
+ 	priv->rproc = rproc_get_by_phandle(rproc_phandle);
+ 	if (IS_ERR_OR_NULL(priv->rproc)) {
+ 		icnss_pr_err("rproc not found");
++		priv->rproc = NULL;
++		mutex_unlock(&priv->wpss_lock);
+ 		return;
+ 	}
+ 
+@@ -5551,7 +5570,9 @@
+ 	if (ret) {
+ 		icnss_pr_err("Failed to boot wpss rproc, ret: %d", ret);
+ 		rproc_put(priv->rproc);
++		priv->rproc = NULL;
+ 	}
++	mutex_unlock(&priv->wpss_lock);
+ }
+ 
+ static ssize_t wpss_boot_store(struct device *dev,
+@@ -6683,6 +6704,7 @@
  	icnss_debugfs_create(priv);
  
  	icnss_sysfs_create(priv);
@@ -74,7 +176,7 @@
  
  	ret = device_init_wakeup(&priv->pdev->dev, true);
  	if (ret)
-@@ -6817,6 +6822,7 @@
+@@ -6817,6 +6839,7 @@
  
  	icnss_unregister_power_supply_notifier(penv);
  

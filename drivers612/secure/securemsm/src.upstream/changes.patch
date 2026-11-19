@@ -9,9 +9,125 @@
  
  LINUXINCLUDE += -I$(SSG_MODULE_ROOT)/ \
                  -I$(SSG_MODULE_ROOT)/linux/ \
+@@ -32,6 +29,10 @@
+ obj-$(CONFIG_QSEECOM) += qseecom_dlkm.o
+ qseecom_dlkm-objs := qseecom/qseecom.o
+ qseecom_dlkm-$(CONFIG_COMPAT) += qseecom/qseecom_32bit_impl.o
++# a52sxq: CONFIG_QSEECOM=m on the make line is not a C macro; without it qseecom.c
++# compiles out its kernel API and never registers the qseecom_proxy ops (the listener
++# service for smcinvoke; 5.4 smcinvoke called qseecom.c directly)
++CFLAGS_qseecom/qseecom.o += -DCONFIG_QSEECOM=1
+ 
+ include $(SSG_MODULE_ROOT)/config/sec-kernel_defconfig_smcinvoke.conf
+ LINUXINCLUDE += -include $(SSG_MODULE_ROOT)/config/sec-kernel_defconfig_smcinvoke.h
+--- a/crypto-qti/qcedev.c
++++ b/crypto-qti/qcedev.c
+@@ -878,8 +878,17 @@
+ 			if ((req_wait == 0) || (req_wait == -ERESTARTSYS)) {
+ 				pr_err("%s: request timed out, req_wait = %d\n",
+ 						__func__, req_wait);
++				/*
++				 * a52sxq: still WAITING (the condition is re-checked
++				 * under podev->lock), so nothing reached the engine.
++				 * The active request belongs to another submitter,
++				 * who retires it via req_done(): do not clear it.
++				 * Return a non-restartable error: a transparent
++				 * -ERESTARTSYS restart would re-run already processed
++				 * cipher chunks (in place) or an advanced sha_ctxt.
++				 */
+ 				list_del(&qcedev_areq->list);
+-				podev->active_command = NULL;
++				qcedev_areq->err = req_wait ? -EINTR : -ETIMEDOUT;
+ 				spin_unlock_irqrestore(&podev->lock, flags);
+ 				return qcedev_areq->err;
+ 			}
 --- a/qseecom/qseecom.c
 +++ b/qseecom/qseecom.c
-@@ -8035,6 +8035,14 @@
+@@ -2272,6 +2272,7 @@
+ 									= {0};
+ 	struct qseecom_registered_listener_list *ptr_svc = NULL;
+ 	sigset_t new_sigset;
++	sigset_t old_sigset;
+ 	uint32_t status;
+ 	void *cmd_buf = NULL;
+ 	size_t cmd_len;
+@@ -2337,7 +2338,8 @@
+ 
+ 		/* initialize the new signal mask with all signals*/
+ 		sigfillset(&new_sigset);
+-		/* block all signals */
++		/* block all signals (a52sxq: as on 5.4, else a pending signal busy-spins the wait loop) */
++		sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
+ 		mutex_unlock(&listener_access_lock);
+ 		do {
+ 			/*
+@@ -2361,6 +2363,7 @@
+ 		} while (1);
+ 		mutex_lock(&listener_access_lock);
+ 		/* restore signal mask */
++		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
+ 		if (data->abort || ptr_svc->abort) {
+ 			pr_err("Abort clnt %d waiting on lstnr svc %d, ret %d\n",
+ 				data->client.app_id, lstnr, ret);
+@@ -2474,6 +2477,7 @@
+ 	struct qseecom_command_scm_resp continue_resp;
+ 	unsigned int session_id;
+ 	sigset_t new_sigset;
++	sigset_t old_sigset;
+ 	unsigned long flags;
+ 	bool found_app = false;
+ 	struct qseecom_registered_app_list dummy_app_entry = { {NULL} };
+@@ -2533,6 +2537,7 @@
+ 
+ 		/* sleep until listener is available */
+ 		sigfillset(&new_sigset);
++		sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
+ 		do {
+ 			qseecom.app_block_ref_cnt++;
+ 			ptr_app->app_blocked = true;
+@@ -2546,6 +2551,7 @@
+ 			ptr_app->app_blocked = false;
+ 			qseecom.app_block_ref_cnt--;
+ 		}  while (list_ptr->listener_in_use);
++		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
+ 		ptr_app->blocked_on_listener_id = 0;
+ 		pr_warn("Lsntr %d is available, unblock session(%d) app(%d)\n",
+ 			resp->data, session_id, data->client.app_id);
+@@ -2605,6 +2611,7 @@
+ 									= {0};
+ 	struct qseecom_registered_listener_list *ptr_svc = NULL;
+ 	sigset_t new_sigset;
++	sigset_t old_sigset;
+ 	uint32_t status;
+ 	void *cmd_buf = NULL;
+ 	size_t cmd_len;
+@@ -2672,6 +2679,7 @@
+ 		sigfillset(&new_sigset);
+ 
+ 		/* block all signals */
++		sigprocmask(SIG_SETMASK, &new_sigset, &old_sigset);
+ 		/* unlock mutex btw waking listener and sleep-wait */
+ 		mutex_unlock(&listener_access_lock);
+ 		mutex_unlock(&app_access_lock);
+@@ -2689,6 +2697,7 @@
+ 		qseecom.send_resp_flag = 0;
+ 
+ 		/* restore signal mask */
++		sigprocmask(SIG_SETMASK, &old_sigset, NULL);
+ 		if (data->abort || ptr_svc->abort) {
+ 			pr_err("Abort clnt %d waiting on lstnr svc %d, ret %d\n",
+ 				data->client.app_id, lstnr, ret);
+@@ -3372,8 +3381,8 @@
+ 			MAKE_NULL(data->client.sgt,
+ 				data->client.attach, data->client.dmabuf);
+ 		}
++		/* a52sxq: qseecom_release() frees the tzbuf and the handle */
+ 		data->released = true;
+-		__qseecom_free_tzbuf(&data->sglistinfo_shm);
+ 		return 0;
+ 	}
+ 
+@@ -8035,6 +8044,14 @@
  	}
  }
  
@@ -26,7 +142,7 @@
  long qseecom_ioctl(struct file *file,
  			unsigned int cmd, unsigned long arg)
  {
-@@ -8724,6 +8732,40 @@
+@@ -8724,6 +8741,40 @@
  		pr_err("QSEECOM_IOCTL_FBE_CLEAR_KEY IOCTL is deprecated\n");
  		return -EINVAL;
  	}
@@ -67,6 +183,17 @@
  	default:
  		pr_err("Invalid IOCTL: 0x%x\n", cmd);
  		return -ENOIOCTLCMD;
+@@ -8807,6 +8858,10 @@
+ 				free_private_data = false;
+ 				mutex_lock(&unload_app_pending_list_lock);
+ 				ret = qseecom_prepare_unload_app(data);
++				/* a52sxq: keymaster is not queued for unload, so
++				 * nobody else frees its handle */
++				if (!ret && data->released)
++					free_private_data = true;
+ 				mutex_unlock(&unload_app_pending_list_lock);
+ 				__wakeup_unload_app_kthread();
+ 			}
 --- a/qseecom/qseecom_32bit_impl.c
 +++ b/qseecom/qseecom_32bit_impl.c
 @@ -970,6 +970,14 @@
@@ -515,6 +642,15 @@
  		ret = process_ack_local_obj(filp, cmd, arg);
  		break;
  	case SMCINVOKE_IOCTL_LOG:
+@@ -3246,7 +3454,7 @@
+ 	}
+ 	smcinvoke_pdev = pdev;
+ 
+-#if IS_ENABLED(CONFIG_QSEECOM_COMPAT) && IS_ENABLED(CONFIG_QSEECOM_PROXY)
++#if 0 /* a52sxq: qseecom_dlkm provides the proxy ops; do not overwrite them with the -EOPNOTSUPP stub (last writer wins) */
+ 	/*If the api fails to get the func ops, print the error and continue
+ 	* Do not treat it as fatal*/
+ 	rc = get_qseecom_kernel_fun_ops();
 --- a/smcinvoke/si_core_xts/smci.c
 +++ b/smcinvoke/si_core_xts/smci.c
 @@ -1181,11 +1181,133 @@
@@ -827,3 +963,12 @@
  		ret = process_server_req(filp, cmd, arg);
  		break;
  	default:
+@@ -1778,7 +1966,7 @@
+ 		goto exit_destroy_cdev;
+ 	}
+ 
+-#if IS_ENABLED(CONFIG_QSEECOM_COMPAT) && IS_ENABLED(CONFIG_QSEECOM_PROXY)
++#if 0 /* a52sxq: see compat/smcinvoke.c */
+ 	ret = get_qseecom_kernel_fun_ops();
+ 	if (ret)
+ 		pr_err("failed to get qseecom kernel func ops %d\n", ret);

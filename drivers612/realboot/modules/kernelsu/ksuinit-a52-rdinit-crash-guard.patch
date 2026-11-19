@@ -1,0 +1,75 @@
+diff --git a/userspace/ksuinit/src/init.rs b/userspace/ksuinit/src/init.rs
+index 92868b3e..386f7ff1 100644
+--- a/userspace/ksuinit/src/init.rs
++++ b/userspace/ksuinit/src/init.rs
+@@ -2,7 +2,7 @@ use std::ffi::CString;
+ use std::io::{ErrorKind, Write};
+ 
+ use anyhow::{Context, Result};
+-use rustix::fs::{Mode, symlink, unlink};
++use rustix::fs::{Mode, unlink};
+ use rustix::{
+     fd::AsFd,
+     fs::{Access, CWD, FileType, access, makedev, mkdir, mknodat},
+@@ -103,7 +103,15 @@ pub fn init() -> Result<()> {
+     // This relies on the fact that we have /proc mounted
+     unlimit_kmsg();
+ 
+-    if ksuinit::has_kernelsu() {
++    // a52sxq: started by the kernel as rdinit=/ksuinit from the vendor_boot ramdisk; the ROM's own
++    // first-stage /init (boot ramdisk) stays untouched and main() execs it.
++    // Crash guard: a panic record of the previous boot (ramoops dmesg-*) means that boot died;
++    // then KernelSU is NOT loaded for this one boot and the record is consumed, so a module that
++    // kills the kernel can never loop the phone (every second boot comes up without root).
++    let panicked = a52_previous_boot_panicked();
++    if panicked {
++        log::error!("a52: previous boot left a panic record: kernelsu.ko NOT loaded this boot");
++    } else if ksuinit::has_kernelsu() {
+         log::info!("KernelSU may be already loaded in kernel, skip!");
+     } else {
+         log::info!("Loading kernelsu.ko..");
+@@ -112,17 +120,6 @@ pub fn init() -> Result<()> {
+         }
+     }
+ 
+-    // And now we should prepare the real init to transfer control to it
+-    unlink("/init")?;
+-
+-    let real_init = match access("/init.real", Access::EXISTS) {
+-        Ok(_) => "init.real",
+-        Err(_) => "/system/bin/init",
+-    };
+-
+-    log::info!("init is {}", real_init);
+-    symlink(real_init, "/init")?;
+-
+     Ok(())
+ }
+ 
+@@ -134,3 +131,26 @@ fn load_module_from_path(path: &str) -> Result<()> {
+     log::info!("load kernelsu with params {params:?}");
+     ksuinit::load_module(&buffer, &params)
+ }
++
++/// a52sxq: true when /sys/fs/pstore holds a dmesg-* (oops/panic) record; the records are removed.
++fn a52_previous_boot_panicked() -> bool {
++    const MP: &str = "/a52pstore";
++    if mount_filesystem("pstore", MP).is_err() {
++        return false;
++    }
++    let mut found = false;
++    if let Ok(dir) = std::fs::read_dir(MP) {
++        for e in dir.flatten() {
++            let name = e.file_name();
++            let name = name.to_string_lossy();
++            if name.starts_with("dmesg-") {
++                found = true;
++                log::error!("a52: panic record {}", name);
++                let _ = unlink(format!("{MP}/{name}").as_str());
++            }
++        }
++    }
++    let _ = unmount(MP, UnmountFlags::DETACH);
++    let _ = std::fs::remove_dir(MP);
++    found
++}

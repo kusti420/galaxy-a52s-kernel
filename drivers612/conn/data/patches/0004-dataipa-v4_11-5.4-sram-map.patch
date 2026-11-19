@@ -1,0 +1,69 @@
+a52sxq: IPA v4.11 SRAM map as on 5.4, no hw_filter_stats TLV (audit 2026-11-18)
+
+r30 moved pdn/quota/tethering up 0x800, grew NAT to 0x800 and left the FnR
+region empty at 0x27B0, yet told the modem (QMI TLV 0x23, never sent by 5.4)
+to count into [0x27B0, 0x33A0): over the drop stats, the modem region and
+past the end of SRAM. The AP FnR init failed too ("SRAM partition too small:
+0 needed 512"). Use the 5.4 values the deployed MPSS was validated with and
+send the TLV only when the whole Q6 range fits (never, with 0x800).
+
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa_utils.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa_utils.c
+@@ -6692,6 +6692,10 @@ static struct ipa3_mem_partition ipa_4_9
+ 	.end_ofst		= 0x4850,
+ };
+ 
++/*
++ * a52sxq: NAT/PDN/quota/tethering/FnR offsets are the 5.4 values (the SRAM
++ * map the deployed MPSS was validated with), not the r30 ones.
++ */
+ static struct ipa3_mem_partition ipa_4_11_mem_part = {
+         .uc_ofst                        = 0x0,
+         .uc_size                        = 0x80,
+@@ -6743,14 +6747,14 @@ static struct ipa3_mem_partition ipa_4_1
+         .apps_hdr_proc_ctx_size         = 0x200,
+         .apps_hdr_proc_ctx_size_ddr     = 0x0,
+         .nat_tbl_ofst                   = 0x17A0,
+-        .nat_tbl_size                   = 0x800,
+-        .pdn_config_ofst                = 0x24A8,
++        .nat_tbl_size                   = 0x500,
++        .pdn_config_ofst                = 0x1CA8,
+         .pdn_config_size                = 0x50,
+-        .stats_quota_q6_ofst            = 0x2500,
++        .stats_quota_q6_ofst            = 0x1D00,
+         .stats_quota_q6_size            = 0x30,
+-        .stats_quota_ap_ofst            = 0x2530,
++        .stats_quota_ap_ofst            = 0x1D30,
+         .stats_quota_ap_size            = 0x48,
+-        .stats_tethering_ofst           = 0x2578,
++        .stats_tethering_ofst           = 0x1D78,
+         .stats_tethering_size           = 0x238,
+         .stats_flt_v4_ofst              = 0,
+         .stats_flt_v4_size              = 0,
+@@ -6760,8 +6764,8 @@ static struct ipa3_mem_partition ipa_4_1
+         .stats_rt_v4_size               = 0,
+         .stats_rt_v6_ofst               = 0,
+         .stats_rt_v6_size               = 0,
+-        .stats_fnr_ofst                 = 0x27B0,
+-        .stats_fnr_size                 = 0x0,
++        .stats_fnr_ofst                 = 0x1FB0,
++        .stats_fnr_size                 = 0x800,
+         .stats_drop_ofst                = 0x27B0,
+         .stats_drop_size                = 0x20,
+         .modem_comp_decomp_ofst         = 0x0,
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa_qmi_service.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa_qmi_service.c
+@@ -714,7 +714,12 @@ static int ipa3_qmi_init_modem_send_sync
+ 		req.is_ssr_bootup = 1;
+ 	}
+ 
+-	req.hw_fiter_stats_info_valid = true;
++	/*
++	 * a52sxq: only advertise the FnR region to the modem when the whole
++	 * Q6 range fits in it (5.4 never sent this TLV).
++	 */
++	req.hw_fiter_stats_info_valid =
++		IPA_MEM_PART(stats_fnr_size) >= IPA_Q6_FNR_STATS_SIZE;
+ 	req.hw_filter_stats_info.hw_filter_stats_start_addr =
+ 		IPA_MEM_PART(stats_fnr_ofst);
+ 	req.hw_filter_stats_info.hw_filter_stats_size = IPA_Q6_FNR_STATS_SIZE;

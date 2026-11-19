@@ -2418,6 +2418,14 @@ int stm_ts_stop_device(void *data)
 	}
 
 	disable_irq(ts->irq);
+	/*
+	 * a52sxq 6.12: balance the enable_irq_wake() taken on LPM entry (stm_ts_set_lowpowermode).
+	 * A reset in LPM came through here without it and leaked wake depth; the 6.12 TLMM
+	 * (IRQCHIP_ENABLE_WAKEUP_ON_SUSPEND) then re-enables the disabled, wake-armed IRQ at suspend.
+	 */
+	if (ts->plat_data->power_state == SEC_INPUT_STATE_LPM &&
+	    device_may_wakeup(&ts->client->dev))
+		disable_irq_wake(ts->irq);
 	if (ts->plat_data->unuse_dvdd_power)
 		ts->stm_ts_command(ts, STM_TS_CMD_SENSE_OFF, false);
 
@@ -2658,6 +2666,7 @@ static int stm_ts_init(struct stm_ts_data *ts)
 
 	INIT_DELAYED_WORK(&ts->reset_work, stm_ts_reset_work);
 	INIT_DELAYED_WORK(&ts->work_read_info, stm_ts_read_info_work);
+	INIT_DELAYED_WORK(&ts->work_fw_recheck, stm_ts_fw_recheck_work);
 	INIT_DELAYED_WORK(&ts->work_print_info, stm_ts_print_info_work);
 	INIT_DELAYED_WORK(&ts->work_read_functions, stm_ts_get_touch_function);
 	INIT_DELAYED_WORK(&ts->switching_work, stm_switching_work);
@@ -2752,6 +2761,7 @@ void stm_ts_release(struct stm_ts_data *ts)
 		hall_notifier_unregister(&ts->hall_ic_nb);
 #endif
 
+	cancel_delayed_work_sync(&ts->work_fw_recheck);
 	cancel_delayed_work_sync(&ts->work_read_info);
 	cancel_delayed_work_sync(&ts->work_print_info);
 	cancel_delayed_work_sync(&ts->work_read_functions);
@@ -2868,6 +2878,10 @@ int stm_ts_probe(struct stm_ts_data *ts)
 
 	if (!ts->plat_data->shutdown_called)
 		schedule_delayed_work(&ts->work_read_info, msecs_to_jiffies(50));
+
+	/* a52sxq 6.12: probe ran before /vendor/firmware was mounted; look at the bin once later */
+	if (ts->fw_bin_missing && !ts->plat_data->shutdown_called)
+		schedule_delayed_work(&ts->work_fw_recheck, msecs_to_jiffies(STM_TS_FW_RECHECK_MS));
 
 #if !IS_ENABLED(CONFIG_SAMSUNG_PRODUCT_SHIP) && IS_ENABLED(CONFIG_TOUCHSCREEN_STM_SPI)
 	stm_ts_tool_proc_init(ts);

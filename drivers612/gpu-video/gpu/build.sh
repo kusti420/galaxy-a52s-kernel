@@ -10,7 +10,7 @@ INC="-I$SOC/include -I$SOC/include/uapi -I$BSP/techpacks/mm-drivers/hw_fence/inc
 MK=(make -C "$BSP/kernel" O="$BSP/out/lahaina" ARCH=arm64 LLVM="$CLANG/" KCONFIG_EXT_PREFIX="$BSP/soc-repo/" -j"${JOBS:-16}"
     M="$G/src" KGSL_PATH="$G/src" KBUILD_EXTRA_SYMBOLS="$SOC/build/Module.symvers"
     CONFIG_ARCH_LAHAINA=y CONFIG_ARCH_YUPIK=y KGSL_RECLAIM="${KGSL_RECLAIM:-n}"
-    KCFLAGS="-I$BSP/kernel/drivers/devfreq" SOCINCLUDE="$INC")
+    KCFLAGS="-I$BSP/kernel/drivers/devfreq ${A52_KCFLAGS:-}" SOCINCLUDE="$INC")
 if [ "${1:-}" = clean ]; then "${MK[@]}" clean; exit; fi
 "${MK[@]}" modules 2>&1 | tee "$G/build.log" | grep -E 'error|warning|ERROR|WARNING|LD \[M\]' || true
 ls -l "$G/src/msm_kgsl.ko"

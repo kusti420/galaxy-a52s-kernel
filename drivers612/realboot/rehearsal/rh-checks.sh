@@ -112,6 +112,39 @@ if [ -d $b ]; then
 else fail "sec_battery: no /sys/class/power_supply/battery"; fi
 info "sec_battery: dumpsys: $(an 'dumpsys battery' 2>/dev/null | grep -E 'level|status|USB powered|AC powered' | tr -d '\r' | tr '\n' ' ' | tr -s ' ')"
 
+if [ "${ADDON:-vendor}" = vendor_boot ]; then
+# 6b. ADDON=vendor_boot: nothing from /vendor. Audio + wlan.ko in the first stage, dsp_boot rescans after
+# the ADSP, built-in bus DCVS tunables; the phone's old add-on files are hidden by the RAM overlay
+[ "$(gp ro.boot.a52sxq.${K}vb)" = 1 ] && [ "$(gp ro.boot.a52sxq.$K)" != 1 ] && pass "vb: gate ro.boot.a52sxq.${K}vb=1, old add-on gate ro.boot.a52sxq.$K unset" \
+	|| fail "vb: gates ${K}vb='$(gp ro.boot.a52sxq.${K}vb)' $K='$(gp ro.boot.a52sxq.$K)'"
+F=/proc/1/root/vendor
+[ ! -e /tmp/rh-hide-fail ] && [ ! -e $F/lib/modules/$V ] && [ ! -e $F/lib/modules/5.4-gki ] && [ ! -e $F/etc/init/a52sxq-$K.rc ] \
+	&& pass "vb: /vendor/lib/modules/{$V,5.4-gki} and /vendor/etc/init/a52sxq-$K.rc do not exist for Android (hidden)" || fail "vb: old add-on files visible to Android"
+dmesg | grep -cE "modprobe: .*/vendor/lib/modules/$V/" | { read n; [ "$n" = 0 ] && pass "vb: no module loaded from /vendor/lib/modules/$V" || fail "vb: $n modprobe lines for /vendor/lib/modules/$V"; }
+miss=; for n in $(cat /a52/rh/audio.names); do present "$n" || miss="$miss $n"; done
+[ -z "$miss" ] && pass "vb: all $(grep -c . /a52/rh/audio.names) audio modules loaded (first stage)" || fail "vb: audio modules missing:$miss"
+dmesg | grep -E 'a52sxq_dsp_boot: (rescan|bus DCVS|tunable)|bound to .* on rescan' | sed 's/^\[[^]]*\]\(\[[^]]*\]\)* *//' | head -24 | while read -r l; do info "vb: $l"; done
+grep -q '^ *[0-9]* \[' /proc/asound/cards 2>/dev/null && pass "vb: sound card: $(grep '^ *[0-9]* \[' /proc/asound/cards | head -1 | tr -s ' ')" || fail "vb: no sound card"
+info "vb: asound cards: $(cat /proc/asound/cards 2>/dev/null | tr -s ' ' | tr '\n' '|')"
+for n in 0 1 2 3 4 5 6 7 8 9 10 11; do an "cmd media_session volume --stream $n --set 0" > /dev/null 2>&1; done
+if [ -f /proc/1/root/dev/.a52addon/tone.dex ]; then
+	# zygote's mount namespace (apex + linkerconfig) and its ART environment (logd's namespace has neither)
+	ZP=$(/bin/busybox pidof zygote64 | cut -d' ' -f1)
+	ZE=$(tr '\0' '\n' < /proc/$ZP/environ | grep -E '^(BOOTCLASSPATH|DEX2OATBOOTCLASSPATH|SYSTEMSERVERCLASSPATH|ANDROID_[A-Z_]+)=' | tr '\n' ' ')
+	TO=$(/bin/busybox nsenter -t $ZP -m -- /system/bin/env $ZE /system/bin/app_process -cp /dev/.a52addon/tone.dex / Tone 2>&1 | tr -d '\r' | tail -4 | tr '\n' '|')
+	case "$TO" in *48000/48000*) pass "vb: tone playback (muted): $TO";; *) fail "vb: tone playback: $TO";; esac
+else fail "vb: no tone.dex in /dev/.a52addon"; fi
+WN=$(cat /a52/rh/wlan.name)
+present "$WN" && pass "vb: wlan module '$WN' loaded (first stage)" || fail "vb: wlan module '$WN' not loaded"
+[ -d /sys/class/net/wlan0 ] && pass "vb: wlan0 present" || fail "vb: no wlan0"
+info "vb: wlan0 operstate $(cat /sys/class/net/wlan0/operstate 2>/dev/null) flags $(cat /sys/class/net/wlan0/flags 2>/dev/null)"
+info "vb: addresses wlan0 $(cat /sys/class/net/wlan0/address 2>/dev/null) p2p0 $(cat /sys/class/net/p2p0/address 2>/dev/null) wifi-aware0 $(cat /sys/class/net/wifi-aware0/address 2>/dev/null) swlan0 $(cat /sys/class/net/swlan0/address 2>/dev/null)"
+dmesg | grep -iE 'provisioned MAC|derived MAC|wlan_mac|mac_addr_store' | sed 's/^\[[^]]*\]\(\[[^]]*\]\)* *//' | head -6 | while read -r l; do info "vb: mac: $l"; done
+info "vb: macloader: $(an 'logcat -d -b all' 2>/dev/null | grep -i ' macloader' | grep -v avc | tail -6 | tr -d '\r' | sed 's/^.*macloader: //' | tr '\n' '|')"
+info "vb: wifi: $(an 'cmd wifi status' 2>/dev/null | head -2 | tr -d '\r' | tr '\n' ' ')"
+info "vb: kernel-domain avc for sysfs writes (enforcing real boot would deny these): $(dmesg | grep 'avc:  denied' | grep 'scontext=u:r:kernel:s0' | grep -c '{ write }')"
+dmesg | grep 'avc:  denied' | grep 'scontext=u:r:kernel:s0' | grep '{ write }' | sed 's/.*denied/denied/' | sort -u | head -4 | while read -r l; do info "vb: avc: $l"; done
+else
 # 6. vendor add-on: rc gated by ro.boot.a52sxq.k61x, audio set + wlan from /vendor/lib/modules
 [ "$(gp ro.boot.a52sxq.$K)" = 1 ] && pass "addon: ro.boot.a52sxq.$K=1" || fail "addon: ro.boot.a52sxq.$K='$(gp ro.boot.a52sxq.$K)'"
 grep -E ' /vendor/(lib/modules|etc/init) overlay' /proc/1/mounts | while read -r l; do info "addon: emulated by RAM overlay: $(echo $l | cut -d' ' -f2)"; done
@@ -137,6 +170,7 @@ present "$WN" && pass "addon: wlan module '$WN' loaded (5.4-gki/qca_cld3_wlan.ko
 [ -d /sys/class/net/wlan0 ] && pass "addon: wlan0 present" || fail "addon: no wlan0"
 info "addon: macloader: $(an 'logcat -d -b all' 2>/dev/null | grep -i macloader | tail -2 | tr -d '\r' | tr '\n' '|')"
 info "addon: wifi: $(an 'cmd wifi status' 2>/dev/null | head -2 | tr -d '\r' | tr '\n' ' ')"
+fi
 
 # 10. SDCARD=1 builds: on = sdhci-msm probes (card INFO only, read-only checks), off = refused on purpose
 case "$SD" in
@@ -152,6 +186,10 @@ esac
 
 # 11. bus/GPU DCVS builds: governors, bwmon/memlat probed, the rc's bus_dcvs writes, interconnect sync
 if [ "$DCVS" = 1 ]; then
+	# ADDON=vendor_boot: a52sxq_dsp_boot writes the tunables itself at the WALT boost release (~45 s after its probe)
+	if [ "${ADDON:-vendor}" = vendor_boot ]; then j=0; while ! dmesg | grep -q 'a52sxq_dsp_boot: bus DCVS tunables' && [ $j -lt 90 ]; do sleep 2; j=$((j + 2)); done
+		l=$(dmesg | grep 'a52sxq_dsp_boot: bus DCVS tunables' | sed 's/.*a52sxq_dsp_boot: //' | tail -1)
+		case "$l" in *" 56/56 "*|*" 56/56"*) pass "dcvs: kernel wrote the tunables: $l";; *) fail "dcvs: tunables: '${l:-no line after ${j}s}'";; esac; fi
 	g=; for d in /sys/class/devfreq/*; do [ "$(cat $d/governor 2>/dev/null)" = msm-adreno-tz ] && g="$g ${d##*/}"; done
 	[ -n "$g" ] && pass "dcvs: GPU devfreq governor msm-adreno-tz on$g" || fail "dcvs: no devfreq with governor msm-adreno-tz ($(for d in /sys/class/devfreq/*; do echo "${d##*/}=$(cat $d/governor 2>/dev/null)"; done | tr '\n' ' '))"
 	B=/sys/devices/system/cpu/bus_dcvs

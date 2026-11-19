@@ -1,0 +1,282 @@
+diff --git a/drivers612/display/techpack/display-drivers/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c b/drivers612/display/techpack/display-drivers/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c
+index db8caaf..14a351c 100755
+--- a/drivers612/display/techpack/display-drivers/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c
++++ b/drivers612/display/techpack/display-drivers/msm/samsung/S6E3FC3_AMS646YD01_LO/ss_dsi_panel_S6E3FC3_AMS646YD01_LO.c
+@@ -639,6 +639,9 @@ static int dsi_update_mdnie_data(struct samsung_display_driver_data *vdd)
+ 	/* Update MDNIE data related with size, offset or index */
+ 	mdnie_data->dsi_bypass_mdnie_size = ARRAY_SIZE(DSI0_BYPASS_MDNIE);
+ 	mdnie_data->mdnie_color_blinde_cmd_offset = MDNIE_COLOR_BLINDE_CMD_OFFSET;
++	/* S23 framework name for the same offset (night mode / colour lens SCR copy; 5.4 used
++	 * mdnie_color_blinde_cmd_offset there) */
++	mdnie_data->mdnie_scr_cmd_offset = MDNIE_COLOR_BLINDE_CMD_OFFSET;
+ 	mdnie_data->mdnie_step_index[MDNIE_STEP1] = MDNIE_STEP1_INDEX;
+ 	mdnie_data->mdnie_step_index[MDNIE_STEP2] = MDNIE_STEP2_INDEX;
+ 	mdnie_data->mdnie_step_index[MDNIE_STEP3] = MDNIE_STEP3_INDEX;
+diff --git a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.c b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.c
+index 767d137..89f11e1 100644
+--- a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.c
++++ b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.c
+@@ -161,6 +161,23 @@ int get_hbm_ce_lux_idx(struct samsung_display_driver_data *vdd)
+ /* uupdate_dsi_tcon_mdnie_register():
+  * pdate and tx mdnie packet to panel wich vdd is included.
+  */
++/*
++ * a52sxq: the 5.4 S6E3FC3 panel has none of the S23 HBM-CE tables (DSI_HBM_CE_MDNIE_DIMMING_n,
++ * DSI_HBM_CE_MDNIE_SCR_n, dsi_hbm_scr_table, hbm_ce_data); they stay NULL. S23 writes to them
++ * unconditionally, also on the plain night-mode path.
++ */
++static bool ss_mdnie_has_hbm_ce_dimming(struct mdnie_lite_tune_data *mdnie_data)
++{
++	return mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1 && mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2 &&
++		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3;
++}
++
++static bool ss_mdnie_has_hbm_ce_scr(struct mdnie_lite_tune_data *mdnie_data)
++{
++	return mdnie_data->DSI_HBM_CE_MDNIE_SCR_1 && mdnie_data->DSI_HBM_CE_MDNIE_SCR_2 &&
++		mdnie_data->DSI_HBM_CE_MDNIE_SCR_3;
++}
++
+ int update_dsi_tcon_mdnie_register(struct samsung_display_driver_data *vdd)
+ {
+ 	struct mdnie_lite_tun_type *tune = NULL;
+@@ -248,31 +265,43 @@ int update_dsi_tcon_mdnie_register(struct samsung_display_driver_data *vdd)
+ 	} else if ((tune->night_mode_enable == true) || (tune->hbm_enable == true)) {	
+ 		if ((tune->night_mode_enable == true) && (tune->hbm_enable == false)) { // blf enable
+ 			tune_data_dsi  = mdnie_data->DSI_NIGHT_MODE_MDNIE;
+-			mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+-			mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+-			mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
++			if (ss_mdnie_has_hbm_ce_dimming(mdnie_data)) {
++				mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
++				mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
++				mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
++			}
+ 		} else if ((tune->night_mode_enable == false) && (tune->hbm_enable == true)) { //hbm enable
+-			buffer_hbm = &mdnie_data->dsi_hbm_scr_table[0];
+-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
+-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
+-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
++			if (mdnie_data->dsi_hbm_scr_table && ss_mdnie_has_hbm_ce_scr(mdnie_data)) {
++				buffer_hbm = &mdnie_data->dsi_hbm_scr_table[0];
++				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
++				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
++				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
++			}
+ 			if(tune->mdnie_mode == AUTO_MODE) {
+ 				if (vdd->dtsi_data.hbm_ce_text_mode_support &&
+ 					((tune->mdnie_app == BROWSER_APP) ||
+ 					 (tune->mdnie_app == eBOOK_APP))) {
+ 					tune_data_dsi  = mdnie_data->DSI_HBM_CE_TEXT_MDNIE;
+ 				} else {
+-					tune_data_dsi  = mdnie_data->hbm_ce_data[tune->hbm_ce_idx];
++					tune_data_dsi  = mdnie_data->hbm_ce_data ?
++						mdnie_data->hbm_ce_data[tune->hbm_ce_idx] :
++						mdnie_data->DSI_HBM_CE_MDNIE;	/* 5.4 */
+ 				}
+ 			} else {
+-				tune_data_dsi  = mdnie_data->hbm_ce_data[tune->hbm_ce_idx];
++				tune_data_dsi  = mdnie_data->hbm_ce_data ?
++					mdnie_data->hbm_ce_data[tune->hbm_ce_idx] :
++					mdnie_data->DSI_HBM_CE_D65_MDNIE;	/* 5.4 */
+ 			}
+ 		} else { // hbm & blf enable
+-			buffer_blf = &mdnie_data->dsi_night_mode_table[(MDNIE_SCR_CMD_SIZE * (tune->night_mode_index))];
+-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
+-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
+-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
+-			tune_data_dsi  = mdnie_data->hbm_ce_data[tune->hbm_ce_idx];
++			if (mdnie_data->dsi_night_mode_table && ss_mdnie_has_hbm_ce_scr(mdnie_data)) {
++				buffer_blf = &mdnie_data->dsi_night_mode_table[(MDNIE_SCR_CMD_SIZE * (tune->night_mode_index))];
++				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
++				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
++				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
++			}
++			tune_data_dsi  = mdnie_data->hbm_ce_data ?
++				mdnie_data->hbm_ce_data[tune->hbm_ce_idx] :
++				mdnie_data->DSI_NIGHT_MODE_MDNIE;	/* 5.4: night mode wins over hbm */
+ 		}
+ 	} else if (tune->hdr) {
+ 		tune_data_dsi = mdnie_data->hdr_tune_value_dsi[tune->hdr];
+@@ -320,7 +349,8 @@ int update_dsi_tcon_mdnie_register(struct samsung_display_driver_data *vdd)
+ 
+ 	send_dsi_tcon_mdnie_register(vdd, tune_data_dsi, tune);
+ 
+-	if ((tune->night_mode_enable == false) && (tune->hbm_enable == true)) { //hbm enable
++	if ((tune->night_mode_enable == false) && (tune->hbm_enable == true) &&
++			ss_mdnie_has_hbm_ce_dimming(mdnie_data)) { //hbm enable
+ 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+ 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+ 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+@@ -971,7 +1001,7 @@ static ssize_t night_mode_store(struct device *dev,
+ 		}
+ 	}
+ 
+-	if(tune->hbm_enable == true) {
++	if (tune->hbm_enable == true && ss_mdnie_has_hbm_ce_dimming(mdnie_data)) {
+ 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x04;
+ 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x04;
+ 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x04;
+diff --git a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.h b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.h
+index 2efd798..5eb1fe1 100644
+--- a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.h
++++ b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_mdnie_lite_common.h
+@@ -36,7 +36,7 @@ Copyright (C) 2012, Samsung Electronics. All rights reserved.
+ #define MDNIE_COLOR_BLINDE_CMD_SIZE 18
+ #define MDNIE_COLOR_BLINDE_HBM_CMD_SIZE 24
+ #define COORDINATE_DATA_SIZE 6
+-#define MDNIE_SCR_CMD_SIZE 36
++#define MDNIE_SCR_CMD_SIZE 24 /* a52sxq: S6E3FC3 tables (night_mode_data rows, SCR block) are 24 bytes, as on 5.4; S23 has 36 */
+ #define AFC_ROI_CMD_SIZE 12
+ 
+ extern char mdnie_app_name[][NAME_STRING_MAX];
+diff --git a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.c b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.c
+index ddbc104..e6730d4 100644
+--- a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.c
++++ b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.c
+@@ -4150,6 +4150,8 @@ int ss_panel_off_post(struct samsung_display_driver_data *vdd)
+ 
+ 	if (vdd->finger_mask)
+ 		vdd->finger_mask = false;
++	/* a52sxq: no stale mask_brightness request across panel off */
++	WRITE_ONCE(vdd->ichthys_sysfs_mask_req, 0);
+ 
+ 	/* To prevent panel off without finger off */
+ 	if (vdd->br_info.common_br.finger_mask_hbm_on)
+diff --git a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.h b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.h
+index 596ad32..60e87b0 100644
+--- a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.h
++++ b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_common.h
+@@ -2573,6 +2573,10 @@ struct samsung_display_driver_data {
+ 	bool support_optical_fingerprint;
+ 	bool finger_mask_updated;
+ 	int finger_mask;
++	/* a52sxq / IchthysOS: one-shot request written by the mask_brightness sysfs store and
++	 * taken (xchg) by sde_connector_pre_kickoff at the next kickoff, as the 5.4 store +
++	 * dsi_display_pre_kickoff did. 0 = none, 1 = mask off, level + 1 = mask on at level. */
++	int ichthys_sysfs_mask_req;
+ 	int panel_hbm_entry_delay; /* HBM entry delay after cmd tx, Unit = vsync */
+ 	int panel_hbm_entry_after_vsync_pre; /* Delay after last VSYNC before cmd Tx, Unit = us */
+ 	int panel_hbm_entry_after_vsync; /* Delay after last VSYNC after cmd Tx, Unit = us */
+diff --git a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c
+index 01a6a08..e636be6 100644
+--- a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c
++++ b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c
+@@ -4613,7 +4613,10 @@ static ssize_t ss_finger_hbm_store(struct device *dev,
+ 		return size;
+ 
+ 	LCD_INFO(vdd,"mask_bl_level value : %d\n", value);
+-	vdd->br_info.common_br.finger_mask_bl_level = value;
++	/* a52sxq / IchthysOS 5.4 semantics: a write switches the finger mask on (value > 0) or
++	 * off at the next kickoff (sde_connector_pre_kickoff). The level is set there, at the
++	 * transition, so a write cannot disturb a mask that is being held. */
++	WRITE_ONCE(vdd->ichthys_sysfs_mask_req, value > 0 ? value + 1 : 1);
+ 
+ 	return size;
+ 
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_color_processing.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_color_processing.c
+index b95cfe6..507e269 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_color_processing.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_color_processing.c
+@@ -1347,6 +1347,23 @@ static int _sde_cp_cache_range_property(struct drm_crtc *crtc,
+ 	return ret;
+ }
+ 
++/*
++ * a52sxq: the phone's composer/QDCM blobs are built against the 5.4 UAPI, where
++ * struct drm_msm_sixzone ends after curve[] (kernel_a52sxq_bone msm_drm_pp.h). r7 appended
++ * sat_adjust_p0/p1 and curve_p2[]; the 5.4 struct is a strict prefix.
++ */
++struct drm_msm_sixzone_v54 {
++	__u64 flags;
++	__u32 threshold;
++	__u32 adjust_p0;
++	__u32 adjust_p1;
++	__u32 sat_hold;
++	__u32 val_hold;
++	struct drm_msm_sixzone_curve curve[SIXZONE_LUT_SIZE];
++};
++static_assert(offsetofend(struct drm_msm_sixzone_v54, curve) ==
++		offsetof(struct drm_msm_sixzone, sat_adjust_p0));
++
+ static int _sde_cp_crtc_cache_blob_property(struct drm_crtc *crtc,
+ 					       struct sde_cp_node *prop_node,
+ 					       uint64_t val)
+@@ -1371,6 +1388,22 @@ static int _sde_cp_crtc_cache_blob_property(struct drm_crtc *crtc,
+ 		DRM_ERROR("invalid blob id %lld feature %d\n", val, prop_node->feature);
+ 		return -EINVAL;
+ 	}
++	if (prop_node->feature == SDE_CP_CRTC_DSPP_SIXZONE &&
++			prop_node->prop_blob_sz == sizeof(struct drm_msm_sixzone) &&
++			blob->length == sizeof(struct drm_msm_sixzone_v54)) {
++		/* a52sxq: 5.4-size sixzone blob: zero-extend it (new r7 fields off) instead of
++		 * rejecting it. Only the named fields are copied, not the 5.4 tail padding. */
++		struct drm_property_blob *nb = drm_property_create_blob(crtc->dev,
++				sizeof(struct drm_msm_sixzone), NULL);
++
++		if (IS_ERR(nb)) {
++			drm_property_blob_put(blob);
++			return PTR_ERR(nb);
++		}
++		memcpy(nb->data, blob->data, offsetofend(struct drm_msm_sixzone_v54, curve));
++		drm_property_blob_put(blob);
++		blob = nb;
++	}
+ 	if (blob->length != prop_node->prop_blob_sz) {
+ 		DRM_ERROR("invalid blob len %zd exp %d feature %d\n",
+ 		    blob->length, prop_node->prop_blob_sz, prop_node->feature);
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+index cc50c74..76a2586 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+@@ -1068,6 +1068,7 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ 	struct samsung_display_driver_data *vdd;
+ 	u32 finger_mask_state;
+ 	bool fod, fod_edge, prop_edge, want;
++	int sysfs_req;
+ #endif
+ 
+ 	if (!connector) {
+@@ -1130,6 +1131,15 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ 			 * default mask level (331, what the HAL writes), a value > 1 is the mask
+ 			 * level itself. S23 stock compared the property with vdd->finger_mask on
+ 			 * every kickoff, which would cancel a mask set through sysfs.
++			 *
++			 * The sysfs path itself: the S23 mask_brightness store only records a
++			 * level, so ss_finger_hbm_store leaves a one-shot request in
++			 * vdd->ichthys_sysfs_mask_req and it is applied below, at the next
++			 * kickoff (where 5.4 dsi_display_pre_kickoff consumed the store's
++			 * finger_mask_updated). A sysfs write is authoritative when it arrives,
++			 * as on 5.4: the HAL's fallback "331" lights the mask with the property
++			 * at 0, and its release watchdog's "0" drops a mask the composer still
++			 * holds through a property stuck at 1 (no edge).
+ 			 */
+ 			/*
+ 			 * a52sxq: LineageOS 5.4 FOD (5.4 sde_crtc.c:5036-5057 +
+@@ -1154,8 +1164,24 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ 			c_conn->ichthys_fod_layer = fod;
+ 			c_conn->ichthys_finger_mask_prop = finger_mask_state;
+ 			want = fod || finger_mask_state != 0;
+-
+-			if ((prop_edge || fod_edge || (fod && !vdd->finger_mask)) &&
++			sysfs_req = xchg(&vdd->ichthys_sysfs_mask_req, 0);
++
++			if (sysfs_req) {
++				/* 0 = none, 1 = off, level + 1 = on (ss_finger_hbm_store) */
++				want = sysfs_req > 1;
++				if (want != !!vdd->finger_mask) {
++					mutex_lock(&vdd->vrr.vrr_lock);
++					vdd->br_info.common_br.finger_mask_bl_level =
++						want ? sysfs_req - 1 : 0;
++					SDE_INFO("[FINGER_MASK] sysfs %d -> mask %d\n",
++						sysfs_req - 1, want);
++					vdd->finger_mask_updated = true;
++					vdd->finger_mask = want;
++					ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
++					vdd->finger_mask_updated = false;
++					mutex_unlock(&vdd->vrr.vrr_lock);
++				}
++			} else if ((prop_edge || fod_edge || (fod && !vdd->finger_mask)) &&
+ 					want != !!vdd->finger_mask) {
+ 				mutex_lock(&vdd->vrr.vrr_lock);
+ 				vdd->br_info.common_br.finger_mask_bl_level = !want ? 0 :

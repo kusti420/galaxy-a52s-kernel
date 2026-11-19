@@ -159,7 +159,25 @@
  
  	case FP_IOCTL_RESERVED_01:
  	case FP_IOCTL_RESERVED_02:
-@@ -525,12 +543,30 @@
+@@ -500,6 +518,17 @@
+ #ifndef ENABLE_SENSORS_FPRINT_SECURE
+ 		int	dofree;
+ #endif
++		/* a52sxq 6.12: the HAL died inside a sensor session (between
++		 * FP_SET_SPI_CLOCK and FP_DISABLE_SPI_CLOCK): drop the wakelock
++		 * and the rail, so suspend works and the restarted HAL gets a
++		 * real power-on sequence instead of "called duplicate".
++		 * Lock order device_list_lock -> buf_lock; ioctl takes only
++		 * buf_lock. */
++		mutex_lock(&etspi->buf_lock);
++		if (etspi->ldo_enabled)
++			et7xx_power_control(etspi, 0);
++		spi_clk_disable(etspi->clk_setting);
++		mutex_unlock(&etspi->buf_lock);
+ 		kfree(etspi->buf);
+ 		etspi->buf = NULL;
+ 
+@@ -525,12 +554,30 @@
  	pr_info("Entry\n");
  	/* gpio setting for ldo, sleep pin */
  	if (etspi != NULL) {
@@ -194,7 +212,7 @@
  			} else {
  				regulator_set_load(etspi->regulator_3p3, 100000);
  				pr_info("btp_regulator ok\n");
-@@ -586,10 +622,14 @@
+@@ -586,10 +633,14 @@
  	return retval;
  
  et7xx_platformInit_sleep_failed:
@@ -212,7 +230,7 @@
  et7xx_platformInit_ldo_failed:
  	pr_err("is failed. %d\n", retval);
  	return retval;
-@@ -600,6 +640,10 @@
+@@ -600,6 +651,10 @@
  	pr_info("Entry\n");
  
  	if (etspi != NULL) {
@@ -223,7 +241,7 @@
  		et7xx_pin_control(etspi, false);
  		if (etspi->regulator_3p3)
  			regulator_put(etspi->regulator_3p3);
-@@ -616,11 +660,10 @@
+@@ -616,11 +671,10 @@
  static int et7xx_parse_dt(struct device *dev, struct et7xx_data *etspi)
  {
  	struct device_node *np = dev->of_node;
@@ -236,7 +254,7 @@
  	if (gpio < 0) {
  		retval = gpio;
  		pr_err("fail to get sleepPin\n");
-@@ -630,7 +673,7 @@
+@@ -630,7 +684,7 @@
  		pr_info("sleepPin=%d\n", etspi->sleepPin);
  	}
  
@@ -245,7 +263,7 @@
  	if (gpio < 0) {
  		etspi->ldo_pin = 0;
  		pr_info("not use ldo_pin\n");
-@@ -639,7 +682,9 @@
+@@ -639,7 +693,9 @@
  		pr_info("ldo_pin=%d\n", etspi->ldo_pin);
  	}
  
@@ -256,7 +274,7 @@
  		pr_info("not use btp_regulator\n");
  		etspi->btp_vdd = NULL;
  		if (gpio < 0) {
-@@ -678,7 +723,7 @@
+@@ -678,7 +734,7 @@
  	}
  	pr_info("rb: %s\n", etspi->rb);
  
@@ -265,7 +283,7 @@
  #if !defined(ENABLE_SENSORS_FPRINT_SECURE) || defined(DISABLED_GPIO_PROTECTION)
  	if (!IS_ERR(etspi->p)) {
  		etspi->pins_poweroff = pinctrl_lookup_state(etspi->p, "pins_poweroff");
-@@ -713,7 +758,6 @@
+@@ -713,7 +769,6 @@
  	.compat_ioctl = et7xx_compat_ioctl,
  	.open = et7xx_open,
  	.release = et7xx_release,
@@ -273,7 +291,7 @@
  };
  
  #ifndef ENABLE_SENSORS_FPRINT_SECURE
-@@ -960,8 +1004,10 @@
+@@ -960,8 +1015,10 @@
  		list_add(&etspi->device_entry, &device_list);
  	}
  	mutex_unlock(&device_list_lock);
@@ -285,7 +303,7 @@
  		etspi, fp_attrs, "fingerprint");
  	if (retval) {
  		pr_err("sysfs register failed\n");
-@@ -978,9 +1024,16 @@
+@@ -978,9 +1035,16 @@
  
  et7xx_sysfs_failed:
  	fingerprint_unregister(etspi->fp_device, fp_attrs);
@@ -303,7 +321,7 @@
  et7xx_device_create_failed:
  	spi_clk_unregister(etspi->clk_setting);
  et7xx_probe_spi_clk_register_failed:
-@@ -1068,6 +1121,10 @@
+@@ -1068,6 +1132,10 @@
  	pr_info("Entry\n");
  	if (etspi != NULL) {
  		disable_fp_debug_timer(etspi->logger);
@@ -314,7 +332,7 @@
  		et7xx_platformUninit(etspi);
  		spi_clk_unregister(etspi->clk_setting);
  		/* make sure ops on existing fds can abort cleanly */
-@@ -1078,6 +1135,7 @@
+@@ -1078,6 +1146,7 @@
  		/* prevent new opens */
  		mutex_lock(&device_list_lock);
  		fingerprint_unregister(etspi->fp_device, fp_attrs);
@@ -322,7 +340,7 @@
  		list_del(&etspi->device_entry);
  		device_destroy(et7xx_class, etspi->devt);
  		clear_bit(MINOR(etspi->devt), minors);
-@@ -1088,15 +1146,18 @@
+@@ -1088,15 +1157,18 @@
  	return 0;
  }
  
@@ -345,7 +363,7 @@
  
  static int et7xx_pm_suspend(struct device *dev)
  {
-@@ -1160,7 +1221,11 @@
+@@ -1160,7 +1232,11 @@
  		return retval;
  	}
  

@@ -5,7 +5,7 @@ soc-repo r70) with no compile or modpost errors. **Nothing has been loaded on ha
 
 | Directory | What | Result |
 |---|---|---|
-| `securemsm/` | Qualcomm securemsm-kernel `sec-kernel.lnx.14.16.r27-rel` (donor commit b1c5edcf) + 4 patches | 9 modules in `out/`, plus a second smcinvoke variant in `out/smcinvoke-compat/` |
+| `securemsm/` | Qualcomm securemsm-kernel `sec-kernel.lnx.14.16.r27-rel` (donor commit b1c5edcf) + 8 patches | 9 modules in `out/`, plus a second smcinvoke variant in `out/smcinvoke-compat/` |
 | `ioncompat/` | `/dev/ion` (5.4 msm ION ABI) over Qualcomm's `qcom_dma_heaps`, with secure heaps and the in-kernel `ion_alloc()` face | `ioncompat.ko`, `test/build/iontest{64,32}`; own `README.md` |
 | `adsprpc/` | legacy FastRPC (`/dev/adsprpc-smd`, `-smd-secure`), 5.4 ioctl ABI incl. 32-bit | `frpc-adsprpc.ko`; own `NOTES.md` |
 | `qseetest/` | static nolibc test client for `/dev/qseecom`, `/dev/smcinvoke`, `/dev/qce` | `build/qseetest{64,32}` |
@@ -29,7 +29,7 @@ method, `KBUILD_EXTRA_SYMBOLS=bsp612/soc-repo-staging/build/Module.symvers`.
 
 | Module | Node | Load on a52sxq | Depends on (modinfo) |
 |---|---|---|---|
-| `qseecom_dlkm.ko` | `/dev/qseecom` | yes, first stage | `qcom-scm`, `mem_buf_dev` |
+| `qseecom_dlkm.ko` | `/dev/qseecom` | yes, first stage | `qseecom_proxy`, `qcom-scm`, `mem_buf_dev` |
 | `smcinvoke_dlkm.ko` | `/dev/smcinvoke` | yes (Widevine holds 3 fds on 5.4) | `qseecom_proxy`, `qcom-scm`, `si_core_module` (variant `out/smcinvoke-compat/`: `mem_buf_dev` instead of `si_core_module`) |
 | `qce50_dlkm.ko` | - | yes (qcedev needs it) | `sps_drv` |
 | `qcedev-mod_dlkm.ko` | `/dev/qce` | yes (node exists on 5.4, `libcpion.so`) | `qce50_dlkm`, `mem_buf_dev` |
@@ -44,6 +44,14 @@ method, `KBUILD_EXTRA_SYMBOLS=bsp612/soc-repo-staging/build/Module.symvers`.
 2. `0002` smcinvoke `compat/` variant: accept the 5.4 UAPI layout next to the 6.12 one.
 3. `0003` qseecom: keep the three 5.4 ioctls the 6.12 driver dropped.
 4. `0004` smcinvoke `si_core_xts/` variant (the one the BSP config builds): same 5.4 layout.
+5. `0005` (audit 2026-11-18) qseecom_dlkm provides the `qseecom_proxy` ops (`-DCONFIG_QSEECOM=1` for
+   `qseecom/qseecom.o`); both smcinvoke variants no longer register their `-EOPNOTSUPP` listener stub.
+   A TZ listener request raised inside an smcinvoke call now reaches qseecomd, as on 5.4. Kernel
+   clients of `qseecom_start_app()`/`qseecom_send_command()` (hdcp) also go to the legacy qseecom driver.
+6. `0006` qcedev: a queued request that times out or is signalled no longer clears another
+   request's `active_command` and returns `-ETIMEDOUT`/`-EINTR` instead of 0.
+7. `0007` qseecom: closing a keymaster client fd frees its handle (was leaked).
+8. `0008` qseecom: restore the 5.4 `sigprocmask()` calls around the listener waits.
 `gen-0002-*.py` / `gen-0004-*.py` are the scripts that made the edits (reference only).
 
 ### UAPI comparison, 5.4 phone headers vs 6.12 (`uapi-compare/result.txt`)

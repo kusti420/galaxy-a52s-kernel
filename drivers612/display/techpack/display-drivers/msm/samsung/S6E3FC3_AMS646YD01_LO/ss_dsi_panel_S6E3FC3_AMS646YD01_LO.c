@@ -639,6 +639,9 @@ static int dsi_update_mdnie_data(struct samsung_display_driver_data *vdd)
 	/* Update MDNIE data related with size, offset or index */
 	mdnie_data->dsi_bypass_mdnie_size = ARRAY_SIZE(DSI0_BYPASS_MDNIE);
 	mdnie_data->mdnie_color_blinde_cmd_offset = MDNIE_COLOR_BLINDE_CMD_OFFSET;
+	/* S23 framework name for the same offset (night mode / colour lens SCR copy; 5.4 used
+	 * mdnie_color_blinde_cmd_offset there) */
+	mdnie_data->mdnie_scr_cmd_offset = MDNIE_COLOR_BLINDE_CMD_OFFSET;
 	mdnie_data->mdnie_step_index[MDNIE_STEP1] = MDNIE_STEP1_INDEX;
 	mdnie_data->mdnie_step_index[MDNIE_STEP2] = MDNIE_STEP2_INDEX;
 	mdnie_data->mdnie_step_index[MDNIE_STEP3] = MDNIE_STEP3_INDEX;

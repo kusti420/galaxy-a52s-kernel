@@ -3,7 +3,7 @@
 # The pattern is NOT in this repo: it is read from ~/.config/a52sxq/p<N>-pattern (dots 1-9, keypad order).
 # Usage: PHONE=1 tools/unlock.sh
 set -u
-case "${PHONE:-1}" in 1) S=PHONE1;; 2) S=PHONE2;; *) exit 1;; esac
+case "${PHONE:-1}" in 1) S=PHONE1;; 2) S=PHONE2;; d) S=DAILYPHONE;; *) exit 1;; esac
 P=$(cat ~/.config/a52sxq/p${PHONE:-1}-pattern 2>/dev/null) || { echo "no pattern file"; exit 1; }
 a() { adb -s $S shell "$@"; }
 showing() { a dumpsys window policy 2>/dev/null | grep -m1 -o 'showing=[a-z]*' | grep -q true; }

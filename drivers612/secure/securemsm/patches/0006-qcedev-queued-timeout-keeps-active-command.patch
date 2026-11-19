@@ -1,0 +1,22 @@
+diff --color -ruN a/crypto-qti/qcedev.c b/crypto-qti/qcedev.c
+--- a/crypto-qti/qcedev.c	2026-11-11 18:29:21.887383443 +0200
++++ b/crypto-qti/qcedev.c	2026-11-18 19:52:26.566263988 +0200
+@@ -878,8 +878,17 @@
+ 			if ((req_wait == 0) || (req_wait == -ERESTARTSYS)) {
+ 				pr_err("%s: request timed out, req_wait = %d\n",
+ 						__func__, req_wait);
++				/*
++				 * a52sxq: still WAITING (the condition is re-checked
++				 * under podev->lock), so nothing reached the engine.
++				 * The active request belongs to another submitter,
++				 * who retires it via req_done(): do not clear it.
++				 * Return a non-restartable error: a transparent
++				 * -ERESTARTSYS restart would re-run already processed
++				 * cipher chunks (in place) or an advanced sha_ctxt.
++				 */
+ 				list_del(&qcedev_areq->list);
+-				podev->active_command = NULL;
++				qcedev_areq->err = req_wait ? -EINTR : -ETIMEDOUT;
+ 				spin_unlock_irqrestore(&podev->lock, flags);
+ 				return qcedev_areq->err;
+ 			}

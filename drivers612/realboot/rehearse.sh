@@ -93,8 +93,13 @@ modname() { "$LLVM/llvm-objcopy" -O binary --only-section=.modinfo "$1" "$W/modi
 vermagic() { [ "$(strings -a "$1" | grep -c "^vermagic=$KREL ")" -ge 1 ] || fail "wrong vermagic: $1"; }
 
 # ---- inputs
+# addon=vendor_boot builds (build-realboot.sh ADDON=vendor_boot): no vendor add-on at all; the RAM overlay
+# then HIDES every 6.x file an earlier install left on the phone's /vendor (whiteouts on lib/modules/6.1x,
+# 6.18-wlan, 5.4-gki and etc/init/a52sxq-k61x.rc), so the run proves nothing comes from /vendor
+RBADDON=$(sed -n 's/.* addon=\([^ ]*\).*/\1/p' "$RB/BUILDINFO" 2>/dev/null); RBADDON=${RBADDON:-vendor}
+[ "$RBADDON" = vendor ] && ADDF=vendor-addon.SHA256SUMS || ADDF=work/plan/addon-late.load
 for f in BUILDINFO REPORT.txt first-stage.modules.load cmdline-predicted-4096.txt dt-bootargs.txt vendor-cmdline.txt \
-         realboot.dtbo vendor-addon.SHA256SUMS work/chk-b/kernel work/chk-b/ramdisk work/chk-vb/dtb work/chk-vb/vendor_ramdisk; do
+         realboot.dtbo $ADDF work/chk-b/kernel work/chk-b/ramdisk work/chk-vb/dtb work/chk-vb/vendor_ramdisk; do
 	[ -e "$RB/$f" ] || fail "$RB/$f missing (build-realboot.sh first)"; done
 RBNAME=$(sed -n 's/^name=\([^ ]*\).*/\1/p' "$RB/BUILDINFO"); KREL=$(sed -n 's/.* krel=\([^ ]*\).*/\1/p' "$RB/BUILDINFO")
 RBMODEM=$(sed -n 's/.* modem=\([01]\).*/\1/p' "$RB/BUILDINFO"); RBMODEM=${RBMODEM:-0}
@@ -158,6 +163,7 @@ cp "$TESTGUARD" "$OV/a52/testguard.ko"; "$LLVM/llvm-strip" --strip-debug "$OV/a5
 for b in ${BINDS:-}; do case "${b%%:*}${b#*:}" in *.mdt*|*.mbn*|*.b[0-9][0-9]*|*firmware*)
 	fail "BINDS entry '$b' looks like firmware: refused (only the phone's own firmware may be loaded)";; esac
 	cp "${b%%:*}" "$OV/a52/bind/"; echo "$(basename "${b%%:*}") ${b#*:}" >> "$OV/a52/bind/binds.txt"; done
+if [ "$RBADDON" = vendor ]; then
 # the vendor add-on, byte for byte as build-realboot.sh made it
 cp -a "$RB/vendor-addon/etc" "$RB/vendor-addon/lib" "$OV/a52/addon/vendor/"
 ( cd "$OV/a52/addon" && find vendor -type f | sort | xargs sha256sum | sed 's#  vendor/#  vendor-addon/#' ) > "$W/addon.sha"
@@ -169,12 +175,17 @@ if [ "$WLD" != 5.4-gki ]; then
 	[ -d "$OV/a52/addon/vendor/lib/modules/5.4-gki" ] && [ -z "$(ls -A "$OV/a52/addon/vendor/lib/modules/5.4-gki")" ] || fail "add-on 5.4-gki is not an empty mount point dir"
 	grep -q "^    mount none /vendor/lib/modules/$WLD /vendor/lib/modules/5.4-gki bind$" "$OV/a52/addon/vendor/etc/init/a52sxq-$K.rc" || fail "no $WLD bind in a52sxq-$K.rc"
 fi
+else
+	mkdir -p "$OV/a52/addon/vendor/lib/modules" "$OV/a52/addon/vendor/etc/init"   # whiteouts are made by the helper (mknod)
+	say "addon=vendor_boot: NO vendor add-on; the RAM overlay hides lib/modules/{6.12,6.18,6.18-wlan,5.4-gki} and etc/init/a52sxq-k61{2,8}.rc of the phone's /vendor"
+fi
 # rehearsal check inputs: module names (from .modinfo), the rc's audio list, the wlan module name
 VR=$W/vr; python3 -I "$HERE/tools/cpiox.py" "$W/3-vendor.cpio" "$VR" > /dev/null
 cmp -s "$VR/lib/modules/modules.load" "$RB/first-stage.modules.load" || fail "vendor ramdisk modules.load != first-stage.modules.load"
 : > "$OV/a52/rh/first-stage.names"
 while read -r m; do [ -f "$VR/lib/modules/$m" ] || fail "$m in modules.load but not in the vendor ramdisk"
 	n=$(modname "$VR/lib/modules/$m"); [ -n "$n" ] || fail "no modinfo name in $m"; echo "$n" | tr '-' '_' >> "$OV/a52/rh/first-stage.names"; done < "$VR/lib/modules/modules.load"
+if [ "$RBADDON" = vendor ]; then
 AUD=$(sed -n "s#.*/vendor/bin/modprobe \(-s \)\{0,1\}-a -d /vendor/lib/modules/$V ##p" "$OV/a52/addon/vendor/etc/init/a52sxq-$K.rc")
 [ -n "$AUD" ] || fail "no modprobe line in a52sxq-$K.rc"
 echo "$AUD" | tr ' ' '\n' | grep . > "$OV/a52/rh/audio.list"
@@ -189,9 +200,21 @@ $MPS --label first-stage --dir "$VR/lib/modules" --as /lib/modules --load-file m
 $MPS --label "vendor rc" --dir "$OV/a52/addon/vendor/lib/modules/$V" --as /vendor/lib/modules/$V --modules $AUD >> "$W/mps.txt" || { cat "$W/mps.txt"; fail "libmodprobe dry run: the rc's modprobe line would not load the audio set"; }
 $MPS --dir "$OV/a52/addon/vendor/lib/modules/$WLD" --as /vendor/lib/modules/5.4-gki --modules qca_cld3_wlan > /dev/null 2>&1 && fail "libmodprobe would load wlan from 5.4-gki (races macloader): $RB predates the rb3/rb618-2 fix"
 grep -q -- "modprobe -s -a -d /vendor/lib/modules/$V " "$OV/a52/addon/vendor/etc/init/a52sxq-$K.rc" || fail "the rc's modprobe has no -s (errors would be invisible): $RB predates the fix"
+else
+	AUD=$(sed 's/\.ko$//' "$RB/work/plan/addon-late.load" | tr '\n' ' ')
+	echo "$AUD" | tr ' ' '\n' | grep . > "$OV/a52/rh/audio.list"
+	: > "$OV/a52/rh/audio.names"
+	for m in $AUD; do f="$VR/lib/modules/$m.ko"; [ -f "$f" ] || fail "addon=vendor_boot: $m.ko not in the vendor ramdisk"; modname "$f" | tr '-' '_' >> "$OV/a52/rh/audio.names"; done
+	modname "$VR/lib/modules/wlan.ko" | tr '-' '_' > "$OV/a52/rh/wlan.name"
+	[ "$(tail -n1 "$VR/lib/modules/modules.load")" = wlan.ko ] || fail "addon=vendor_boot: wlan.ko not last in modules.load"
+	MPS="python3 -I $HERE/tools/modprobesim.py"
+	$MPS --label first-stage --dir "$VR/lib/modules" --as /lib/modules --load-file modules.load > "$W/mps.txt" || { cat "$W/mps.txt"; fail "libmodprobe dry run: first stage"; }
+	grep -qx 'options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify+qcom,msm-audio-apr+qcom,audio-ref-clk+qcom,msm-cdc-pinctrl+qcom,q6core-audio+qcom,adsp-loader hold_late=qcom,wcd938x-codec' "$VR/lib/modules/modules.options" || fail "addon=vendor_boot: no rescan_after_adsp in modules.options"
+	cp "$TOP/tools/tone/tone.dex" "$OV/a52/rh/tone.dex"
+fi
 FWPATH=$(sed -n 's/.*firmware_class\.path=\([^ ]*\).*/\1/p' "$RB/vendor-cmdline.txt")
 [ -n "$FWPATH" ] || fail "no firmware_class.path in $RB/vendor-cmdline.txt"
-printf 'V=%s\nK=%s\nKREL=%s\nRBNAME=%s\nNFIRST=%s\nMODEM=%s\nFWPATH=%s\nWLD=%s\nSD=%s\nDCVS=%s\n' "$V" "$K" "$KREL" "$RBNAME" "$(grep -c . "$RB/first-stage.modules.load")" "$RBMODEM" "$FWPATH" "$WLD" "$RH_SD" "$RBDCVS" > "$OV/a52/rh/env"
+printf 'V=%s\nK=%s\nKREL=%s\nRBNAME=%s\nNFIRST=%s\nMODEM=%s\nFWPATH=%s\nWLD=%s\nSD=%s\nDCVS=%s\nADDON=%s\n' "$V" "$K" "$KREL" "$RBNAME" "$(grep -c . "$RB/first-stage.modules.load")" "$RBMODEM" "$FWPATH" "$WLD" "$RH_SD" "$RBDCVS" "$RBADDON" > "$OV/a52/rh/env"
 ( cd "$OV" && find . | LC_ALL=C sort | cpio -o -H newc -R 0:0 --quiet ) > "$W/4-overlay.cpio"
 cat "$W/1-boot.cpio" "$W/2-tools.cpio" "$W/3-vendor.cpio" "$W/4-overlay.cpio" | gzip -6 > "$O/rd.cpio.gz"
 
@@ -240,7 +263,7 @@ if [ "$KV" = 618 ]; then
 	fdtput -t x "$O/rh-base.dtb" $N reg 0 0xf0be0000 0 0x20000; fdtput -t s "$O/rh-base.dtb" $N no-map ""
 fi
 say "dtb: $RB vendor_boot dtb + realboot.dtbo (fdtoverlay), dwc3 extcon = $(fdtget -t x "$O/rh-base.dtb" /soc/ssusb@a600000 extcon) (real), no rmtfs node$( [ "$KV" = 618 ] && echo ', + a52ram@f0be0000 for earlycon (kexec-only)')"
-LIVE=${LIVE:-$(ls -t "$TOP"/logs/kx-*-p$PHONE-*/harness-live.dtb 2>/dev/null | head -1 || true)}
+LIVE=${LIVE:-$(ls -t "$TOP"/logs/kx-*-p$PHONE-[0-9][0-9][0-9][0-9][0-9][0-9]/harness-live.dtb 2>/dev/null | head -1 || true)}
 if [ -n "$LIVE" ] && [ -f "$LIVE" ]; then
 	( cd "$TOP" && python3 kexec/mkkexecdtb.py --base "$O/rh-base.dtb" --live "$LIVE" -o "$W/sim-kexec.dtb" ) > "$O/mkkexecdtb-sim.txt" 2>&1 || fail "mkkexecdtb.py on the rehearsal base failed ($O/mkkexecdtb-sim.txt)"
 	grep -q '^3b\. /reserved-memory/kexec-live-rmtfs' "$O/mkkexecdtb-sim.txt" || fail "gen would NOT carry rmtfs over (SIGBUS risk): $O/mkkexecdtb-sim.txt"
@@ -271,7 +294,7 @@ fi
 # the ABL part was measured on phone $RBPHONE: re-target it when rehearsing on the other phone
 if [ "$PHONE" != "$RBPHONE" ]; then
 	phone_vars "$RBPHONE"
-	SRC_LIVE=${SRC_LIVE:-$(ls -t "$TOP"/logs/kx-*-p$RBPHONE-*/harness-live.dtb 2>/dev/null | head -1 || true)}
+	SRC_LIVE=${SRC_LIVE:-$(ls -t "$TOP"/logs/kx-*-p$RBPHONE-[0-9][0-9][0-9][0-9][0-9][0-9]/harness-live.dtb 2>/dev/null | head -1 || true)}
 	[ -n "$SRC_LIVE" ] && [ -f "$SRC_LIVE" ] || fail "no phone-$RBPHONE harness-live.dtb in logs/ (SRC_LIVE=): cannot re-target the ABL part"
 	[ -n "$LIVE" ] && [ -f "$LIVE" ] || fail "no phone-$PHONE harness-live.dtb in logs/ (LIVE=): cannot re-target the ABL part"
 	printf '%s\n' "$ABL" > "$W/abl-src.txt"
@@ -305,7 +328,9 @@ TESTW="loglevel=7 log_buf_len=4M a52.deadman=$DEADMAN a52.net=$NET a52.androidte
 [ "$RH_SD" = off ] && TESTW="$TESTW module_blacklist=sdhci_msm"
 [ "$KV" = 618 ] && TESTW="$TESTW earlycon=a52ram,0xf0be0000"
 CMD=$(echo "$DTB_ARGS $VC $ABL $TESTW" | tr -s ' ')
-for w in "androidboot.a52sxq.$K=1" firmware_class.path=/vendor/firmware_mnt/image,/vendor/firmware android_arch_task_struct_size=512 \
+[ "$RBADDON" = vendor ] && GATE="androidboot.a52sxq.$K=1" || GATE="androidboot.a52sxq.${K}vb=1"
+[ "$RBADDON" = vendor ] || case " $CMD " in *" androidboot.a52sxq.$K=1 "*) fail "addon=vendor_boot cmdline sets the old add-on gate";; esac
+for w in "$GATE" firmware_class.path=/vendor/firmware_mnt/image,/vendor/firmware android_arch_task_struct_size=512 \
          androidboot.first_stage_console=2 androidboot.serialno=$S msm_drm.dsi_display0= msm_drm.lcd_id= a52.androidtest=1; do
 	case " $CMD " in *" $w"*) ;; *) fail "cmdline lacks $w";; esac; done
 [ "$(echo " $CMD " | grep -o ' firmware_class.path=' | wc -l)" = 1 ] || fail "two firmware_class.path"

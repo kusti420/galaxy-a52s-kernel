@@ -56,8 +56,11 @@ for c in sys.argv[2:]:
 PYEOF
 }
 
+# QEMU is TCG here: under a busy PC (parallel builds, load ~36 on 24 cores) 6 s were not enough to reach
+# ic:late / the second dump. Scale the waits by 1 + loadavg/cores (or QEMU_SLOW=<factor>).
+SLOW=${QEMU_SLOW:-$(awk -v n="$(nproc)" '{f = 1 + int($1 / n + 0.5); print (f > 4 ? 4 : f)}' /proc/loadavg)}
 run() {   # <tag> <dtb> <seconds before the dump> [reset] [extra cmdline]
-	local tag=$1 dtb=$2 wait=$3 sock=$SOCKD/$1.mon
+	local tag=$1 dtb=$2 wait=$(( $3 * SLOW )) sock=$SOCKD/$1.mon
 	"${QM[@]}" -kernel "$IMG" -dtb "$dtb" -initrd "$Q/rd.cpio.gz" \
 		-append "console=ttyAMA0 kvm-arm.mode=none keep_bootcon initcall_debug ignore_loglevel softlockup_panic=1 panic=-1 ${5:-}" \
 		-monitor unix:"$sock",server=on,wait=off > "$Q/$tag-console.txt" 2>&1 &

@@ -89,10 +89,46 @@
 };
 
 /* ---------------------------------------------------------------------------------------------
- * 3. 6.12 binding change (sde_hw_catalog.c): every dgm block of qcom,sde-sspp-dma-blocks needs a
- *    cell-index.
+ * 3. 6.12 binding changes (sde_hw_catalog.c, sde_power_handle.c). dts/yupik-sde.dtsi is
+ *    generated from the 5.4 tree (tools/gen-dts.py), so the r7 formats are overrides here.
+ *    - every dgm block of qcom,sde-sspp-dma-blocks needs a cell-index.
+ *    - audit 2026-11-18: the 5.4-format QoS tables were silently ignored by r7 (VBIF remap
+ *      never programmed, danger/safe/creq LUTs all 0, IB vote sized for 4 DDR channels).
+ *      The values below are the phone's 5.4 values in the r7 layout.
  * ------------------------------------------------------------------------------------------- */
 &mdss_mdp {
+	/* r7 wants 2 * nlvl (16) cells: first 8 = RP remap, next 8 = LVL remap. 5.4 wrote its one
+	 * 8-entry table into both registers, so each table is repeated. */
+	qcom,sde-vbif-qos-rt-remap = <3 3 4 4 5 5 6 6  3 3 4 4 5 5 6 6>;
+	qcom,sde-vbif-qos-nrt-remap = <3 3 3 3 3 3 3 3  3 3 3 3 3 3 3 3>;
+	qcom,sde-vbif-qos-cwb-remap = <3 3 4 4 5 5 6 3  3 3 4 4 5 5 6 3>;
+	qcom,sde-vbif-qos-lutdma-remap = <3 3 3 3 4 4 4 4  3 3 3 3 4 4 4 4>;
+
+	/* r7: 9 usages (LINEAR MACROTILE NRT CWB CWB_TILE INLINE INLINE_RESTRICTED OFFLINE_WB
+	 * WB_ROT) x {portrait, landscape}. The 5.4 6-cell tables are too short and were ignored. */
+	qcom,sde-danger-lut = <0xffff 0xffff  0xffff 0xffff  0x0 0x0  0x0 0x0  0x0 0x0
+			       0xffff 0xffff  0xffff 0xffff  0x0 0x0  0x0 0x0>;
+	qcom,sde-safe-lut = <0xff00 0xff00  0xff00 0xff00  0xffff 0xffff  0x1 0x1  0x1 0x1
+			     0xff00 0xff00  0xff00 0xff00  0xffff 0xffff  0xffff 0xffff>;
+	/* r7: 9 usages x {no-qseed, qseed} x {hi, lo}; replaces 5.4's qcom,sde-qos-lut-* (which
+	 * r7 does not read; they stay in yupik-sde.dtsi as generated). */
+	qcom,sde-creq-lut = <0x00112233 0x44556677 0x00112233 0x66777777	/* linear */
+			     0x00112233 0x44556677 0x00112233 0x66777777	/* macrotile */
+			     0x0 0x0 0x0 0x0					/* nrt */
+			     0x66666666 0x66666540 0x66666666 0x66666540	/* cwb */
+			     0x66666666 0x66666540 0x66666666 0x66666540	/* cwb tile */
+			     0x00112233 0x44556677 0x00112233 0x66777777	/* inline rot */
+			     0x00112233 0x44556677 0x00112233 0x66777777	/* inline rot restricted */
+			     0x0 0x0 0x0 0x0					/* offline wb */
+			     0x0 0x0 0x0 0x0>;					/* wb rot */
+
+	/* r7: ib = ab / channels * 100 / efficiency. The yupik EBI has 2 channels; r7 defaults to
+	 * 4 and does not read 5.4's qcom,sde-dram-channels. */
+	qcom,sde-num-ddr-channels = <2>;
+	/* r7 replacement for 5.4's power-on IB floor (min-core/min-llcc/min-dram-ib-kbps). Must
+	 * have exactly 3 cells (SDE_POWER_HANDLE_DBUS_ID_MAX) or mdss_mdp fails to probe. */
+	qcom,sde-ib-bw-vote = <2500000 0 1600000>;
+
 	qcom,sde-sspp-dma-blocks {
 		dgm@0 {
 			cell-index = <0>;

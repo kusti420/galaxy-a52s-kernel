@@ -1,0 +1,108 @@
+a52sxq: rmnet_shs_freq_init with an offline CPU (audit 2026-11-18, low)
+
+Applies to donors/datarmnet-ext (not dataipa). The init returned -ESRCH at
+the first CPU without a cpufreq policy (offline), before INIT_WORK and with
+half of the requests added, leaked two policy references per CPU on every
+init, and the boost works then updated inactive requests (WARN). Skip CPUs
+without a policy, put the policy, init the works first, only update active
+requests.
+
+--- a/shs/rmnet_shs_freq.c
++++ b/shs/rmnet_shs_freq.c
+@@ -56,6 +56,9 @@ static void shs_update_cpu_policy(struct
+ 		boost = per_cpu_ptr(shs_cpu_boosts.cpu_boosts, i);
+ 		req = &per_cpu(boost_req, i);
+ 
++		/* a52sxq: no request for CPUs that had no policy at init */
++		if (!freq_qos_request_active(req))
++			continue;
+ 		ret = freq_qos_update_request(req, boost->freq_floor);
+ 
+ 	}
+@@ -76,6 +79,8 @@ static void shs_update_pb_cpu_policy(str
+ 		boost = per_cpu_ptr(shs_pb_cpu_boosts.pb_cpu_boosts, i);
+ 		req = &per_cpu(pb_boost_req, i);
+ 
++		if (!freq_qos_request_active(req))
++			continue;
+ 		ret = freq_qos_update_request(req, boost->freq_floor);
+ 		SHS_TRACE_LOW(RMNET_SHS_PB_BOOST_CPU, RMNET_SHS_PB_BOOST_CPU_UPDATE,
+ 					  boost->freq_floor, boost->freq_ceil, 0xDEF, 0xDEF, NULL,
+@@ -247,42 +252,54 @@ int rmnet_shs_freq_init(void)
+ 		goto err;
+ 	}
+ 
++	/*
++	 * a52sxq: init the works first, so an early return below can never
++	 * leave a work without a function for rmnet_shs_boost_cpus().
++	 */
++	INIT_WORK(&boost_cpu, shs_update_cpu_policy);
++	INIT_WORK(&pb_boost_worker, shs_update_pb_cpu_policy);
++
+ 	for_each_possible_cpu(i) {
+ 		boost = per_cpu_ptr(shs_cpu_boosts.cpu_boosts, i);
+-		req = &per_cpu(boost_req, i);
++		/*
++		 * a52sxq: an offline CPU has no policy. Skip it instead of
++		 * stopping halfway, and drop the policy reference that was
++		 * leaked twice per CPU on every init.
++		 */
+ 		policy = cpufreq_cpu_get(i);
+ 		if (!policy) {
+ 			pr_err("%s: cpufreq policy not found for cpu%d\n",
+ 							__func__, i);
+-			return -ESRCH;
++			continue;
+ 		}
+ 
+-		ret = freq_qos_add_request(&policy->constraints, req,
+-				FREQ_QOS_MIN, MIN_FREQ);
+-		if (ret < 0) {
+-			pr_err("%s: Failed to add freq constraint (%d)\n",
+-						__func__, ret);
+-			return ret;
++		req = &per_cpu(boost_req, i);
++		if (!freq_qos_request_active(req)) {
++			ret = freq_qos_add_request(&policy->constraints, req,
++					FREQ_QOS_MIN, MIN_FREQ);
++			if (ret < 0) {
++				pr_err("%s: Failed to add freq constraint (%d)\n",
++							__func__, ret);
++				cpufreq_cpu_put(policy);
++				rmnet_shs_remove_qos_reqs();
++				return ret;
++			}
+ 		}
+ 
+ 		req = &per_cpu(pb_boost_req, i);
+-		policy = cpufreq_cpu_get(i);
+-		if (!policy) {
+-			pr_err("%s: cpufreq policy not found for pb cpu%d\n",
+-							__func__, i);
+-			return -ESRCH;
+-		}
+-
+-		ret = freq_qos_add_request(&policy->constraints, req,
+-				FREQ_QOS_MIN, MIN_FREQ);
+-		if (ret < 0) {
+-			pr_err("%s: Failed to add pb freq constraint (%d)\n",
+-						__func__, ret);
+-			return ret;
++		if (!freq_qos_request_active(req)) {
++			ret = freq_qos_add_request(&policy->constraints, req,
++					FREQ_QOS_MIN, MIN_FREQ);
++			if (ret < 0) {
++				pr_err("%s: Failed to add pb freq constraint (%d)\n",
++							__func__, ret);
++				cpufreq_cpu_put(policy);
++				rmnet_shs_remove_qos_reqs();
++				return ret;
++			}
+ 		}
++		cpufreq_cpu_put(policy);
+ 	}
+-	INIT_WORK(&boost_cpu, shs_update_cpu_policy);
+-	INIT_WORK(&pb_boost_worker, shs_update_pb_cpu_policy);
+ 
+ 	rmnet_shs_reset_freq();
+ 	return 0;

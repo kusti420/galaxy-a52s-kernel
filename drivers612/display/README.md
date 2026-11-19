@@ -120,3 +120,20 @@ Likely failures: probe deferral on clocks/regulators/smmu (DT), the lahaina `sde
 display votes, a NULL dereference in a hook whose surrounding r7 code changed meaning, panel-off
 on the first commit if the S23 framework expects a callback the 5.4 panel file never set, wrong
 tearcheck/VRR timing at 120 Hz, fingerprint HBM timing (vsync-based in S23, TE-GPIO-based in 5.4).
+
+## Audit 2026-11-18 fixes (patch `patches/0005-*.diff`; compiled only, not yet on a phone)
+
+- `a52sxq-display.dtsi` section 3: r7-format QoS overrides on `&mdss_mdp` (16-cell VBIF remap
+  tables, 18-cell danger/safe LUTs, `qcom,sde-creq-lut`, `qcom,sde-num-ddr-channels = <2>`,
+  `qcom,sde-ib-bw-vote`). `dts/yupik-sde.dtsi` stays as generated, so `tools/check-dts.sh` now
+  reports these as CHANGED/ADDED against the phone's 5.4 tree: that is intended. The board tree
+  takes its copy from `drivers612/boarddt/out/build/agents/display.dtsi`, which has to be
+  regenerated before the fix reaches `android-r02.dtb`.
+- mDNIe: `MDNIE_SCR_CMD_SIZE` back to 24 and `mdnie_scr_cmd_offset = 2` (5.4 values of the FC3
+  tables); the S23 HBM-CE tables the FC3 panel does not have are NULL-checked (night mode wrote
+  through NULL pointers).
+- `mask_brightness` store drives the finger mask again (see USERSPACE-CONTRACT.md).
+- `sde_color_processing.c`: a 5.4-size `drm_msm_sixzone` blob is zero-extended instead of
+  rejected (the 5.4 struct is a prefix of r7's).
+- Not done: dynamic MIPI clock (`CONFIG_DEV_RIL_BRIDGE`): it makes msm_drm depend on
+  dev_ril_bridge.ko, which the realboot/kexec module lists must then ship before msm_drm.

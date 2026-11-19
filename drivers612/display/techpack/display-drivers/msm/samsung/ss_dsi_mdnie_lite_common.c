@@ -161,6 +161,23 @@ int get_hbm_ce_lux_idx(struct samsung_display_driver_data *vdd)
 /* uupdate_dsi_tcon_mdnie_register():
  * pdate and tx mdnie packet to panel wich vdd is included.
  */
+/*
+ * a52sxq: the 5.4 S6E3FC3 panel has none of the S23 HBM-CE tables (DSI_HBM_CE_MDNIE_DIMMING_n,
+ * DSI_HBM_CE_MDNIE_SCR_n, dsi_hbm_scr_table, hbm_ce_data); they stay NULL. S23 writes to them
+ * unconditionally, also on the plain night-mode path.
+ */
+static bool ss_mdnie_has_hbm_ce_dimming(struct mdnie_lite_tune_data *mdnie_data)
+{
+	return mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1 && mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2 &&
+		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3;
+}
+
+static bool ss_mdnie_has_hbm_ce_scr(struct mdnie_lite_tune_data *mdnie_data)
+{
+	return mdnie_data->DSI_HBM_CE_MDNIE_SCR_1 && mdnie_data->DSI_HBM_CE_MDNIE_SCR_2 &&
+		mdnie_data->DSI_HBM_CE_MDNIE_SCR_3;
+}
+
 int update_dsi_tcon_mdnie_register(struct samsung_display_driver_data *vdd)
 {
 	struct mdnie_lite_tun_type *tune = NULL;
@@ -248,31 +265,43 @@ int update_dsi_tcon_mdnie_register(struct samsung_display_driver_data *vdd)
 	} else if ((tune->night_mode_enable == true) || (tune->hbm_enable == true)) {	
 		if ((tune->night_mode_enable == true) && (tune->hbm_enable == false)) { // blf enable
 			tune_data_dsi  = mdnie_data->DSI_NIGHT_MODE_MDNIE;
-			mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
-			mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
-			mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+			if (ss_mdnie_has_hbm_ce_dimming(mdnie_data)) {
+				mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+				mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+				mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
+			}
 		} else if ((tune->night_mode_enable == false) && (tune->hbm_enable == true)) { //hbm enable
-			buffer_hbm = &mdnie_data->dsi_hbm_scr_table[0];
-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
+			if (mdnie_data->dsi_hbm_scr_table && ss_mdnie_has_hbm_ce_scr(mdnie_data)) {
+				buffer_hbm = &mdnie_data->dsi_hbm_scr_table[0];
+				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
+				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
+				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_hbm, MDNIE_SCR_CMD_SIZE);
+			}
 			if(tune->mdnie_mode == AUTO_MODE) {
 				if (vdd->dtsi_data.hbm_ce_text_mode_support &&
 					((tune->mdnie_app == BROWSER_APP) ||
 					 (tune->mdnie_app == eBOOK_APP))) {
 					tune_data_dsi  = mdnie_data->DSI_HBM_CE_TEXT_MDNIE;
 				} else {
-					tune_data_dsi  = mdnie_data->hbm_ce_data[tune->hbm_ce_idx];
+					tune_data_dsi  = mdnie_data->hbm_ce_data ?
+						mdnie_data->hbm_ce_data[tune->hbm_ce_idx] :
+						mdnie_data->DSI_HBM_CE_MDNIE;	/* 5.4 */
 				}
 			} else {
-				tune_data_dsi  = mdnie_data->hbm_ce_data[tune->hbm_ce_idx];
+				tune_data_dsi  = mdnie_data->hbm_ce_data ?
+					mdnie_data->hbm_ce_data[tune->hbm_ce_idx] :
+					mdnie_data->DSI_HBM_CE_D65_MDNIE;	/* 5.4 */
 			}
 		} else { // hbm & blf enable
-			buffer_blf = &mdnie_data->dsi_night_mode_table[(MDNIE_SCR_CMD_SIZE * (tune->night_mode_index))];
-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
-			memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
-			tune_data_dsi  = mdnie_data->hbm_ce_data[tune->hbm_ce_idx];
+			if (mdnie_data->dsi_night_mode_table && ss_mdnie_has_hbm_ce_scr(mdnie_data)) {
+				buffer_blf = &mdnie_data->dsi_night_mode_table[(MDNIE_SCR_CMD_SIZE * (tune->night_mode_index))];
+				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_1[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
+				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_2[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
+				memcpy(&mdnie_data->DSI_HBM_CE_MDNIE_SCR_3[mdnie_data->mdnie_scr_cmd_offset],buffer_blf, MDNIE_SCR_CMD_SIZE);
+			}
+			tune_data_dsi  = mdnie_data->hbm_ce_data ?
+				mdnie_data->hbm_ce_data[tune->hbm_ce_idx] :
+				mdnie_data->DSI_NIGHT_MODE_MDNIE;	/* 5.4: night mode wins over hbm */
 		}
 	} else if (tune->hdr) {
 		tune_data_dsi = mdnie_data->hdr_tune_value_dsi[tune->hdr];
@@ -320,7 +349,8 @@ int update_dsi_tcon_mdnie_register(struct samsung_display_driver_data *vdd)
 
 	send_dsi_tcon_mdnie_register(vdd, tune_data_dsi, tune);
 
-	if ((tune->night_mode_enable == false) && (tune->hbm_enable == true)) { //hbm enable
+	if ((tune->night_mode_enable == false) && (tune->hbm_enable == true) &&
+			ss_mdnie_has_hbm_ce_dimming(mdnie_data)) { //hbm enable
 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x08;
@@ -971,7 +1001,7 @@ static ssize_t night_mode_store(struct device *dev,
 		}
 	}
 
-	if(tune->hbm_enable == true) {
+	if (tune->hbm_enable == true && ss_mdnie_has_hbm_ce_dimming(mdnie_data)) {
 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_1[mdnie_data->dsi_trans_dimming_slope_index] = 0x04;
 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_2[mdnie_data->dsi_trans_dimming_slope_index] = 0x04;
 		mdnie_data->DSI_HBM_CE_MDNIE_DIMMING_3[mdnie_data->dsi_trans_dimming_slope_index] = 0x04;

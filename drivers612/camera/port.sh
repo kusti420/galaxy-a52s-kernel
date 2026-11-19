@@ -23,9 +23,14 @@ if [ "$1" != "build" ]; then
 fi
 SYM="$PRJ/bsp612/soc-repo-staging/build/Module.symvers"
 [ -f "$SYM" ] || SYM=$(ls "$PRJ"/bsp612/out/lahaina/*/Module.symvers 2>/dev/null | head -1)
+# ion_alloc's modversion CRC must be the one of the ioncompat.ko that is LOADED on the phone = the
+# drivers612/secure/ioncompat build (stage secure of the test ramdisks). deps/ioncompat is an older copy
+# with another CRC: a camera.ko built against it fails to load ("disagrees about version of symbol
+# ion_alloc", rehearsal rh612p2a40 2026-11-18).
+IONDEF=$PRJ/drivers612/secure/ioncompat/Module.symvers; [ -f "$IONDEF" ] || IONDEF=$HERE/deps/ioncompat/Module.symvers
 KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost make -C "$PRJ/bsp612/kernel" ARCH=arm64 \
 	LLVM=$LLVM O="$PRJ/bsp612/out/lahaina" M="$W/drivers" \
-	KBUILD_EXTRA_SYMBOLS="$SYM ${ION_SYMVERS:-$HERE/deps/ioncompat/Module.symvers} ${FLED_SYMVERS:-$HERE/deps/sm5714-fled-stub/Module.symvers}" \
+	KBUILD_EXTRA_SYMBOLS="$SYM ${ION_SYMVERS:-$IONDEF} ${FLED_SYMVERS:-$HERE/deps/sm5714-fled-stub/Module.symvers}" \
 	CONFIG_SPECTRA_CAMERA=m CONFIG_SPECTRA_ISP=y CONFIG_SPECTRA_SENSOR=y CONFIG_SPECTRA_ICP=y \
 	CONFIG_SPECTRA_JPEG=y CONFIG_SPECTRA_LRME=y \
 	CONFIG_CAMERA_FRAME_CNT_DBG=y CONFIG_SAMSUNG_OIS_MCU_STM32=y \

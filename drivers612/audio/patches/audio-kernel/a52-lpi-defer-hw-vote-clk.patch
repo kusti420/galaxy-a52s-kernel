@@ -1,0 +1,37 @@
+diff --git a/soc/pinctrl-lpi.c b/soc/pinctrl-lpi.c
+index 2cfd9bf..afc4b56 100644
+--- a/soc/pinctrl-lpi.c
++++ b/soc/pinctrl-lpi.c
+@@ -722,6 +722,32 @@ static int lpi_pinctrl_probe(struct platform_device *pdev)
+ 		return -EPROBE_DEFER;
+ 	}
+ 
++	/*
++	 * a52sxq 6.12 (2026-11-18): the hw-vote clocks below come from audio-ref-clk siblings
++	 * (vote_lpass_core_hw / vote_lpass_audio_hw, children of q6core-audio like this device).
++	 * Further down a failed devm_clk_get() is swallowed (clock NULL, probe returns 0), so when
++	 * this device happens to probe before its clock provider (rb28/rb30 real boot, first-stage
++	 * audio set: lpi_pinctrl 1 ms before vote_lpass_core_hw) the LPASS core is never voted,
++	 * every LPI GPIO access fails ("core hw vote clk is not enabled"), the SoundWire pins stay
++	 * unconfigured ("SWR bus clsh") and no sound card registers. Defer until the provider is
++	 * there; a clock that is simply absent from the DT (-ENOENT) keeps the old behaviour.
++	 */
++	{
++		static const char * const votes[] = { "lpass_core_hw_vote", "lpass_audio_hw_vote" };
++		struct clk *c;
++
++		for (i = 0; i < ARRAY_SIZE(votes); i++) {
++			c = clk_get(dev, votes[i]);
++			if (IS_ERR(c)) {
++				if (PTR_ERR(c) == -EPROBE_DEFER)
++					return dev_err_probe(dev, -EPROBE_DEFER,
++						"%s provider not bound yet\n", votes[i]);
++			} else {
++				clk_put(c);
++			}
++		}
++	}
++
+ 	ret = of_property_read_u32(dev->of_node, "reg", &reg);
+ 	if (ret < 0) {
+ 		dev_err(dev, "missing base address\n");

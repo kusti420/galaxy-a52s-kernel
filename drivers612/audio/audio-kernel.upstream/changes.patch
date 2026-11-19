@@ -70,7 +70,35 @@
  endif
 --- a/asoc/lahaina.c
 +++ b/asoc/lahaina.c
-@@ -1036,7 +1036,6 @@
+@@ -934,7 +934,7 @@
+ static int dmic_2_3_gpio_cnt;
+ static int dmic_4_5_gpio_cnt;
+ 
+-static void *def_wcd_mbhc_cal(void);
++static void *def_wcd_mbhc_cal(struct snd_soc_component *component);
+ 
+ static int msm_rx_tx_codec_init(struct snd_soc_pcm_runtime*);
+ static int msm_int_wsa_init(struct snd_soc_pcm_runtime*);
+@@ -947,7 +947,7 @@
+ static struct wcd_mbhc_config wcd_mbhc_cfg = {
+ 	.read_fw_bin = false,
+ 	.calibration = NULL,
+-	.detect_extn_cable = true,
++	.detect_extn_cable = false,	/* a52sxq: as on Samsung 5.4 (Qualcomm: true) */
+ 	.mono_stero_detection = false,
+ 	.swap_gnd_mic = NULL,
+ 	.hs_ext_micbias = true,
+@@ -959,7 +959,8 @@
+ 	.key_code[5] = 0,
+ 	.key_code[6] = 0,
+ 	.key_code[7] = 0,
+-	.linein_th = 5000,
++	.linein_th = 59000,	/* a52sxq: as on Samsung 5.4 (Qualcomm: 5000) */
++	/* a52sxq: Samsung 5.4 has moisture_en = true; not changed here, see PARITY-FIXES.md */
+ 	.moisture_en = false,
+ 	.mbhc_micbias = MIC_BIAS_2,
+ 	.anc_micbias = MIC_BIAS_2,
+@@ -1036,7 +1037,6 @@
   	}
  }
  
@@ -78,7 +106,7 @@
  static void msm_audio_update_qos_request(u32 latency)
  {
  	int cpu = 0;
-@@ -1066,7 +1065,6 @@
+@@ -1066,7 +1066,6 @@
   		}
   	}
  }
@@ -86,34 +114,161 @@
  
  static inline int param_is_mask(int p)
  {
-@@ -5385,12 +5383,16 @@
+@@ -5383,26 +5382,53 @@
+ 	return ret;
+ }
  
++/* one vote bit per FE dai link and direction (prepare/shutdown run under
++ * card->pcm_mutex) */
++static DECLARE_BITMAP(msm_fe_qos_voted, MSM_FRONTEND_DAI_MAX * 2);
++
++static int msm_fe_qos_bit(struct snd_pcm_substream *substream)
++{
++	struct snd_soc_pcm_runtime *rtd = substream->private_data;
++	int id = rtd->dai_link->id;
++
++	if (id < 0 || id >= MSM_FRONTEND_DAI_MAX)
++		return -1;
++	return id * 2 + substream->stream;
++}
++
  static int msm_fe_qos_prepare(struct snd_pcm_substream *substream)
  {
 +	/* a52sxq: as on 5.4, vote through the per-CPU resume-latency requests that
 +	 * msm_audio_add_qos_request() registered at probe. The r70 code removed the
 +	 * substream's request and then updated the removed one ("called for unknown
 +	 * object" WARN), so low-latency playback never got a latency vote. */
++	int bit = msm_fe_qos_bit(substream);
++
  	if (cpu_latency_qos_request_active(&substream->latency_pm_qos_req))
  		cpu_latency_qos_remove_request(&substream->latency_pm_qos_req);
  
- 	qos_client_active_cnt++;
- 	if (qos_client_active_cnt == 1)
+-	qos_client_active_cnt++;
+-	if (qos_client_active_cnt == 1)
 -		cpu_latency_qos_update_request(&substream->latency_pm_qos_req, MSM_LL_QOS_VALUE);
++	/* a52sxq: .prepare runs on every PREPARE ioctl (each xrun, each
++	 * stop/start) but .shutdown only once per close: count one vote per
++	 * FE stream, not one per call, or the vote sticks forever. */
++	if (bit < 0 || test_and_set_bit(bit, msm_fe_qos_voted))
++		return 0;
++
++	if (++qos_client_active_cnt == 1)
 +		msm_audio_update_qos_request(MSM_LL_QOS_VALUE);
  
  	return 0;
  }
-@@ -5402,7 +5404,7 @@
- 	if (qos_client_active_cnt > 0)
- 		qos_client_active_cnt--;
- 	if (qos_client_active_cnt == 0)
+ 
+ static void msm_fe_qos_shutdown(struct snd_pcm_substream *substream)
+ {
+-	(void)substream;
++	int bit = msm_fe_qos_bit(substream);
++
++	/* a stream that was never prepared holds no vote */
++	if (bit < 0 || !test_and_clear_bit(bit, msm_fe_qos_voted))
++		return;
+ 
+-	if (qos_client_active_cnt > 0)
+-		qos_client_active_cnt--;
+-	if (qos_client_active_cnt == 0)
 -		cpu_latency_qos_update_request(&substream->latency_pm_qos_req, PM_QOS_DEFAULT_VALUE);
++	if (qos_client_active_cnt > 0 && --qos_client_active_cnt == 0)
 +		msm_audio_update_qos_request(PM_QOS_RESUME_LATENCY_DEFAULT_VALUE);
  }
  
  void mi2s_disable_audio_vote(struct snd_pcm_substream *substream)
-@@ -6183,8 +6185,9 @@
+@@ -5634,7 +5660,6 @@
+ 	return ret;
+ }
+ 
+-#if 0
+ static int msm_wcn_hw_params(struct snd_pcm_substream *substream,
+ 			     struct snd_pcm_hw_params *params)
+ {
+@@ -5669,7 +5694,6 @@
+ err:
+ 	return ret;
+ }
+-#endif
+ 
+ #ifndef CONFIG_AUXPCM_DISABLE
+ static struct snd_soc_ops lahaina_aux_be_ops = {
+@@ -5699,9 +5723,9 @@
+ 	.hw_params = msm_snd_cdc_dma_hw_params,
+ };
+ 
+-/*static struct snd_soc_ops msm_wcn_ops = {
++static struct snd_soc_ops msm_wcn_ops = {
+ 	.hw_params = msm_wcn_hw_params,
+-};*/
++};
+ 
+ static struct snd_soc_ops msm_wcn_ops_lito = {
+ 	.hw_params = msm_wcn_hw_params_lito,
+@@ -5813,7 +5837,6 @@
+ 	SND_SOC_DAPM_MIC("Digital Mic7", NULL),
+ };
+ 
+-#if 0
+ static int msm_wcn_init(struct snd_soc_pcm_runtime *rtd)
+ {
+ 	unsigned int rx_ch[WCN_CDC_SLIM_RX_CH_MAX] = {157, 158};
+@@ -5823,7 +5846,6 @@
+ 	return snd_soc_dai_set_channel_map(codec_dai, ARRAY_SIZE(tx_ch),
+ 					   tx_ch, ARRAY_SIZE(rx_ch), rx_ch);
+ }
+-#endif
+ 
+ static int msm_wcn_init_lito(struct snd_soc_pcm_runtime *rtd)
+ {
+@@ -5852,11 +5874,14 @@
+ 	return entry;
+ }
+ 
+-static void *def_wcd_mbhc_cal(void)
++static void *def_wcd_mbhc_cal(struct snd_soc_component *component)
+ {
+ 	void *wcd_mbhc_cal;
+ 	struct wcd_mbhc_btn_detect_cfg *btn_cfg;
++	struct device *cdev = component ? component->dev : NULL;
++	struct of_phandle_args args;
+ 	u16 *btn_high;
++	int i, ret;
+ 
+ 	wcd_mbhc_cal = kzalloc(WCD_MBHC_CAL_SIZE(WCD_MBHC_DEF_BUTTONS,
+ 				WCD9XXX_MBHC_DEF_RLOADS), GFP_KERNEL);
+@@ -5878,6 +5903,31 @@
+ 	btn_high[6] = 500;
+ 	btn_high[7] = 500;
+ 
++	if (!cdev || !cdev->of_node)
++		return wcd_mbhc_cal;
++
++	/*
++	 * a52sxq: Samsung 5.4 takes the button thresholds from the codec node:
++	 * mbhc-button-thres = <&det_zones normal factory> x 8 (#list-det-cells = 2).
++	 * CONFIG_SEC_FACTORY is off in the ROM kernel, so the first cell is used.
++	 */
++	for (i = 0; i < WCD_MBHC_DEF_BUTTONS; i++) {
++		ret = of_parse_phandle_with_args(cdev->of_node,
++			"mbhc-button-thres", "#list-det-cells", i, &args);
++		if (ret < 0) {
++			pr_info("%s: btn_high[%d] = %d (default)\n",
++					__func__, i, btn_high[i]);
++			continue;
++		}
++		of_node_put(args.np);
++		if (args.args_count < 1)
++			continue;
++
++		btn_high[i] = args.args[0];
++		pr_info("%s: btn_high[%d] = %d (modified)\n",
++				__func__, i, btn_high[i]);
++	}
++
+ 	return wcd_mbhc_cal;
+ }
+ 
+@@ -6183,8 +6233,9 @@
  		SND_SOC_DAILINK_REG(multimedia9),
  	},
  	{/* hw:x,24 */
@@ -125,7 +280,31 @@
  		.dynamic = 1,
  		.dpcm_playback = 1,
  		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-@@ -6462,6 +6465,16 @@
+@@ -6427,6 +6478,12 @@
+ 		SND_SOC_DAILINK_REG(afepcm_tx1),
+ 	},
+         {/* hw:x,43 */
++		/*
++		 * a52sxq: as on the phone's 5.4 kernel (Samsung): hw:43 keeps the name
++		 * "Compress3" but is a second PCM front end of MultiMedia10 on
++		 * msm-pcm-dsp.1 (mixer_paths routes this use case through
++		 * "... Audio Mixer MultiMedia10"), not MultiMedia20 on msm-compress-dsp.
++		 */
+ 		.name = "Compress3",
+ 		.stream_name = "Compress3",
+ 		.dynamic = 1,
+@@ -6436,8 +6493,8 @@
+ 		.ignore_suspend = 1,
+ 		.ignore_pmdown_time = 1,
+ 		/* this dainlink has playback support */
+-		.id = MSM_FRONTEND_DAI_MULTIMEDIA20,
+-		SND_SOC_DAILINK_REG(multimedia20),
++		.id = MSM_FRONTEND_DAI_MULTIMEDIA10,
++		SND_SOC_DAILINK_REG(multimedia10),
+ 	},
+ 	{/* hw:x,44 */
+ 		.name = "Secondary MI2S_TX Hostless",
+@@ -6462,6 +6519,16 @@
  		.ignore_pmdown_time = 1,
  		SND_SOC_DAILINK_REG(display_port_hostless),
  	},
@@ -142,7 +321,28 @@
  };
  
  static struct snd_soc_dai_link msm_common_be_dai_links[] = {
-@@ -6827,6 +6840,20 @@
+@@ -6731,7 +6798,11 @@
+ 	},
+ };
+ 
+-#if 0
++/*
++ * a52sxq: the 5.4 Bluetooth back ends (SLIMBUS_7_RX/TX on the bt_fm_slim codec, device
++ * name "btfmslim_slave"). 5.4 adds them for qcom,wcn-bt = <1>; here they are added for
++ * qcom,wcn-btfm (see populate_snd_card_dailinks).
++ */
+ static struct snd_soc_dai_link msm_wcn_be_dai_links[] = {
+ 	{
+ 		.name = LPASS_BE_SLIMBUS_7_RX,
+@@ -6759,7 +6830,6 @@
+ 		SND_SOC_DAILINK_REG(slimbus_7_tx),
+ 	},
+ };
+-#endif
+ 
+ static struct snd_soc_dai_link msm_wcn_btfm_be_dai_links[] = {
+ 	{
+@@ -6827,6 +6897,20 @@
  	},
  };
  
@@ -163,7 +363,7 @@
  static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
  	{
  		.name = LPASS_BE_PRI_MI2S_RX,
-@@ -6931,6 +6958,9 @@
+@@ -6931,6 +7015,9 @@
  		.dpcm_playback = 1,
  		.id = MSM_BACKEND_DAI_QUINARY_MI2S_RX,
  		.be_hw_params_fixup = msm_be_hw_params_fixup,
@@ -173,7 +373,7 @@
  		.ops = &msm_mi2s_be_ops,
  		.ignore_suspend = 1,
  		.ignore_pmdown_time = 1,
-@@ -7189,6 +7219,9 @@
+@@ -7189,6 +7276,9 @@
  	{
  		.name = LPASS_BE_RX_CDC_DMA_RX_1,
  		.stream_name = LPASS_BE_RX_CDC_DMA_RX_1,
@@ -183,7 +383,7 @@
  		.playback_only = 1,
  		.id = MSM_BACKEND_DAI_RX_CDC_DMA_RX_1,
  		.be_hw_params_fixup = msm_be_hw_params_fixup,
-@@ -7200,6 +7233,9 @@
+@@ -7200,6 +7290,9 @@
  	{
  		.name = LPASS_BE_RX_CDC_DMA_RX_2,
  		.stream_name = LPASS_BE_RX_CDC_DMA_RX_2,
@@ -193,7 +393,7 @@
  		.playback_only = 1,
  		.id = MSM_BACKEND_DAI_RX_CDC_DMA_RX_2,
  		.be_hw_params_fixup = msm_be_hw_params_fixup,
-@@ -7211,6 +7247,9 @@
+@@ -7211,6 +7304,9 @@
  	{
  		.name = LPASS_BE_RX_CDC_DMA_RX_3,
  		.stream_name = LPASS_BE_RX_CDC_DMA_RX_3,
@@ -203,7 +403,7 @@
  		.playback_only = 1,
  		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
  			SND_SOC_DPCM_TRIGGER_POST},
-@@ -7225,6 +7264,9 @@
+@@ -7225,6 +7321,9 @@
  	{
  		.name = LPASS_BE_RX_CDC_DMA_RX_5,
  		.stream_name = LPASS_BE_RX_CDC_DMA_RX_5,
@@ -213,7 +413,7 @@
  		.playback_only = 1,
  		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
  			SND_SOC_DPCM_TRIGGER_POST},
-@@ -7238,6 +7280,9 @@
+@@ -7238,6 +7337,9 @@
  	{
  		.name = LPASS_BE_RX_CDC_DMA_RX_6,
  		.stream_name = LPASS_BE_RX_CDC_DMA_RX_6,
@@ -223,6 +423,307 @@
  		.playback_only = 1,
                  .trigger = {SND_SOC_DPCM_TRIGGER_POST,
  			SND_SOC_DPCM_TRIGGER_POST},
+@@ -7341,7 +7443,7 @@
+ 			ARRAY_SIZE(msm_rx_tx_cdc_dma_be_dai_links) +
+ 			ARRAY_SIZE(msm_va_cdc_dma_be_dai_links) +
+ 			ARRAY_SIZE(ext_disp_be_dai_link) +
+-			//ARRAY_SIZE(msm_wcn_be_dai_links) +
++			ARRAY_SIZE(msm_wcn_be_dai_links) +
+ 			ARRAY_SIZE(msm_afe_rxtx_lb_be_dai_link) +
+ 			ARRAY_SIZE(msm_wcn_btfm_be_dai_links)];
+ 
+@@ -7731,19 +7833,38 @@
+ 				ARRAY_SIZE(msm_afe_rxtx_lb_be_dai_link);
+ 		}
+ 
+-		rc = of_property_read_u32(dev->of_node, "qcom,wcn-btfm",
+-					  &wcn_btfm_intf);
+-		if (rc) {
+-			dev_err(dev, "%s: No DT match wcn btfm interface\n",
++		/*
++		 * a52sxq Bluetooth back ends. "qcom,wcn-btfm;" (no value) or
++		 * "qcom,wcn-btfm = <1>": the 5.4 set, SLIMBUS_7_RX + SLIMBUS_7_TX
++		 * (what 5.4 adds for qcom,wcn-bt = <1>). "qcom,wcn-btfm = <2>":
++		 * the Qualcomm 6.12 set, which also has SLIMBUS_8_TX (FM).
++		 * qcom,wcn-bt stays ignored on purpose: the board tree has always
++		 * carried it, and a link whose codec (bt_fm_slim.ko, "btfmslim_slave")
++		 * is not loaded keeps the whole card deferred. Set qcom,wcn-btfm only
++		 * in builds that load bam_dma, slimbus, slim-qcom-ngd-ctrl, bt_fm_slim.
++		 */
++		if (!of_property_present(dev->of_node, "qcom,wcn-btfm")) {
++			dev_info(dev, "%s: No DT match wcn btfm interface\n",
+ 				__func__);
+ 		} else {
+-			if (wcn_btfm_intf) {
++			wcn_btfm_intf = 1;
++			of_property_read_u32(dev->of_node, "qcom,wcn-btfm",
++					     &wcn_btfm_intf);
++			if (wcn_btfm_intf == 2) {
+ 				memcpy(msm_lahaina_dai_links + total_links,
+ 					msm_wcn_btfm_be_dai_links,
+ 					sizeof(msm_wcn_btfm_be_dai_links));
+ 				total_links +=
+ 					ARRAY_SIZE(msm_wcn_btfm_be_dai_links);
++			} else if (wcn_btfm_intf) {
++				memcpy(msm_lahaina_dai_links + total_links,
++					msm_wcn_be_dai_links,
++					sizeof(msm_wcn_be_dai_links));
++				total_links +=
++					ARRAY_SIZE(msm_wcn_be_dai_links);
+ 			}
++			dev_info(dev, "%s: wcn btfm back ends: mode %u\n",
++				 __func__, wcn_btfm_intf);
+ 		}
+ 		dailink = msm_lahaina_dai_links;
+ 	} else if(!strcmp(match->data, "stub_codec")) {
+@@ -8017,7 +8138,7 @@
+ 	msm_common_dai_link_init(rtd);
+ 	pr_err("%s : codec_reg_done = true \n",__func__);
+ 
+-	mbhc_calibration = def_wcd_mbhc_cal();
++	mbhc_calibration = def_wcd_mbhc_cal(component);
+ 	if (!mbhc_calibration)
+ 		return -ENOMEM;
+ 	wcd_mbhc_cfg.calibration = mbhc_calibration;
+@@ -8083,6 +8204,70 @@
+ }
+ #endif
+ 
++/*
++ * a52sxq: /proc/asound/cardN/state. On 5.4 (CONFIG_AUDIO_QGKI) sound/core
++ * created this entry ("ONLINE\n"/"OFFLINE\n", poll wakes with POLLPRI on a
++ * change) and the vendor HAL's sndmonitor polls it to follow ADSP SSR. The
++ * 6.12 GKI core has no such entry, so the machine driver provides it.
++ */
++#define MSM_CARD_STATE_MAX_LEN 16
++
++static DECLARE_WAIT_QUEUE_HEAD(msm_card_state_wq);
++static atomic_t msm_card_state_changed;
++static bool msm_card_offline;
++
++static ssize_t msm_card_state_read(struct snd_info_entry *entry,
++			void *file_private_data, struct file *file,
++			char __user *buf, size_t count, loff_t pos)
++{
++	char buffer[MSM_CARD_STATE_MAX_LEN];
++	int len;
++
++	len = scnprintf(buffer, sizeof(buffer), "%s\n",
++			READ_ONCE(msm_card_offline) ? "OFFLINE" : "ONLINE");
++	return simple_read_from_buffer(buf, count, &pos, buffer, len);
++}
++
++static __poll_t msm_card_state_poll(struct snd_info_entry *entry,
++			void *file_private_data, struct file *file,
++			poll_table *wait)
++{
++	poll_wait(file, &msm_card_state_wq, wait);
++	if (atomic_xchg(&msm_card_state_changed, 0))
++		return EPOLLIN | EPOLLPRI | EPOLLRDNORM;
++	return 0;
++}
++
++static const struct snd_info_entry_ops msm_card_state_ops = {
++	.read = msm_card_state_read,
++	.poll = msm_card_state_poll,
++};
++
++static void msm_card_state_set(bool offline)
++{
++	WRITE_ONCE(msm_card_offline, offline);
++	atomic_set(&msm_card_state_changed, 1);
++	wake_up_interruptible(&msm_card_state_wq);
++}
++
++static void msm_card_state_proc_init(struct snd_soc_card *card)
++{
++	struct snd_info_entry *entry;
++
++	if (!card->snd_card || !card->snd_card->proc_root)
++		return;
++
++	entry = snd_info_create_card_entry(card->snd_card, "state",
++					   card->snd_card->proc_root);
++	if (!entry)
++		return;
++	entry->size = MSM_CARD_STATE_MAX_LEN;
++	entry->content = SNDRV_INFO_CONTENT_DATA;
++	entry->c.ops = &msm_card_state_ops;
++	if (snd_info_register(entry) < 0)
++		snd_info_free_entry(entry);
++}
++
+ static int lahaina_ssr_enable(struct device *dev, void *data)
+ {
+ 	struct platform_device *pdev = to_platform_device(dev);
+@@ -8101,6 +8286,7 @@
+ 	}
+ 
+ 	snd_card_notify_user(SND_CARD_STATUS_ONLINE);
++	msm_card_state_set(false);
+         dev_err(dev, "%s: setting snd_card to ONLINE\n", __func__);
+ 
+ err:
+@@ -8119,6 +8305,7 @@
+ 
+ 	dev_dbg(dev, "%s: setting snd_card to OFFLINE\n", __func__);
+ 	snd_card_notify_user(SND_CARD_STATUS_OFFLINE);
++	msm_card_state_set(true);
+ 
+ 	if (!strcmp(card->name, "lahaina-stub-snd-card")) {
+ 		/* TODO */
+@@ -8401,6 +8588,7 @@
+ 	}
+ 	dev_info(&pdev->dev, "%s: Sound card %s registered\n",
+ 		 __func__, card->name);
++	msm_card_state_proc_init(card);
+ 
+ 	ret = of_property_read_u32(pdev->dev.of_node, "qcom,tdm-max-slots",
+ 				   &pdata->tdm_max_slots);
+--- a/asoc/msm-dai-fe.c
++++ b/asoc/msm-dai-fe.c
+@@ -2405,8 +2405,12 @@
+ 			.rate_min =	8000,
+ 			.rate_max = 384000,
+ 		},
+-		.ops = &msm_fe_compress_dai_ops,
+-		//.compress_new = msm_compr_new,
++		/*
++		 * a52sxq: hw:24 is the Samsung HAL's primary-playback PCM. 5.4 drops
++		 * .compress_new here under CONFIG_SEC_SND_PRIMARY (and the machine link
++		 * is MultiMedia11 on msm-pcm-dsp.0), so this must be a PCM front end.
++		 */
++		.ops = &msm_fe_Multimedia_dai_ops,
+ 		.name = "MultiMedia11",
+ 	},
+ 	{
+--- a/asoc/msm-pcm-afe-v2.c
++++ b/asoc/msm-pcm-afe-v2.c
+@@ -13,7 +13,7 @@
+ #include <linux/platform_device.h>
+ #include <linux/slab.h>
+ #include <linux/dma-mapping.h>
+-#include <linux/sockptr.h>
++#include <linux/uio.h>
+ #include <linux/version.h>
+ 
+ #include <sound/core.h>
+@@ -505,23 +505,18 @@
+ 	struct pcm_afe_info *prtd = runtime->private_data;
+ 	char *hwbuf = runtime->dma_area + hwoff;
+ 	u32 mem_map_handle = 0;
+-	sockptr_t sockbuf = KERNEL_SOCKPTR((void *)iter);
+ 
+ 	pr_debug("%s : appl_ptr 0x%lx hw_ptr 0x%lx dest_to_copy 0x%pK\n",
+ 		__func__,
+ 		runtime->control->appl_ptr, runtime->status->hw_ptr, hwbuf);
+ 
+-	if (sockptr_is_kernel(sockbuf)) {
+-		pr_debug("%s kernel pointer %p\n", __func__, iter);
+-		memcpy(hwbuf, iter, fbytes);
+-	} else {
+-		pr_debug("%s user pointer %p\n", __func__, iter);
+-		if (copy_from_iter(hwbuf, fbytes, iter)) {
+-			pr_err("%s :Failed to copy audio from iter buffer\n",
+-				__func__);
+-			ret = -EFAULT;
+-			goto fail;
+-		}
++	/* a52sxq: iter is the iov_iter itself, not the data; copy_*_iter handles
++	 * both user and kernel iterators and returns the byte count. */
++	if (copy_from_iter(hwbuf, fbytes, iter) != fbytes) {
++		pr_err("%s :Failed to copy audio from iter buffer\n",
++			__func__);
++		ret = -EFAULT;
++		goto fail;
+ 	}
+ 
+ 	if (!prtd->mmap_flag) {
+@@ -567,7 +562,6 @@
+ 	int port_id = cpu_dai->id;
+ 	char *hwbuf = runtime->dma_area + hwoff;
+ 	u32 mem_map_handle = 0;
+-	sockptr_t sockbuf = KERNEL_SOCKPTR((void *)iter);
+ 
+ 	if (!prtd->mmap_flag) {
+ 		mem_map_handle = afe_req_mmap_handle(prtd->audio_client);
+@@ -610,16 +604,10 @@
+ 			__func__, runtime->control->appl_ptr,
+ 			runtime->status->hw_ptr, hwbuf);
+ 
+-	if (sockptr_is_kernel(sockbuf)) {
+-		pr_debug("%s kernel pointer %p\n", __func__, iter);
+-		memcpy(iter, hwbuf, fbytes);
+-	} else {
+-		pr_debug("%s user pointer %p\n", __func__, iter);
+-		if (copy_to_iter(hwbuf, fbytes, iter)) {
+-			pr_err("%s: copy to iter failed\n", __func__);
+-			goto fail;
+-			ret = -EFAULT;
+-		}
++	if (copy_to_iter(hwbuf, fbytes, iter) != fbytes) {
++		pr_err("%s: copy to iter failed\n", __func__);
++		ret = -EFAULT;
++		goto fail;
+ 	}
+ 
+ fail:
+--- a/asoc/msm-pcm-q6-noirq.c
++++ b/asoc/msm-pcm-q6-noirq.c
+@@ -471,7 +471,6 @@
+ 	struct audio_port_data *apd;
+ 	struct audio_buffer *ab;
+ 	int dir = -1;
+-	struct file *fptr = NULL;
+ 	struct dma_buf *buf = NULL;
+ 	int rc = 0;
+ 
+@@ -499,31 +498,31 @@
+ 	 * This was the flag used by previous internal wrapper API, which
+ 	 * used to call dma_buf_fd internally.
+ 	 */
+-	mmap_fd->fd = dma_buf_fd(ab->mem_handle, O_CLOEXEC);
++	buf = (struct dma_buf *)ab->mem_handle;
++	if (IS_ERR_OR_NULL(buf) || !buf->file) {
++		pr_err("%s: no dma_buf for the mmap session\n", __func__);
++		return -EINVAL;
++	}
++	/*
++	 * a52sxq: add write permission before the fd is visible to user space,
++	 * and give the fd its own reference. The donor did fget() after
++	 * dma_buf_fd() and never dropped it, so the buffer was never freed.
++	 */
++	buf->file->f_mode |= FMODE_WRITE;
++	get_dma_buf(buf);
++	mmap_fd->fd = dma_buf_fd(buf, O_CLOEXEC);
+ 	if (mmap_fd->fd < 0) {
+ 		pr_err("%s: dma_buf_fd failed, fd:%d\n",
+ 			__func__, mmap_fd->fd);
++		dma_buf_put(buf);
+ 		rc = -EFAULT;
+ 		goto buf_fd_fail;
+ 	}
+ 
+-	/* Add write permission to the file descriptor */
+-	fptr = fget(mmap_fd->fd);
+-	if (!fptr)
+-		return -EBADF;
+-	fptr->f_mode = fptr->f_mode | FMODE_WRITE;
+-
+ 	mmap_fd->dir = dir;
+ 	mmap_fd->actual_size = ab->actual_size;
+ 	mmap_fd->size = ab->size;
+ 
+-	buf = dma_buf_get(mmap_fd->fd);
+-	if (IS_ERR_OR_NULL(buf)) {
+-		pr_err("%s: dma_buf_get failed, fd:%d\n",
+-			__func__, mmap_fd->fd);
+-		rc = -EINVAL;
+-	}
+-
+ buf_fd_fail:
+         return rc;
+ }
 --- a/asoc/msm-pcm-routing-v2.c
 +++ b/asoc/msm-pcm-routing-v2.c
 @@ -30396,6 +30396,11 @@
@@ -666,6 +1167,23 @@
  			INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
  		endif
  		ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+--- a/asoc/codecs/wcd-mbhc-v2.c
++++ b/asoc/codecs/wcd-mbhc-v2.c
+@@ -712,8 +712,12 @@
+ 					&mbhc->zl, &mbhc->zr);
+ 			WCD_MBHC_REG_UPDATE_BITS(WCD_MBHC_FSM_EN,
+ 						 fsm_en);
+-			if ((mbhc->zl > mbhc->mbhc_cfg->linein_th) &&
+-				(mbhc->zr > mbhc->mbhc_cfg->linein_th) &&
++			/* a52sxq: Samsung 5.4 guard, a floating reading is
++			 * not a line-out */
++			if ((mbhc->zl > mbhc->mbhc_cfg->linein_th &&
++				mbhc->zl < MAX_IMPED) &&
++				(mbhc->zr > mbhc->mbhc_cfg->linein_th &&
++				 mbhc->zr < MAX_IMPED) &&
+ 				(jack_type == SND_JACK_HEADPHONE)) {
+ 				jack_type = SND_JACK_LINEOUT;
+ 				mbhc->force_linein = true;
 --- a/asoc/codecs/aqt1000/Kbuild
 +++ b/asoc/codecs/aqt1000/Kbuild
 @@ -19,19 +19,19 @@
@@ -749,6 +1267,53 @@
  		INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
  	endif
  endif
+--- a/asoc/codecs/bolero/bolero-cdc.c
++++ b/asoc/codecs/bolero/bolero-cdc.c
+@@ -1378,6 +1378,35 @@
+ 	struct clk *lpass_core_hw_vote = NULL;
+ 	struct clk *lpass_audio_hw_vote = NULL;
+ 
++	/*
++	 * a52sxq 6.12 (2026-11-18): the two hw-vote clocks come from audio-ref-clk siblings
++	 * (vote_lpass_core_hw / vote_lpass_audio_hw). Below, a failed devm_clk_get() is swallowed
++	 * (clock NULL, probe 0). On the real boot bolero-cdc probed 2 ms BEFORE its providers, so
++	 * both votes stayed NULL: bolero_runtime_resume() voted nothing and
++	 * bolero_check_core_votes() still said "ok". Every macro register access outside an active
++	 * stream then hit an unclocked LPASS block = silent SoC reset: the audio HAL reads all
++	 * mixer controls at start ("IIR0 Band1" is the first with a raw register read), harmless at
++	 * boot while the votes are still up, fatal on any later HAL restart (`stop`/`start`,
++	 * audioserver crash, tinymix). Defer until the providers are bound; a clock that is absent
++	 * from the DT (-ENOENT) keeps the old behaviour. Same fix as pinctrl-lpi (rb31).
++	 */
++	{
++		static const char * const votes[] = { "lpass_core_hw_vote", "lpass_audio_hw_vote" };
++		struct clk *c;
++		int i;
++
++		for (i = 0; i < ARRAY_SIZE(votes); i++) {
++			c = clk_get(&pdev->dev, votes[i]);
++			if (IS_ERR(c)) {
++				if (PTR_ERR(c) == -EPROBE_DEFER)
++					return dev_err_probe(&pdev->dev, -EPROBE_DEFER,
++						"%s provider not bound yet\n", votes[i]);
++			} else {
++				clk_put(c);
++			}
++		}
++	}
++
+ 	priv = devm_kzalloc(&pdev->dev, sizeof(struct bolero_priv),
+ 			    GFP_KERNEL);
+ 	if (!priv)
+@@ -1452,7 +1481,7 @@
+ 	lpass_core_hw_vote = devm_clk_get(&pdev->dev, "lpass_core_hw_vote");
+ 	if (IS_ERR(lpass_core_hw_vote)) {
+ 		ret = PTR_ERR(lpass_core_hw_vote);
+-		dev_dbg(&pdev->dev, "%s: clk get %s failed %d\n",
++		dev_warn(&pdev->dev, "%s: clk get %s failed %d: macro registers are NOT clock-voted\n",
+ 			__func__, "lpass_core_hw_vote", ret);
+ 		lpass_core_hw_vote = NULL;
+ 		ret = 0;
 --- a/asoc/codecs/bolero/rx-macro.c
 +++ b/asoc/codecs/bolero/rx-macro.c
 @@ -3195,6 +3195,17 @@
@@ -769,6 +1334,58 @@
  	SOC_SINGLE_S8_TLV("RX_RX2 Digital Volume",
  			  BOLERO_CDC_RX_RX2_RX_VOL_CTL,
  			  -84, 40, digital_gain),
+@@ -4210,6 +4221,15 @@
+ 		return -EPROBE_DEFER;
+ 	}
+ 
++	/* a52sxq: on 6.12 the board DT lists bolero-clk-rsc-mngr last, so do
++	 * not rely on child order: the SoundWire master needs its clocks. */
++	if (!bolero_get_rsc_clk_device_ptr(pdev->dev.parent)) {
++		dev_dbg(&pdev->dev,
++			"%s: bolero clk rsc mngr not registered yet, defer\n",
++			__func__);
++		return -EPROBE_DEFER;
++	}
++
+ 	rx_priv = devm_kzalloc(&pdev->dev, sizeof(struct rx_macro_priv),
+ 			    GFP_KERNEL);
+ 	if (!rx_priv)
+--- a/asoc/codecs/bolero/tx-macro.c
++++ b/asoc/codecs/bolero/tx-macro.c
+@@ -3641,6 +3641,15 @@
+ 		return -EPROBE_DEFER;
+ 	}
+ 
++	/* a52sxq: on 6.12 the board DT lists bolero-clk-rsc-mngr last, so do
++	 * not rely on child order: the SoundWire master needs its clocks. */
++	if (!bolero_get_rsc_clk_device_ptr(pdev->dev.parent)) {
++		dev_dbg(&pdev->dev,
++			"%s: bolero clk rsc mngr not registered yet, defer\n",
++			__func__);
++		return -EPROBE_DEFER;
++	}
++
+ 	tx_priv = devm_kzalloc(&pdev->dev, sizeof(struct tx_macro_priv),
+ 			    GFP_KERNEL);
+ 	if (!tx_priv)
+--- a/asoc/codecs/bolero/wsa-macro.c
++++ b/asoc/codecs/bolero/wsa-macro.c
+@@ -3227,6 +3227,15 @@
+ 		return -EPROBE_DEFER;
+ 	}
+ 
++	/* a52sxq: on 6.12 the board DT lists bolero-clk-rsc-mngr last, so do
++	 * not rely on child order: the SoundWire master needs its clocks. */
++	if (!bolero_get_rsc_clk_device_ptr(pdev->dev.parent)) {
++		dev_dbg(&pdev->dev,
++			"%s: bolero clk rsc mngr not registered yet, defer\n",
++			__func__);
++		return -EPROBE_DEFER;
++	}
++
+ 	wsa_priv = devm_kzalloc(&pdev->dev, sizeof(struct wsa_macro_priv),
+ 				GFP_KERNEL);
+ 	if (!wsa_priv)
 --- a/asoc/codecs/csra66x0/Kbuild
 +++ b/asoc/codecs/csra66x0/Kbuild
 @@ -17,7 +17,7 @@
@@ -908,6 +1525,22 @@
  		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
  	endif
  
+--- a/asoc/codecs/wcd938x/wcd938x-mbhc.c
++++ b/asoc/codecs/wcd938x/wcd938x-mbhc.c
+@@ -665,10 +665,11 @@
+ 		mbhc->hph_type = WCD_MBHC_HPH_MONO;
+ 	}
+ 
+-	/* Enable surge protection again after impedance detection */
++zdet_complete:
++	/* Enable surge protection again after impedance detection.
++	 * a52sxq: on every exit; the mono/floating exits used to skip it. */
+ 	regmap_update_bits(wcd938x->regmap,
+ 			   WCD938X_HPH_SURGE_HPHLR_SURGE_EN, 0xC0, 0xC0);
+-zdet_complete:
+ 	snd_soc_component_write(component, WCD938X_ANA_MBHC_BTN5, reg0);
+ 	snd_soc_component_write(component, WCD938X_ANA_MBHC_BTN6, reg1);
+ 	snd_soc_component_write(component, WCD938X_ANA_MBHC_BTN7, reg2);
 --- a/asoc/codecs/wcd938x/wcd938x.c
 +++ b/asoc/codecs/wcd938x/wcd938x.c
 @@ -3669,13 +3669,18 @@
@@ -976,6 +1609,57 @@
  	{"AMIC7_MIXER", "Switch", "AMIC7"},
  	{"AMIC7_MIXER", NULL, "VA_AMIC7_MIXER"},
  	{"VA_AMIC7_MIXER", "Switch", "VA AMIC7"},
+@@ -4636,18 +4641,30 @@
+ 	ret =  wcd938x_reset(dev);
+ 	if (ret == -EPROBE_DEFER) {
+ 		dev_err(dev, "%s: wcd reset failed!\n", __func__);
+-		goto err_lock_init;
++		goto err_reset;
+ 	}
+ 
+ 	wcd938x->wakeup = wcd938x_wakeup;
+ 
+-	return component_master_add_with_match(dev,
+-					&wcd938x_comp_ops, match);
++	ret = component_master_add_with_match(dev, &wcd938x_comp_ops, match);
++	if (ret)
++		goto err_reset;
+ 
++	return 0;
++
++err_reset:
++	/* hold the codec in reset before cutting its rails, so the IO pad is
++	 * not back-driven and the next probe pulses reset again */
++	wcd938x_reset_low(dev);
+ err_lock_init:
+ 	mutex_destroy(&wcd938x->micb_lock);
+ 	mutex_destroy(&wcd938x->wakeup_lock);
+ err:
++	/* a52sxq: every path here comes after the static supply enable. The
++	 * supplies are devm; leaving them enabled makes regulator_put WARN and
++	 * leaks one enable per probe deferral. */
++	msm_cdc_disable_static_supplies(dev, wcd938x->supplies,
++					pdata->regulator, pdata->num_supplies);
+ 	return ret;
+ }
+ 
+@@ -4659,9 +4676,16 @@
+ #endif
+ {
+ 	struct wcd938x_priv *wcd938x = NULL;
++	struct wcd938x_pdata *pdata = dev_get_platdata(&pdev->dev);
+ 
+ 	wcd938x = platform_get_drvdata(pdev);
+ 	component_master_del(&pdev->dev, &wcd938x_comp_ops);
++	if (pdata) {
++		wcd938x_reset_low(&pdev->dev);
++		msm_cdc_disable_static_supplies(&pdev->dev, wcd938x->supplies,
++						pdata->regulator,
++						pdata->num_supplies);
++	}
+ 	mutex_destroy(&wcd938x->micb_lock);
+ 	mutex_destroy(&wcd938x->wakeup_lock);
+ 	dev_set_drvdata(&pdev->dev, NULL);
 --- a/asoc/codecs/wsa883x/Kbuild
 +++ b/asoc/codecs/wsa883x/Kbuild
 @@ -20,7 +20,7 @@
@@ -1075,6 +1759,34 @@
  
  CDEFINES +=	-DANI_LITTLE_BYTE_ENDIAN \
  		-DANI_LITTLE_BIT_ENDIAN \
+--- a/dsp/adsp-loader.c
++++ b/dsp/adsp-loader.c
+@@ -89,8 +89,12 @@
+ 		if (!adsp_dev)
+ 			return;
+ 
+-		rproc_shutdown(adsp_dev);
+-		adsp_loader_do(adsp_private);
++		/* a52sxq: 5.4 did subsystem_restart_dev() here, a real SSR.
++		 * rproc_shutdown() only drops one power reference (others are
++		 * held by dsp_boot/subsys_compat), so nothing restarted. The
++		 * crash path ignores the refcount and follows the recovery
++		 * setting; PDR down/up then drives the APR state as on 5.4. */
++		rproc_report_crash(adsp_dev, RPROC_FATAL_ERROR);
+ 		dev_dbg(&pdev->dev, "%s: ADSP restarted\n", __func__);
+ 	}
+ 	else
+@@ -240,8 +244,8 @@
+ 	dev_err(&pdev->dev, "requesting for ADSP restart\n");
+ 
+ 	priv->ssr_triggered = true;
+-	rproc_shutdown(adsp_dev);
+-	adsp_loader_do(adsp_private);
++	/* a52sxq: real SSR as on 5.4 (see adsp_load_state_notify_cb) */
++	rproc_report_crash(adsp_dev, RPROC_FATAL_ERROR);
+ 
+ 	dev_dbg(&pdev->dev, "%s :: ADSP restarted\n", __func__);
+ 	return count;
 --- a/dsp/msm_audio_ion.c
 +++ b/dsp/msm_audio_ion.c
 @@ -201,7 +201,7 @@
@@ -1111,7 +1823,16 @@
  			if (rc) {
  				pr_err("%s: Unable to unmap ion mem rc: %d\n",
  				       __func__, rc);
-@@ -399,7 +411,8 @@
+@@ -371,6 +383,8 @@
+ 	if (rc) {
+ 		pr_err("%s: kernel mapping of dma_buf failed\n",
+ 		       __func__);
++		dma_buf_end_cpu_access((struct dma_buf *)handle,
++				       DMA_BIDIRECTIONAL);
+ 		goto exit;
+ 	}
+ 
+@@ -399,7 +413,8 @@
  	struct reserved_mem *rmem = NULL;
  	u64 size = 0;
  	struct device_node *node = NULL;
@@ -1121,7 +1842,20 @@
  	struct qcom_scm_vmperm destVM[2] = {{VMID_MSS_MSA, PERM_READ | PERM_WRITE},
  		{VMID_HLOS, PERM_READ | PERM_WRITE}};
  	node = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
-@@ -729,7 +742,18 @@
+@@ -451,10 +466,9 @@
+ 		pr_err("%s: ION memory mapping for AUDIO failed, err:%d\n",
+ 				__func__, rc);
+ 		rc = -ENOMEM;
+-		mutex_lock(&(msm_audio_ion_data.list_mutex));
+-		//msm_audio_dma_buf_unmap(dma_buf, ion_data);
++		/* a52sxq: msm_audio_dma_buf_unmap() takes list_mutex itself
++		 * (as on 5.4, no lock here) */
+ 		msm_audio_dma_buf_unmap((struct dma_buf *)handle, false);
+-		mutex_unlock(&(msm_audio_ion_data.list_mutex));
+ 		goto err;
+ 	}
+ 
+@@ -729,7 +743,18 @@
  		}
  	}
  
@@ -1732,7 +2466,31 @@
  	*cal_block = cal_utils_get_only_cal_block(
  		common.cal_data[cal_block_idx]);
  	if (*cal_block == NULL) {
-@@ -7147,6 +7167,10 @@
+@@ -3879,7 +3899,13 @@
+ 		goto done;
+ 	}
+ 
+-	mutex_lock(&common.common_lock);
++	/*
++	 * a52sxq: not common_lock (5.4 took no lock here):
++	 * voc_register_vocproc_vol_table() holds common_lock and gets here via
++	 * voice_get_cal() -> remap_cal_data(), which deadlocked. cal_map_lock
++	 * is a leaf lock; never take common_lock or v->lock under it.
++	 */
++	mutex_lock(&common.cal_map_lock);
+ 	v = &common.voice[voc_index];
+ 
+ 	result = voice_map_memory_physical_cmd(v,
+@@ -3898,7 +3924,7 @@
+ 
+ 	cal_block->map_data.q6map_handle = common.cal_mem_handle;
+ done_unlock:
+-	mutex_unlock(&common.common_lock);
++	mutex_unlock(&common.cal_map_lock);
+ done:
+ 	return result;
+ }
+@@ -7147,6 +7173,10 @@
  
  		pr_debug("%s: VOC_STATE: %d\n", __func__, v->voc_state);
  
@@ -1743,7 +2501,16 @@
  		ret = voice_destroy_vocproc(v);
  		if (ret < 0)
  			pr_err("%s:  destroy voice failed\n", __func__);
-@@ -7611,6 +7635,10 @@
+@@ -7298,7 +7328,7 @@
+ 				mutex_unlock(&common.cal_data[CVP_VOCPROC_CAL]->lock);
+ 				goto done;
+ 			}
+-			ret = qcom_scm_assign_mem(cal_block->cal_data.paddr,
++			result = qcom_scm_assign_mem(cal_block->cal_data.paddr,
+ 					cal_block->map_data.map_size,
+ 					&src_vmid_list, dst_vmids, ARRAY_SIZE(dst_vmids));
+ 			if (result < 0) {
+@@ -7611,6 +7641,10 @@
  			goto fail;
  		}
  
@@ -1754,7 +2521,7 @@
  		v->voc_state = VOC_RUN;
  	} else {
  		pr_err("%s: Error: Start voice called in state %d\n",
-@@ -10103,7 +10131,13 @@
+@@ -10103,7 +10137,13 @@
  	if (mem_hdr != NULL) {
  		set_param->mem_hdr = *mem_hdr;
  	} else if (param_data != NULL) {
@@ -1769,6 +2536,22 @@
  	} else {
  		pr_err("%s: Both memory header and param data are NULL\n",
  		       __func__);
+@@ -10322,6 +10362,7 @@
+ 	common.rec_channel_count = NUM_CHANNELS_MONO;
+ 
+ 	mutex_init(&common.common_lock);
++	mutex_init(&common.cal_map_lock);
+ 
+ 	common.uevent_data = kzalloc(sizeof(*(common.uevent_data)), GFP_KERNEL);
+ 	if (!common.uevent_data)
+@@ -10407,6 +10448,7 @@
+ 	voice_delete_cal_data();
+ 	free_cal_map_table();
+ 	mutex_destroy(&common.common_lock);
++	mutex_destroy(&common.cal_map_lock);
+ 	for (i = 0; i < MAX_VOC_SESSIONS; i++)
+ 		mutex_destroy(&common.voice[i].lock);
+ }
 --- a/dsp/codecs/Kbuild
 +++ b/dsp/codecs/Kbuild
 @@ -19,7 +19,7 @@
@@ -1825,6 +2608,16 @@
  		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
  	endif
  	ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+--- a/include/asoc/wcd-mbhc-v2.h
++++ b/include/asoc/wcd-mbhc-v2.h
+@@ -148,6 +148,7 @@
+ #define FAKE_REM_RETRY_ATTEMPTS 3
+ #define HPHL_CROSS_CONN_THRESHOLD 100
+ #define HPHR_CROSS_CONN_THRESHOLD 100
++#define MAX_IMPED 60000 /* a52sxq: Samsung 5.4, above this Z-det is floating */
+ 
+ #define WCD_MBHC_BTN_PRESS_COMPL_TIMEOUT_MS  50
+ #define ANC_DETECT_RETRY_CNT 7
 --- a/include/dsp/q6asm-v2.h
 +++ b/include/dsp/q6asm-v2.h
 @@ -770,4 +770,7 @@
@@ -1837,7 +2630,16 @@
  #endif /* __Q6_ASM_H__ */
 --- a/include/dsp/q6voice.h
 +++ b/include/dsp/q6voice.h
-@@ -2147,4 +2147,7 @@
+@@ -1979,6 +1979,8 @@
+ 	uint32_t voice_host_pcm_mem_handle;
+ 
+ 	struct mutex common_lock;
++	/* a52sxq: guards cal_mem_map_table/cal_mem_handle in voice_map_cal_memory() */
++	struct mutex cal_map_lock;
+ 
+ 	struct mvs_driver_info mvs_info;
+ 
+@@ -2147,4 +2149,7 @@
  int voc_get_source_tracking(struct source_tracking_param *sourceTrackingData);
  int voc_set_afe_sidetone(uint32_t session_id, bool sidetone_enable);
  bool voc_get_afe_sidetone(void);
@@ -1921,6 +2723,71 @@
  			schedule_work(&apr_priv->add_chld_dev_work);
  		spin_unlock(&apr_priv->apr_lock);
  		snd_event_notify(apr_priv->dev, SND_EVENT_UP);
+@@ -1169,7 +1173,7 @@
+ };
+ 
+ #ifdef CONFIG_DEBUG_FS
+-static int __init apr_debug_init(void)
++static int apr_debug_init(void)
+ {
+ 	debugfs_apr_debug = debugfs_create_file("msm_apr_debug",
+ 						 S_IFREG | 0444, NULL, NULL,
+@@ -1177,7 +1181,7 @@
+ 	return 0;
+ }
+ #else
+-static int __init apr_debug_init(void)
++static int apr_debug_init(void)
+ {
+ 	return 0;
+ }
+@@ -1271,19 +1275,19 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	if (!strcmp(subsys_name, "apr_adsp")) {
+-		subsys_notif_register("apr_adsp",
+-				       AUDIO_NOTIFIER_ADSP_DOMAIN,
+-				       &adsp_service_nb);
+-	} else if (!strcmp(subsys_name, "apr_modem")) {
+-		subsys_notif_register("apr_modem",
+-				       AUDIO_NOTIFIER_MODEM_DOMAIN,
+-				       &modem_service_nb);
+-	} else {
++	if (strcmp(subsys_name, "apr_adsp") && strcmp(subsys_name, "apr_modem")) {
+ 		pr_err("%s: invalid subsys-name %s\n", __func__, subsys_name);
+ 		return -EINVAL;
+ 	}
+ 
++	/*
++	 * a52sxq: finish all local setup before joining the notifier chain.
++	 * With the vendor_boot hold the ADSP is already up when apr probes, so
++	 * the UP callback (apr_adsp_up: snd_event_notify, cancel_work_sync on
++	 * apr_cb_work, child devices that open TAL channels) arrives at once.
++	 */
++	INIT_WORK(&apr_cb_work, state_notify_cb);
++
+ 	apr_tal_init();
+ 
+ 	ret = snd_event_client_register(&pdev->dev, &apr_ssr_ops, NULL);
+@@ -1292,7 +1296,16 @@
+ 			__func__, ret);
+ 		ret = 0;
+ 	}
+-	INIT_WORK(&apr_cb_work, state_notify_cb);
++
++	if (!strcmp(subsys_name, "apr_adsp"))
++		subsys_notif_register("apr_adsp",
++				       AUDIO_NOTIFIER_ADSP_DOMAIN,
++				       &adsp_service_nb);
++	else
++		subsys_notif_register("apr_modem",
++				       AUDIO_NOTIFIER_MODEM_DOMAIN,
++				       &modem_service_nb);
++
+ 	return apr_debug_init();
+ }
+ 
 --- a/soc/Kbuild
 +++ b/soc/Kbuild
 @@ -19,7 +19,7 @@
@@ -1977,3 +2844,52 @@
  			INCS    +=  -include $(AUDIO_ROOT)/config/qcs405autoconf.h
  		endif
  		ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+--- a/soc/pinctrl-lpi.c
++++ b/soc/pinctrl-lpi.c
+@@ -722,6 +722,32 @@
+ 		return -EPROBE_DEFER;
+ 	}
+ 
++	/*
++	 * a52sxq 6.12 (2026-11-18): the hw-vote clocks below come from audio-ref-clk siblings
++	 * (vote_lpass_core_hw / vote_lpass_audio_hw, children of q6core-audio like this device).
++	 * Further down a failed devm_clk_get() is swallowed (clock NULL, probe returns 0), so when
++	 * this device happens to probe before its clock provider (rb28/rb30 real boot, first-stage
++	 * audio set: lpi_pinctrl 1 ms before vote_lpass_core_hw) the LPASS core is never voted,
++	 * every LPI GPIO access fails ("core hw vote clk is not enabled"), the SoundWire pins stay
++	 * unconfigured ("SWR bus clsh") and no sound card registers. Defer until the provider is
++	 * there; a clock that is simply absent from the DT (-ENOENT) keeps the old behaviour.
++	 */
++	{
++		static const char * const votes[] = { "lpass_core_hw_vote", "lpass_audio_hw_vote" };
++		struct clk *c;
++
++		for (i = 0; i < ARRAY_SIZE(votes); i++) {
++			c = clk_get(dev, votes[i]);
++			if (IS_ERR(c)) {
++				if (PTR_ERR(c) == -EPROBE_DEFER)
++					return dev_err_probe(dev, -EPROBE_DEFER,
++						"%s provider not bound yet\n", votes[i]);
++			} else {
++				clk_put(c);
++			}
++		}
++	}
++
+ 	ret = of_property_read_u32(dev->of_node, "reg", &reg);
+ 	if (ret < 0) {
+ 		dev_err(dev, "missing base address\n");
+--- a/soc/swr-mstr-ctrl.c
++++ b/soc/swr-mstr-ctrl.c
+@@ -3831,7 +3831,10 @@
+ 			swrm->req_clk_switch = false;
+ 		mutex_unlock(&swrm->reslock);
+ 		mutex_unlock(&swrm->runtime_lock);
+-		return -ENODEV;
++		/* a52sxq: as on 5.4. A non-zero return latches
++		 * dev->power.runtime_error and every later resume gets -EINVAL;
++		 * returning 0 lets the 1 ms error autosuspend retry. */
++		return 0;
+ 	}
+ 
+ 	if (swrm_request_hw_vote(swrm, LPASS_AUDIO_CORE, true)) {

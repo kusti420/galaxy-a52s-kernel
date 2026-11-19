@@ -33,7 +33,31 @@
  #include <linux/math64.h>
 --- a/kgsl.c
 +++ b/kgsl.c
-@@ -2791,7 +2791,7 @@
+@@ -512,6 +512,11 @@
+ 		ret = kgsl_mmu_get_gpuaddr(pagetable, memdesc);
+ 		if (ret) {
+ 			kgsl_process_private_put(process);
++#ifdef A52_KGSL_ERRNO_DEBUG
++			/* a52 debug: GPU VA allocation failed -> ENOSPC (28), visible in userspace logs */
++			if (ret == -ENOMEM)
++				ret = -ENOSPC;
++#endif
+ 			return ret;
+ 		}
+ 	}
+@@ -561,6 +566,11 @@
+ 
+ 		if (ret) {
+ 			kgsl_mem_entry_detach_process(entry);
++#ifdef A52_KGSL_ERRNO_DEBUG
++			/* a52 debug: IOMMU map (page tables / guard page) failed -> ENOBUFS (105) */
++			if (ret == -ENOMEM)
++				ret = -ENOBUFS;
++#endif
+ 			return ret;
+ 		}
+ 	}
+@@ -2791,7 +2801,7 @@
  	struct kgsl_context *context;
  	long ret;
  
@@ -42,7 +66,7 @@
  		u64_to_user_ptr(param->priv), param->len))
  		return -EFAULT;
  
-@@ -2833,7 +2833,7 @@
+@@ -2833,7 +2843,7 @@
  	if (!kgsl_mem_entry_set_pend(entry))
  		return -EBUSY;
  
@@ -51,7 +75,7 @@
  		u64_to_user_ptr(param->priv), param->len)) {
  		kgsl_mem_entry_unset_pend(entry);
  		return -EFAULT;
-@@ -3187,7 +3187,7 @@
+@@ -3187,7 +3197,7 @@
  		SET_FLAG(KGSL_MEMDESC_SECURE, &entry->memdesc.priv);
  	}
  
@@ -60,7 +84,7 @@
  		u64_to_user_ptr(param->priv), param->priv_len))
  		return -EFAULT;
  
-@@ -3904,7 +3904,7 @@
+@@ -3904,7 +3914,7 @@
  	ptr = u64_to_user_ptr(param->objs);
  
  	for (i = 0; i < param->count; i++) {
@@ -133,6 +157,69 @@
  			return -EFAULT;
  
  		sync.type = syncpoint.type;
+--- a/kgsl_pool.c
++++ b/kgsl_pool.c
+@@ -726,19 +726,53 @@
+ 
+ 	kgsl_pool_cache_init();
+ 
+-	for_each_child_of_node(node, child) {
+-		if (!kgsl_of_parse_mempool(&kgsl_pools[index], child))
+-			index++;
+-
+-		if (index == ARRAY_SIZE(kgsl_pools)) {
+-			of_node_put(child);
+-			break;
++	/*
++	 * a52sxq: the retry logic (kgsl_pool_alloc_page: "pool_idx > 0" -> kgsl_pools[pool_idx - 1],
++	 * kgsl_pool_get_retry_order) assumes kgsl_pools[] in ascending page order. The 6.12 board
++	 * tree lists qcom,gpu-mempool@3..@0 (the overlay merge reverses the children; 5.4 had @0..@3),
++	 * so the 1 MB pool became index 0 and a failed order-8 allocation returned -ENOMEM with no
++	 * fallback: on a fragmented phone every large GPU buffer failed after 3 MB (IchthysOS daily
++	 * phone 2026-11-18: "kgsl: out of memory: only allocated 3072Kb of 18496Kb"). Parse the
++	 * children in ascending qcom,mempool-page-size order instead of tree order.
++	 */
++	{
++		struct device_node *kids[ARRAY_SIZE(kgsl_pools)];
++		u32 sizes[ARRAY_SIZE(kgsl_pools)];
++		int n = 0, a, b;
++
++		for_each_child_of_node(node, child) {
++			u32 sz = 0;
++
++			if (n == ARRAY_SIZE(kgsl_pools)) {
++				of_node_put(child);
++				break;
++			}
++			of_property_read_u32(child, "qcom,mempool-page-size", &sz);
++			kids[n] = of_node_get(child);
++			sizes[n++] = sz;
++		}
++		for (a = 1; a < n; a++) {
++			struct device_node *kn = kids[a];
++			u32 ks = sizes[a];
++
++			for (b = a - 1; b >= 0 && sizes[b] > ks; b--) {
++				kids[b + 1] = kids[b];
++				sizes[b + 1] = sizes[b];
++			}
++			kids[b + 1] = kn;
++			sizes[b + 1] = ks;
++		}
++		for (a = 0; a < n; a++) {
++			if (!kgsl_of_parse_mempool(&kgsl_pools[index], kids[a]))
++				index++;
++			of_node_put(kids[a]);
+ 		}
+ 	}
+ 
+ 	kgsl_num_pools = index;
+ 	of_node_put(node);
+ 
++
+ 	/* Initialize shrinker */
+ 	kgsl_pool_shrinker_init();
+ }
 --- a/kgsl_pwrctrl.c
 +++ b/kgsl_pwrctrl.c
 @@ -5,6 +5,8 @@
@@ -144,7 +231,29 @@
  #include <linux/interconnect.h>
  #include <linux/iopoll.h>
  #include <linux/version.h>
-@@ -1370,6 +1372,70 @@
+@@ -743,13 +745,18 @@
+ 	struct kgsl_device *device = dev_get_drvdata(dev);
+ 	int ret;
+ 
+-	if (gmu_core_gpmu_isenabled(device))
+-		return -EOPNOTSUPP;
+-
+ 	ret = kstrtou32(buf, 0, &val);
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * a52sxq: with a GMU the force flags cannot be honoured (the GMU owns clocks and rails), but
++	 * the ROM's Power HAL writes force_clk_on / force_rail_on on every hint and retries a failed
++	 * node every 0.5 s for ever (5.4 accepted the write). Accept a well-formed value and ignore it.
++	 */
++	if (gmu_core_gpmu_isenabled(device))
++		return count;
++
+ 	kgsl_mutex_lock(&device->mutex);
+ 	__force_on(device, flag, val);
+ 	kgsl_mutex_unlock(&device->mutex);
+@@ -1370,6 +1377,70 @@
  	NULL,
  };
  
@@ -215,7 +324,7 @@
  static GPU_SYSFS_ATTR(gpu_busy, 0444, _gpu_busy_show, NULL);
  static GPU_SYSFS_ATTR(gpu_min_clock, 0644, _min_clock_mhz_show,
  		_min_clock_mhz_store);
-@@ -1378,6 +1444,10 @@
+@@ -1378,6 +1449,10 @@
  static GPU_SYSFS_ATTR(gpu_clock, 0444, _clock_mhz_show, NULL);
  static GPU_SYSFS_ATTR(gpu_freq_table, 0444, _freq_table_mhz_show, NULL);
  static GPU_SYSFS_ATTR(gpu_tmu, 0444, _gpu_tmu_show, NULL);
@@ -226,7 +335,7 @@
  
  static const struct attribute *gpu_sysfs_attr_list[] = {
  	&gpu_sysfs_attr_gpu_busy.attr,
-@@ -1386,6 +1456,8 @@
+@@ -1386,6 +1461,8 @@
  	&gpu_sysfs_attr_gpu_clock.attr,
  	&gpu_sysfs_attr_gpu_freq_table.attr,
  	&gpu_sysfs_attr_gpu_tmu.attr,
@@ -235,3 +344,50 @@
  	NULL,
  };
  
+@@ -2100,27 +2177,33 @@
+ {
+ 	struct kgsl_pwrctrl *pwr = container_of(nb, struct kgsl_pwrctrl, nb_max);
+ 	struct kgsl_device *device = container_of(pwr, struct kgsl_device, pwrctrl);
+-	u32 max_freq = val * 1000;
++	/* val is in kHz; the PM QoS default (S32_MAX) overflows u32 when multiplied */
++	u64 max_freq = (u64)val * 1000;
+ 	int level;
+ 
+-	if (device->host_based_dcvs && !device->pwrscale.devfreq_enabled)
+-		return NOTIFY_DONE;
+-
+-	for (level = pwr->num_pwrlevels - 1; level >= 0; level--) {
+-		/* get nearest power level with a maximum delta of 5MHz */
+-		if (abs(pwr->pwrlevels[level].gpu_freq - max_freq) < 5000000)
++	/*
++	 * a52sxq: levels are sorted fastest first. Take the fastest level that does
++	 * not exceed the limit (5 MHz slack for rounded values such as 320 MHz for
++	 * 315 MHz). A limit at/above level 0, including the "no limit" default,
++	 * lifts the cap; a limit below the slowest level caps at the slowest. The
++	 * donor needed a match within 5 MHz and otherwise kept the old cap, so a
++	 * devfreq max_freq write of 450 MHz followed by 560 MHz (PowerHAL) left the
++	 * GPU capped until reboot.
++	 */
++	for (level = 0; level < (int)pwr->num_pwrlevels - 1; level++)
++		if (pwr->pwrlevels[level].gpu_freq <= max_freq + 5000000ULL)
+ 			break;
+-	}
+-
+-	if (level < 0)
+-		return NOTIFY_DONE;
+ 
+ 	if (level == pwr->pmqos_max_pwrlevel)
+ 		return NOTIFY_OK;
+ 
+-	pwr->pmqos_max_pwrlevel = level;
++	WRITE_ONCE(pwr->pmqos_max_pwrlevel, level);
++
++	trace_kgsl_thermal_constraint(pwr->pwrlevels[level].gpu_freq);
+ 
+-	trace_kgsl_thermal_constraint(max_freq);
++	/* The level is recorded; applying it needs devfreq up (and device->mutex) */
++	if (device->host_based_dcvs && !device->pwrscale.devfreq_enabled)
++		return NOTIFY_OK;
+ 
+ 	/* Apply the constraints only if first boot is done */
+ 	if (!device->ftbl->is_first_boot_done(device))

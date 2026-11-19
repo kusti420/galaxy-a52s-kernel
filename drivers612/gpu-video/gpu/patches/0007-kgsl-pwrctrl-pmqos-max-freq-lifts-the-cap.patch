@@ -1,0 +1,49 @@
+--- a/kgsl_pwrctrl.c
++++ b/kgsl_pwrctrl.c
+@@ -2172,27 +2172,33 @@
+ {
+ 	struct kgsl_pwrctrl *pwr = container_of(nb, struct kgsl_pwrctrl, nb_max);
+ 	struct kgsl_device *device = container_of(pwr, struct kgsl_device, pwrctrl);
+-	u32 max_freq = val * 1000;
++	/* val is in kHz; the PM QoS default (S32_MAX) overflows u32 when multiplied */
++	u64 max_freq = (u64)val * 1000;
+ 	int level;
+ 
+-	if (device->host_based_dcvs && !device->pwrscale.devfreq_enabled)
+-		return NOTIFY_DONE;
+-
+-	for (level = pwr->num_pwrlevels - 1; level >= 0; level--) {
+-		/* get nearest power level with a maximum delta of 5MHz */
+-		if (abs(pwr->pwrlevels[level].gpu_freq - max_freq) < 5000000)
++	/*
++	 * a52sxq: levels are sorted fastest first. Take the fastest level that does
++	 * not exceed the limit (5 MHz slack for rounded values such as 320 MHz for
++	 * 315 MHz). A limit at/above level 0, including the "no limit" default,
++	 * lifts the cap; a limit below the slowest level caps at the slowest. The
++	 * donor needed a match within 5 MHz and otherwise kept the old cap, so a
++	 * devfreq max_freq write of 450 MHz followed by 560 MHz (PowerHAL) left the
++	 * GPU capped until reboot.
++	 */
++	for (level = 0; level < (int)pwr->num_pwrlevels - 1; level++)
++		if (pwr->pwrlevels[level].gpu_freq <= max_freq + 5000000ULL)
+ 			break;
+-	}
+-
+-	if (level < 0)
+-		return NOTIFY_DONE;
+ 
+ 	if (level == pwr->pmqos_max_pwrlevel)
+ 		return NOTIFY_OK;
+ 
+-	pwr->pmqos_max_pwrlevel = level;
++	WRITE_ONCE(pwr->pmqos_max_pwrlevel, level);
+ 
+-	trace_kgsl_thermal_constraint(max_freq);
++	trace_kgsl_thermal_constraint(pwr->pwrlevels[level].gpu_freq);
++
++	/* The level is recorded; applying it needs devfreq up (and device->mutex) */
++	if (device->host_based_dcvs && !device->pwrscale.devfreq_enabled)
++		return NOTIFY_OK;
+ 
+ 	/* Apply the constraints only if first boot is done */
+ 	if (!device->ftbl->is_first_boot_done(device))

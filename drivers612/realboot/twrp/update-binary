@@ -2,17 +2,25 @@
 # SPDX-License-Identifier: GPL-2.0
 # Galaxy A52s 5G (SM-A528B, a52sxq) recovery installer for the Linux 6.12 kernel (LineageOS 24).
 #
-# One script for both zips. a52s-k612.conf in the zip selects the mode:
-#   MODE=install   write the 6.12 boot/vendor_boot/dtbo and install the /vendor add-on
-#   MODE=restore   write the stock LineageOS boot/vendor_boot/dtbo, remove the 6.12 add-on
+# One script for all zips. a52s-k612.conf in the zip selects the mode:
+#   MODE=ak         (2026-11-18, ROM-independent "AnyKernel" zip) read the CURRENT boot/vendor_boot/
+#                   dtbo, keep the ROM's parts (boot ramdisk + header, vendor ramdisk, AVB footer
+#                   salt/props) and put only ours in (kernel, first-stage module fragment, dtb,
+#                   vendor cmdline, dtbo) with bin/a52boot; back the current images up first
+#                   (internal storage, else /cache), install the /vendor add-on
+#   MODE=akrestore  write back the backup the ak install took (the exact images), remove the add-on
+#   MODE=install    (older zips) write the zip's prebuilt 6.12 images and install the /vendor add-on
+#   MODE=restore    (older zips) write the zip's stock LineageOS images, remove the 6.12 add-on
 # Runs under TWRP and LineageOS recovery: POSIX sh (mksh, busybox ash), toybox or busybox tools.
 # Recovery calls it as: update-binary <api> <OUTFD> <zip>. Shebang /system/bin/sh: LineageOS
 # recovery (24.0) has no /sbin/sh; TWRP has /system/bin/sh (and /sbin/sh -> it).
 #
 # What it writes, and only after every check passed: the boot, vendor_boot and dtbo partitions
 # (by-name), the add-on files on /vendor, and a backup directory on internal storage
-# (/sdcard/a52s-k612-backup/<time>). It never formats anything, never writes any other
-# partition and never touches mmcblk* (the microSD card).
+# (/sdcard/a52s-k612-backup/<time>, raw images) or, MODE=ak only, when internal storage is not
+# decrypted, in /cache (/cache/a52s-k612-backup/<time>, zero blocks left out: *.img.a52pack).
+# It never formats anything, never writes any other partition (vbmeta is only read) and never
+# touches mmcblk* (the microSD card).
 #
 # A52S_TESTMODE=1 is only set by twrp/test/run-tests.sh (fake root under bubblewrap): regular
 # files may then stand in for block devices and the stub mount table is read instead of
@@ -36,10 +44,17 @@ PHASE=check
 OWN_MOUNTS=""
 V_MP=""
 V_OWN=0
+VR_FORCE=0
+RESTORE_SET=""
 V_REMOUNTED=0
 BK_DIR=""
 BK_OK=0
 CLEANED=0
+IMG_SRC=""
+RB_DIR=""
+AK=""
+AKEXEC=""
+BK_LOCS="/sdcard /data/media/0 /cache"
 
 # ------------------------------------------------------------------------------ output
 ui_print() {
@@ -63,7 +78,10 @@ cleanup() {
 	done
 	OWN_MOUNTS=""
 	if [ -n "$BK_DIR" ] && [ -d "$BK_DIR" ]; then
-		cp "$LOG" "$BK_DIR/install.log" 2>/dev/null
+		bl=$BK_DIR/install.log
+		n=1
+		while [ -e "$bl" ]; do bl=$BK_DIR/install-$n.log; n=$((n + 1)); done
+		cp "$LOG" "$bl" 2>/dev/null
 		sync
 	fi
 	rm -rf "$W"
@@ -83,6 +101,8 @@ abort() {
 }
 
 trap 'abort "interrupted"' INT TERM HUP
+# world-readable copy of the log on exit (user-build recoveries have no root adb shell; /cache/recovery is readable)
+trap 'cp "$LOG" /cache/recovery/a52s-k612.log 2>/dev/null; chmod 0644 /cache/recovery/a52s-k612.log 2>/dev/null; [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"' EXIT
 
 # ------------------------------------------------------------------------------ helpers
 sha() { sha256sum "$1" 2>/dev/null | { read -r h _; printf '%s' "$h"; }; }
@@ -273,11 +293,21 @@ unpack() {
 	log "payload verified: $nfiles files"
 	MODE=$(conf MODE)
 	TITLE=$(conf TITLE)
-	EXPECT_ROM=$(conf EXPECT_ROM)
-	case $MODE in install|restore) ;; *) abort "bad a52s-k612.conf (MODE=$MODE)";; esac
-	for p in $PARTS; do
-		[ -f "$W/z/images/$p.img" ] || abort "missing in the zip: images/$p.img"
-	done
+	EXPECT_ROM=$(conf EXPECT_ROM); ALLOW_ICHTHYS=$(conf ALLOW_ICHTHYS)
+	case $MODE in
+	install|restore)
+		for p in $PARTS; do
+			[ -f "$W/z/images/$p.img" ] || abort "missing in the zip: images/$p.img"
+		done;;
+	ak)
+		for f in bin/a52boot kernel/Image kernel/vendor_boot.dtb kernel/vendor-cmdline.txt \
+			kernel/vendor-ramdisk-a52.cpio.lz4 kernel/dtbo.raw; do
+			[ -f "$W/z/$f" ] || abort "missing in the zip: $f"
+		done;;
+	akrestore)
+		[ -f "$W/z/bin/a52boot" ] || abort "missing in the zip: bin/a52boot";;
+	*) abort "bad a52s-k612.conf (MODE=$MODE)";;
+	esac
 }
 
 check_tmp() {
@@ -299,7 +329,7 @@ check_rom() {
 	if [ -n "$SYSPROP" ]; then
 		LV=$(file_prop ro.lineage.version "$SYSPROP")
 		AREL=$(file_prop ro.build.version.release "$SYSPROP")
-		DISP=$(file_prop ro.build.display.id "$SYSPROP")
+		DISP=$(file_prop ro.build.display.id "$SYSPROP"); INC=$(file_prop ro.build.version.incremental "$SYSPROP")
 		log "system: $SYSPROP ro.lineage.version=$LV release=$AREL display=$DISP"
 		# LineageOS 24 (A17) keeps ro.lineage.* in /product/etc/build.prop, not in system
 		if [ -z "$LV" ]; then
@@ -314,6 +344,11 @@ check_rom() {
 				[ "$O_OWN" = 1 ] && close_ro
 				[ -n "$LV" ] && break
 			done
+		fi
+		# IchthysOS (a LineageOS-derived ROM with the same device tree/vendor): allowed only in zips built with ALLOW_ICHTHYS=1
+		if [ -z "$LV" ] && [ "${ALLOW_ICHTHYS:-0}" = 1 ]; then
+			: # INC read above while system is mounted
+			case $INC in ichthys*) LV=ichthys-$INC; log "IchthysOS build $INC accepted (ALLOW_ICHTHYS=1)";; esac
 		fi
 		[ -n "$LV" ] || abort "the installed ROM is not LineageOS (no ro.lineage.version): ${DISP:-unknown}" \
 			"This kernel is for LineageOS 24.0 only."
@@ -333,6 +368,7 @@ check_rom() {
 	[ "$O_OWN" = 1 ] && close_ro
 	case $LV in
 	"$EXPECT_ROM"*) ui_print "ROM: LineageOS $LV (the tested build)";;
+	ichthys-*) ui_print "ROM: IchthysOS ${LV#ichthys-}";;
 	24.*) warn "LineageOS $LV: only $EXPECT_ROM was tested. Continuing."
 		if [ "$MODE" = restore ]; then
 			ui_print "  These are the $EXPECT_ROM kernel images. If they do not boot your build,"
@@ -483,6 +519,16 @@ vendor_close() {
 	V_REMOUNTED=0
 }
 
+# is_addon_file <path>: a file an earlier 6.x add-on put there (never a ROM file to back up)
+is_addon_file() {
+	case $1 in */etc/init/a52sxq-k61*.rc) return 0;; esac
+	case $1 in
+	*.ko) grep -aq 'vermagic=6[.]' "$1" 2>/dev/null && return 0;;
+	*/modules.*) grep -q 'drivers612/realboot' "$1" 2>/dev/null && return 0;;
+	esac
+	return 1
+}
+
 label_for() {
 	case $1 in etc/init/*) printf '%s' "$LBL_RC";; *) printf '%s' "$LBL_MOD";; esac
 }
@@ -524,9 +570,15 @@ vendor_install() {
 			case $rel in lib/modules/6.12/*) continue;; esac
 			[ -f "$V_MP/$rel" ] || continue
 			[ "$(sha "$V_MP/$rel")" = "$h" ] && continue
+			is_addon_file "$V_MP/$rel" && continue
 			mkdir -p "$BK_DIR/vendor/${rel%/*}" && cp "$V_MP/$rel" "$BK_DIR/vendor/$rel"
 		done < "$W/z/SHA256SUMS"
 	fi
+	# remember whether 5.4-gki is ours (ROMs without it, e.g. IchthysOS): the restore must then remove it,
+	# else the 5.4 kernel's macloader loads the 6.12 wlan.ko from there and Wi-Fi stays down (2026-11-17)
+	CREATED54=0; [ -d "$V_MP/lib/modules/5.4-gki" ] || CREATED54=1
+	# a re-install over an earlier add-on must keep that install's answer
+	[ -e "$V_MP/lib/modules/6.12/.a52-created-5.4-gki" ] && CREATED54=1
 	rm -rf "$V_MP/lib/modules/6.12"
 	while read -r h f; do
 		case $f in vendor-addon/*) ;; *) continue;; esac
@@ -569,6 +621,7 @@ vendor_install() {
 		nver=$((nver + 1))
 	done < "$W/z/SHA256SUMS"
 	[ "$nolabel" = 0 ] || warn "could not read the SELinux label of $nolabel files (no ls -Z here)."
+	[ "$CREATED54" = 1 ] && : > "$V_MP/lib/modules/6.12/.a52-created-5.4-gki"
 	ui_print "  $nver files installed and verified (sha256, 0644 root:root, SELinux labels)."
 	vendor_close
 }
@@ -581,9 +634,14 @@ vendor_remove() {
 		vendor_close
 		return 0
 	fi
-	if [ ! -e "$V_MP/lib/modules/6.12" ] && [ ! -e "$V_MP/etc/init/a52sxq-k612.rc" ]; then
+	if [ "$VR_FORCE" != 1 ] && [ ! -e "$V_MP/lib/modules/6.12" ] && [ ! -e "$V_MP/etc/init/a52sxq-k612.rc" ]; then
 		ui_print "  not installed: nothing to remove."
 	else
+		if [ -e "$V_MP/lib/modules/6.12/.a52-created-5.4-gki" ]; then
+			rm -rf "$V_MP/lib/modules/5.4-gki"; ui_print "  removed /vendor/lib/modules/5.4-gki (created by the 6.12 install)"
+		elif [ "$MODE" = akrestore ] || [ "$MODE" = ak ]; then
+			vendor_restore_rom_files
+		fi
 		rm -rf "$V_MP/lib/modules/6.12" "$V_MP/etc/init/a52sxq-k612.rc"
 		sync
 		if [ -e "$V_MP/lib/modules/6.12" ] || [ -e "$V_MP/etc/init/a52sxq-k612.rc" ]; then
@@ -592,8 +650,41 @@ vendor_remove() {
 			ui_print "  removed /vendor/lib/modules/6.12 and /vendor/etc/init/a52sxq-k612.rc"
 		fi
 	fi
-	ui_print "  (/vendor/lib/modules/5.4-gki is left as it is: the 5.4 kernel does not use it.)"
+	[ "$MODE" = akrestore ] || [ "$MODE" = ak ] || ui_print "  (/vendor/lib/modules/5.4-gki is left as it is: the 5.4 kernel does not use it.)"
 	vendor_close
+}
+
+# ak, kernel-only build (ADDON=none): everything is in vendor_boot, /vendor is not needed. The add-on
+# of an EARLIER install (ADDON=vendor build) must go: its rc is gated off on this kernel, but its
+# 6.x wlan.ko on macloader's 5.4-gki path would be insmod-ed over the first-stage one, and a ROM
+# kernel restored by other means would inherit it (no Wi-Fi on 5.4, 2026-11-17). Looks read-only
+# first: /vendor is mounted read-write only when there is something to remove. Runs after the
+# images were written and verified, so a failed install leaves the old kernel with its add-on.
+vendor_drop_old_addon() {
+	old=0
+	VD=$(dyn_dev vendor)
+	if [ -n "$VD" ] && open_ro "$VD" vendor; then
+		[ -e "$O_MP/lib/modules/6.12" ] && old=1
+		[ -e "$O_MP/etc/init/a52sxq-k612.rc" ] && old=1
+		g=$O_MP/lib/modules/5.4-gki
+		[ -f "$g/qca_cld3_wlan.ko" ] && grep -aq 'vermagic=6[.]' "$g/qca_cld3_wlan.ko" && old=1
+		[ "$O_OWN" = 1 ] && close_ro
+	else
+		log "kernel-only: vendor not readable, old add-on check skipped"
+	fi
+	if [ "$old" = 0 ]; then
+		ui_print "Kernel-only build: nothing is installed into /vendor (no older add-on there)."
+		return 0
+	fi
+	ui_print "Kernel-only build: the add-on of an earlier install is not needed any more."
+	# the ROM files that install had replaced are in the backup taken then
+	RESTORE_SET=""
+	for d in $(bk_list); do
+		[ -d "$d/vendor" ] && { RESTORE_SET=$d; break; }
+	done
+	VR_FORCE=1
+	vendor_remove
+	VR_FORCE=0
 }
 
 # ------------------------------------------------------------------------------ images
@@ -633,7 +724,8 @@ verify_parts() { # <dir with images>: sets VBAD
 flash_images() {
 	PHASE=images
 	ui_print "Writing the kernel images..."
-	I=$W/z/images
+	I=${IMG_SRC:-$W/z/images}
+	[ -z "$RB_DIR" ] && [ "$BK_OK" = 1 ] && RB_DIR=$BK_DIR
 	write_parts "$I" 1 || warn "dd reported an error"
 	if verify_parts "$I"; then
 		ui_print "  boot, vendor_boot, dtbo written and verified (sha256)."
@@ -646,14 +738,14 @@ flash_images() {
 		return 0
 	fi
 	ui_print "ERROR: the partitions do not match the images after two tries:$VBAD"
-	if [ "$BK_OK" = 1 ]; then
-		ui_print "Writing the backup back ($BK_DIR)..."
-		write_parts "$BK_DIR" 0
-		if verify_parts "$BK_DIR"; then
+	if [ -n "$RB_DIR" ]; then
+		ui_print "Writing the previous images back ($RB_DIR)..."
+		write_parts "$RB_DIR" 0
+		if verify_parts "$RB_DIR"; then
 			ui_print "The previous kernel was restored and verified. Nothing else changed."
 			PHASE=done
-			[ "$MODE" = install ] &&
-				ui_print "(The 6.12 add-on stays in /vendor: harmless, the 5.4 kernel ignores it.)"
+			case $MODE in install|ak)
+				ui_print "(The 6.12 add-on stays in /vendor: harmless, the 5.4 kernel ignores it.)";; esac
 			cleanup
 			exit 1
 		fi
@@ -666,7 +758,466 @@ flash_images() {
 	exit 1
 }
 
+# ------------------------------------------------------------------------------ ak: ROM-independent zip
+# bin/a52boot (static arm64, drivers612/realboot/anykernel/a52boot) does the image work; every
+# result it reports is checked here again (sha256 of what it read and wrote, sizes).
+ak() { $AKEXEC "$AK" "$@"; }
+kv() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -n 1; }
+
+ak_setup() {
+	AK=$W/z/bin/a52boot
+	chmod 0755 "$AK" 2>/dev/null
+	AKEXEC=""
+	[ "$TESTMODE" = 1 ] && AKEXEC=${A52S_TEST_EXEC:-}
+	ak sha256 "$W/z/a52s-k612.conf" > /dev/null 2>> "$LOG" ||
+		abort "the image tool bin/a52boot does not run in this recovery (/tmp mounted noexec?)"
+}
+
+# ak_run <what> <out file> <args...>: the tool's key=value output to <out file>; abort with its message
+ak_run() {
+	what=$1; out=$2; shift 2
+	if ! ak "$@" > "$out" 2> "$W/ak.err"; then
+		cat "$W/ak.err" >> "$LOG"
+		abort "$what: $(sed 's/^a52boot: //' "$W/ak.err" | head -n 1)"
+	fi
+	{ echo "a52boot $1:"; sed 's/^/  /' "$out"; } >> "$LOG"
+}
+
+check_rom_ak() {
+	SYSDEV=$(dyn_dev system)
+	[ -n "$SYSDEV" ] || abort "no system partition (/dev/block/mapper/system)" \
+		"This kernel is for Android 17 ROMs based on LineageOS 24."
+	open_ro "$SYSDEV" system || abort "cannot mount system read-only to check the ROM" \
+		"Mount System in the recovery (Mount menu) and flash again."
+	SYSPROP=""
+	for f in "$O_MP/system/build.prop" "$O_MP/build.prop"; do
+		if [ -f "$f" ]; then SYSPROP=$f; break; fi
+	done
+	if [ -z "$SYSPROP" ]; then
+		[ "$O_OWN" = 1 ] && close_ro
+		abort "no build.prop on the system partition" "Is a ROM installed?"
+	fi
+	AREL=$(file_prop ro.build.version.release "$SYSPROP"); ASDK=$(file_prop ro.build.version.sdk "$SYSPROP")
+	DISP=$(file_prop ro.build.display.id "$SYSPROP"); INC=$(file_prop ro.build.version.incremental "$SYSPROP")
+	LV=$(file_prop ro.lineage.version "$SYSPROP"); LD=$(file_prop ro.lineage.device "$SYSPROP")
+	[ "$O_OWN" = 1 ] && close_ro
+	# LineageOS 24 (A17) keeps ro.lineage.* in /product/etc/build.prop
+	for part in product system_ext; do
+		[ -n "$LV" ] && [ -n "$LD" ] && break
+		PD=$(dyn_dev $part)
+		[ -n "$PD" ] && open_ro "$PD" $part || continue
+		for f in "$O_MP/etc/build.prop" "$O_MP/build.prop"; do
+			[ -f "$f" ] || continue
+			[ -n "$LV" ] || LV=$(file_prop ro.lineage.version "$f")
+			[ -n "$LD" ] || LD=$(file_prop ro.lineage.device "$f")
+		done
+		[ "$O_OWN" = 1 ] && close_ro
+	done
+	log "system: release=$AREL sdk=$ASDK display=$DISP incremental=$INC lineage.version=$LV lineage.device=$LD"
+	case "$AREL:$ASDK" in
+	17:*|17.*:*|*:37) ;;
+	*) abort "the installed ROM is Android ${AREL:-?} (SDK ${ASDK:-?}), not Android 17" \
+		"This kernel is for Android 17 ROMs based on LineageOS 24.";;
+	esac
+	[ -n "$LV" ] || [ "$LD" = a52sxq ] || abort "the installed ROM is not LineageOS-based (no ro.lineage.version, no ro.lineage.device=a52sxq): ${DISP:-unknown}" \
+		"This kernel needs a LineageOS 24 based ROM with the LineageOS a52sxq vendor."
+	case $LV in
+	''|24.*) ;;
+	*) abort "LineageOS $LV is not LineageOS 24" "This kernel is for LineageOS 24 (Android 17) and its derivatives.";;
+	esac
+	# the vendor the add-on is made for: LineageOS's a52sxq vendor (Android 17)
+	VD=$(dyn_dev vendor)
+	[ -n "$VD" ] || abort "no vendor partition (/dev/block/mapper/vendor)"
+	open_ro "$VD" vendor || abort "cannot mount vendor read-only to check it"
+	VP=$O_MP/build.prop
+	vdev=0
+	grep -q '^ro.product.vendor.device=a52sxq$' "$VP" 2>/dev/null && vdev=1
+	VREL=$(file_prop ro.vendor.build.version.release "$VP"); VSDK=$(file_prop ro.vendor.build.version.sdk "$VP")
+	vmiss=""
+	for f in bin/modprobe etc/init/hw/init.target.rc etc/init/wifi_sec.rc lib/modules; do
+		[ -e "$O_MP/$f" ] || vmiss="$vmiss $f"
+	done
+	# the ROM files outside lib/modules/6.12 the add-on replaces (they go into the backup)
+	VREPL_KB=0
+	while read -r h f; do
+		case $f in vendor-addon/*) ;; *) continue;; esac
+		rel=${f#vendor-addon/}
+		case $rel in lib/modules/6.12/*) continue;; esac
+		[ -f "$O_MP/$rel" ] || continue
+		[ "$(sha "$O_MP/$rel")" = "$h" ] && continue
+		is_addon_file "$O_MP/$rel" && continue
+		k=$(du -sk "$O_MP/$rel" | { read -r k _; printf '%s' "$k"; })
+		VREPL_KB=$((VREPL_KB + k))
+	done < "$W/z/SHA256SUMS"
+	[ "$O_OWN" = 1 ] && close_ro
+	log "vendor: a52sxq=$vdev release=$VREL sdk=$VSDK missing=$vmiss replaced=${VREPL_KB}K"
+	[ "$vdev" = 1 ] || abort "the vendor partition is not an a52sxq vendor (ro.product.vendor.device)" \
+		"This kernel needs the LineageOS a52sxq vendor."
+	case "$VREL:$VSDK" in
+	17:*|17.*:*|*:37) ;;
+	*) abort "the vendor partition is Android ${VREL:-?} (SDK ${VSDK:-?}), not Android 17" \
+		"This kernel needs the LineageOS 24 a52sxq vendor.";;
+	esac
+	[ -z "$vmiss" ] || abort "the vendor partition lacks what the 6.12 add-on needs:$vmiss" \
+		"This kernel needs the LineageOS a52sxq vendor."
+	if [ -n "$LV" ]; then ROMDESC="LineageOS $LV"; else ROMDESC="LineageOS-based ${DISP:-?} ${INC:-}"; fi
+	ui_print "ROM: $ROMDESC (Android $AREL), a52sxq vendor (Android $VREL)"
+}
+
+# snapshot_parts: the current boot/vendor_boot/dtbo, read once into $W/old (everything below
+# works on these copies), their sha256 (CUR_<p>) and what the tool sees in them
+snapshot_parts() {
+	mkdir -p "$W/old" || abort "cannot create $W/old"
+	for p in $PARTS; do
+		dev=$(find_part "$p")
+		[ -n "$dev" ] || abort "no $p partition (/dev/block/by-name/$p)"
+		case $dev in *mmcblk*) abort "$p resolves to $dev (microSD): refusing";; esac
+		is_blk "$dev" || abort "$p: $dev is not a block device"
+		psz=$(dev_size "$dev")
+		case $psz in ''|0|*[!0-9]*) abort "cannot read the size of $p ($dev)";; esac
+		dd if="$dev" of="$W/old/$p.img" bs=1048576 >> "$LOG" 2>&1 || abort "cannot read $p ($dev)"
+		cur=$(sha "$W/old/$p.img")
+		[ -n "$cur" ] && [ "$(wc -c < "$W/old/$p.img" | tr -d ' ')" = "$psz" ] && [ "$(sha "$dev")" = "$cur" ] ||
+			abort "cannot read $p ($dev) consistently"
+		eval "DEV_$p=\$dev; CUR_$p=\$cur; PSZ_$p=\$psz"
+		log "$p: $dev size=$psz current=$cur"
+		ak_run "the current $p image" "$W/old/$p.info" info "$W/old/$p.img"
+		t=$(kv type "$W/old/$p.info")
+		[ "$t" = "$p" ] || abort "the $p partition does not hold a $p image (found: $t)" \
+			"Flash your ROM's own boot.img, vendor_boot.img and dtbo.img first."
+	done
+	KVER=$(kv kernel_version "$W/old/boot.info")
+	CUR_A52=$(kv a52 "$W/old/boot.info")
+	ui_print "Current kernel: ${KVER:-unknown (compressed)}"
+	# boot images are changed: AVB verification must be off in vbmeta (LineageOS: flags 3)
+	VBM=$(find_part vbmeta)
+	[ -n "$VBM" ] || abort "no vbmeta partition"
+	ak_run "vbmeta" "$W/vbmeta.info" info "$VBM"
+	vf=$(kv flags "$W/vbmeta.info")
+	[ "$(kv type "$W/vbmeta.info")" = vbmeta ] && [ -n "$vf" ] && [ $((vf & 2)) = 2 ] ||
+		abort "AVB verification is enabled in vbmeta (flags ${vf:-?}): a changed boot image would not boot" \
+			"This kernel needs a ROM installed with verification disabled (LineageOS: flags 3)."
+}
+
+build_images() {
+	N=$W/new
+	K=$W/z/kernel
+	mkdir -p "$N" || abort "cannot create $N"
+	ui_print "Building the new images from the current ones..."
+	ak_run "new boot image" "$W/mk-boot.out" mkboot "$W/old/boot.img" "$K/Image" "$N/boot.img"
+	ak_run "new vendor_boot image" "$W/mk-vendor_boot.out" mkvendor "$W/old/vendor_boot.img" "$K/vendor_boot.dtb" \
+		"$K/vendor-cmdline.txt" "$K/vendor-ramdisk-a52.cpio.lz4" "$N/vendor_boot.img"
+	ak_run "new dtbo image" "$W/mk-dtbo.out" mkdtbo "$W/old/dtbo.img" "$K/dtbo.raw" "$N/dtbo.img"
+	ak_run "bootloader load size" "$W/budget.out" budget "$N/boot.img" "$N/vendor_boot.img"
+	NKV=$(kv kernel_version "$W/mk-boot.out")
+	[ "$NKV" = "$(conf KREL)" ] || abort "the new boot image has kernel '$NKV', expected '$(conf KREL)'"
+	case $(kv rom_fstab "$W/mk-vendor_boot.out") in
+	0) abort "the ROM's vendor ramdisk has no first-stage fstab (first_stage_ramdisk/fstab.*)" \
+		"Flash your ROM's own vendor_boot.img first.";;
+	-1) warn "could not look into the ROM's vendor ramdisk (not lz4): kept as it is.";;
+	esac
+	SAME_ALL=1
+	for p in $PARTS; do
+		eval "cur=\$CUR_$p; psz=\$PSZ_$p"
+		o=$W/mk-$p.out
+		[ "$(kv in_sha256 "$o")" = "$cur" ] || abort "$p: the tool did not read the image that was checked"
+		want=$(sha "$N/$p.img")
+		[ -n "$want" ] && [ "$want" = "$(kv out_sha256 "$o")" ] || abort "new $p image: checksum mismatch in /tmp (RAM?)"
+		[ "$(wc -c < "$N/$p.img" | tr -d ' ')" = "$psz" ] || abort "new $p image is not $psz bytes"
+		same=0
+		[ "$want" = "$cur" ] && same=1
+		[ "$same" = 1 ] || SAME_ALL=0
+		eval "WANT_$p=\$want; SAME_$p=\$same"
+		log "$p: new=$want same=$same"
+	done
+	ui_print "  boot: kernel $NKV + the ROM's ramdisk (Android $(kv os_version "$W/old/boot.info"), patch level $(kv os_patch_level "$W/old/boot.info"))"
+	ui_print "  vendor_boot: the ROM's vendor ramdisk + the 6.12 first-stage modules, 6.12 dtb and cmdline"
+	[ "$(kv removed_a52_fragments "$W/mk-vendor_boot.out")" = 0 ] ||
+		ui_print "    (the 6.12 modules of an earlier install were replaced)"
+	ui_print "  dtbo: 6.12 overlay; AVB footers kept unsigned with the ROM's salt and properties"
+	IMG_SRC=$N
+	RB_DIR=$W/old
+}
+
+# ---------------------------------------------- backups (a52s-k612-backup/<time>/ in $BK_LOCS)
+# bk_list: backup sets, newest first (their names are timestamps)
+bk_list() {
+	set +f
+	for b in $BK_LOCS; do
+		[ -d "$b/a52s-k612-backup" ] || continue
+		for d in "$b"/a52s-k612-backup/*; do
+			[ -d "$d" ] && printf '%s %s\n' "${d##*/}" "$d"
+		done
+	done | sort -r | while read -r _ d; do printf '%s\n' "$d"; done
+	set -f
+}
+set_sha() { sed -n "s/^\([0-9a-f]\{64\}\)  $2[.]img\$/\1/p" "$1/SHA256SUMS" 2>/dev/null | head -n 1; }
+set_has() { [ -f "$1/$2.img" ] || [ -f "$1/$2.img.a52pack" ]; }
+set_info() { sed -n "s/^$2: //p" "$1/info.txt" 2>/dev/null | head -n 1; }
+# a set of the ROM's own images (not one of our 6.x kernels)
+set_is_rom() {
+	case $(set_info "$1" kernel) in *"version 6."*|6.*) return 1;; esac
+	return 0
+}
+
+bk_write() { # <dir> <raw|pack>
+	for p in $PARTS; do
+		eval "cur=\$CUR_$p"
+		if [ "$2" = raw ]; then
+			cp "$W/old/$p.img" "$1/$p.img" 2>> "$LOG" || return 1
+		else
+			cp "$W/pack/$p.img.a52pack" "$1/$p.img.a52pack" 2>> "$LOG" || return 1
+		fi
+	done
+	drop_caches
+	for p in $PARTS; do
+		eval "cur=\$CUR_$p"
+		if [ "$2" = raw ]; then
+			[ "$(sha "$1/$p.img")" = "$cur" ] || return 1
+		else
+			ak unpack "$1/$p.img.a52pack" - > "$W/vfy.out" 2>> "$LOG" && [ "$(kv sha256 "$W/vfy.out")" = "$cur" ] || return 1
+		fi
+		printf '%s  %s\n' "$cur" "$p.img" >> "$1/SHA256SUMS"
+	done
+	return 0
+}
+
+do_backup_ak() {
+	BK_DIR=""
+	BK_OK=0
+	if [ "$SAME_ALL" = 1 ]; then
+		ui_print "boot/vendor_boot/dtbo already hold these images: nothing to back up."
+		return 0
+	fi
+	if [ "$CUR_A52" = 1 ]; then
+		# our own kernel: the restore needs the ROM's images from the first install, not these
+		have=""
+		for d in $(bk_list); do
+			set_is_rom "$d" && { have=$d; break; }
+		done
+		ui_print "The current kernel is a 6.x kernel of this project: no new backup."
+		if [ -n "$have" ]; then
+			ui_print "  Backup of the ROM's own images (used by the restore zip): $have"
+		else
+			warn "no backup of the ROM's own kernel images found: the restore zip cannot work."
+			ui_print "  Keep your ROM's boot.img, vendor_boot.img and dtbo.img (ROM zip) for a rollback."
+		fi
+		return 0
+	fi
+	for d in $(bk_list); do
+		ok=1
+		for p in $PARTS; do
+			eval "cur=\$CUR_$p"
+			[ "$(set_sha "$d" $p)" = "$cur" ] && set_has "$d" $p || ok=0
+		done
+		if [ "$ok" = 1 ]; then
+			BK_DIR=$d
+			BK_OK=1
+			ui_print "The current images are already backed up: $d"
+			return 0
+		fi
+	done
+	ts=$(date +%Y%m%d-%H%M%S 2>/dev/null)
+	[ -n "$ts" ] || ts=backup
+	why=""
+	for loc in $BK_LOCS; do
+		[ -d "$loc" ] || continue
+		src=$(df_src "$loc/")
+		case $src in
+		*mmcblk*) why="$why; $loc is on $src (microSD?)"; continue;;
+		/dev/block/*) ;;
+		*) why="$why; $loc not mounted"; continue;;
+		esac
+		fmt=raw
+		[ "$loc" = /cache ] && fmt=pack
+		need=$((VREPL_KB + 2048))
+		for p in $PARTS; do
+			if [ "$fmt" = raw ]; then
+				eval "psz=\$PSZ_$p"
+				need=$((need + psz / 1024))
+			else
+				mkdir -p "$W/pack"
+				[ -f "$W/pack/$p.img.a52pack" ] ||
+					ak_run "packing the $p backup" "$W/pack/$p.out" pack "$W/old/$p.img" "$W/pack/$p.img.a52pack"
+				need=$((need + $(wc -c < "$W/pack/$p.img.a52pack") / 1024))
+			fi
+		done
+		free=$(avail_kb "$loc/")
+		if [ "$free" -lt "$need" ]; then
+			why="$why; $loc: $((free / 1024)) MB free, $((need / 1024 + 1)) MB needed"
+			continue
+		fi
+		d=$loc/a52s-k612-backup/$ts
+		n=1
+		while [ -e "$d" ]; do d=$loc/a52s-k612-backup/$ts-$n; n=$((n + 1)); done
+		if ! mkdir -p "$d" 2>/dev/null || ! : > "$d/.probe" 2>/dev/null; then
+			rmdir "$d" "$loc/a52s-k612-backup" 2>/dev/null
+			why="$why; $loc not writable (encrypted?)"
+			continue
+		fi
+		rm -f "$d/.probe"
+		ui_print "Backing up the current boot/vendor_boot/dtbo to $d"
+		: > "$d/SHA256SUMS"
+		if ! bk_write "$d" "$fmt"; then
+			rm -rf "$d"
+			rmdir "$loc/a52s-k612-backup" 2>/dev/null
+			warn "backup to $loc failed (verify): trying the next place."
+			why="$why; $loc: write/verify failed"
+			continue
+		fi
+		{
+			echo "a52sxq kernel backup, taken by: ${TITLE:-?} ($MODE)"
+			echo "date: $ts"
+			echo "kernel: Linux version ${KVER:-unknown}"
+			echo "a52: ${CUR_A52:-0}"
+			echo "rom: $ROMDESC"
+			echo "bootloader: $BL"
+			echo "format: $fmt"
+			if [ "$fmt" = raw ]; then
+				echo "restore: the restore zip, or Odin AP tar / TWRP Install Image with these 3 images"
+			else
+				echo "restore: the restore zip (*.img.a52pack = the image without its zero blocks; a52boot unpack)"
+			fi
+		} > "$d/info.txt"
+		sync
+		[ -n "$why" ] && log "backup: places skipped: ${why#; }"
+		BK_DIR=$d
+		BK_OK=1
+		return 0
+	done
+	why=${why#; }
+	case ${ZIPFILE##*/} in
+	*nobackup*)
+		warn "no place for a backup (${why:-no storage}): installing WITHOUT one (zip name has 'nobackup')."
+		ui_print "  Roll back with your ROM's own boot.img, vendor_boot.img and dtbo.img."
+		return 0;;
+	esac
+	abort "no place for a backup of the current boot/vendor_boot/dtbo (${why:-no storage})" \
+		"Decrypt data in TWRP or free space on /cache and flash again (or rename the zip to *-nobackup.zip to install without a backup)."
+}
+
+# materialize <set>: its images, verified, as $W/bk/<p>.img
+materialize() {
+	rm -rf "$W/bk"
+	mkdir -p "$W/bk" || return 1
+	for p in $PARTS; do
+		want=$(set_sha "$1" $p)
+		eval "psz=\$PSZ_$p"
+		[ -n "$want" ] || return 1
+		if [ -f "$1/$p.img" ]; then
+			cp "$1/$p.img" "$W/bk/$p.img" 2>> "$LOG" || return 1
+		else
+			ak unpack "$1/$p.img.a52pack" "$W/bk/$p.img" >> "$LOG" 2>&1 || return 1
+		fi
+		[ "$(sha "$W/bk/$p.img")" = "$want" ] && [ "$(wc -c < "$W/bk/$p.img" | tr -d ' ')" = "$psz" ] || return 1
+	done
+	return 0
+}
+
+# find_restore_set: the newest backup of the ROM's images that the current images were made from
+find_restore_set() {
+	RESTORE_SET=""
+	ALREADY=0
+	nsets=0
+	for d in $(bk_list); do
+		nsets=$((nsets + 1))
+		log "restore: looking at $d"
+		set_is_rom "$d" || { log "  6.x kernel images: skipped"; continue; }
+		ok=1
+		for p in $PARTS; do set_has "$d" $p && [ -n "$(set_sha "$d" $p)" ] || ok=0; done
+		[ "$ok" = 1 ] || { log "  incomplete: skipped"; continue; }
+		same=1
+		for p in $PARTS; do
+			eval "cur=\$CUR_$p"
+			[ "$(set_sha "$d" $p)" = "$cur" ] || same=0
+		done
+		if [ "$same" = 1 ]; then RESTORE_SET=$d; ALREADY=1; return 0; fi
+		materialize "$d" || { warn "backup $d is damaged (checksums): skipped"; continue; }
+		if ak origin "$W/old/boot.img" "$W/old/vendor_boot.img" "$W/bk/boot.img" "$W/bk/vendor_boot.img" > "$W/origin.out" 2>> "$LOG"; then
+			RESTORE_SET=$d
+			return 0
+		fi
+		log "  $(cat "$W/origin.out")"
+	done
+	rm -rf "$W/bk"
+	[ "$CUR_A52" = 1 ] || abort "the current kernel (${KVER:-unknown}) is not a 6.x kernel of this project, and no backup holds exactly these images: nothing to restore."
+	abort "no backup ($nsets looked at) holds the ROM images this 6.12 kernel was installed over" \
+		"Flash your ROM's own boot.img, vendor_boot.img and dtbo.img (from its ROM zip)."
+}
+
+restore_ak() {
+	find_restore_set
+	ui_print "Backup: $RESTORE_SET ($(set_info "$RESTORE_SET" kernel), $(set_info "$RESTORE_SET" date))"
+	if [ "$ALREADY" = 1 ]; then
+		ui_print "boot/vendor_boot/dtbo already hold this backup's images."
+	else
+		ui_print "  matches the current 6.12 images (same ROM ramdisks and header fields)"
+		for p in $PARTS; do
+			eval "cur=\$CUR_$p"
+			want=$(set_sha "$RESTORE_SET" $p)
+			same=0
+			[ "$want" = "$cur" ] && same=1
+			eval "WANT_$p=\$want; SAME_$p=\$same"
+		done
+		IMG_SRC=$W/bk
+		RB_DIR=$W/old
+		flash_images
+	fi
+	vendor_remove
+}
+
+# akrestore: the ROM files the add-on had replaced come back from the backup; our 6.x wlan.ko and a
+# 5.4-gki directory that holds nothing but the add-on's stubs go
+vendor_restore_rom_files() {
+	n=0
+	if [ -n "$RESTORE_SET" ] && [ -d "$RESTORE_SET/vendor" ]; then
+		(cd "$RESTORE_SET/vendor" && find . -type f) > "$W/vrest.list" 2>> "$LOG"
+		while read -r f; do
+			rel=${f#./}
+			dst=$V_MP/$rel
+			[ -d "${dst%/*}" ] || continue
+			if cp "$RESTORE_SET/vendor/$rel" "$dst.a52s-new" 2>> "$LOG" && chmod 0644 "$dst.a52s-new" &&
+			   chown 0:0 "$dst.a52s-new" && mv -f "$dst.a52s-new" "$dst"; then
+				chcon "$(label_for "$rel")" "$dst" >> "$LOG" 2>&1
+				if [ "$(sha "$dst")" = "$(sha "$RESTORE_SET/vendor/$rel")" ]; then n=$((n + 1)); else warn "could not verify /vendor/$rel"; fi
+			else
+				rm -f "$dst.a52s-new"
+				warn "could not put back /vendor/$rel"
+			fi
+		done < "$W/vrest.list"
+		[ "$n" -gt 0 ] && ui_print "  put back $n ROM file(s) the add-on had replaced (from the backup)"
+	fi
+	g=$V_MP/lib/modules/5.4-gki
+	if [ -f "$g/qca_cld3_wlan.ko" ] && grep -aq 'vermagic=6[.]' "$g/qca_cld3_wlan.ko"; then
+		rm -f "$g/qca_cld3_wlan.ko"
+		ui_print "  removed the 6.x wlan.ko from /vendor/lib/modules/5.4-gki"
+	fi
+	if [ -d "$g" ] && grep -q 'drivers612/realboot' "$g/modules.dep" 2>/dev/null; then
+		set +f
+		ko=$(ls "$g"/*.ko 2>/dev/null)
+		set -f
+		if [ -z "$ko" ]; then
+			rm -rf "$g"
+			ui_print "  removed /vendor/lib/modules/5.4-gki (only the add-on's files were in it)"
+		fi
+	fi
+}
+
 # ------------------------------------------------------------------------------ main
+# one run at a time: TWRP can replay a queued install after a crash while another runs
+# (seen 2026-11-18); a second run would delete the first one's work dir and log
+LOCK=/tmp/a52s-k612.lock
+if ! mkdir "$LOCK" 2>/dev/null; then
+	op=$(cat "$LOCK/pid" 2>/dev/null)
+	if [ -n "$op" ] && [ -d "/proc/$op" ]; then
+		printf 'ui_print ERROR: another a52s-k612 zip is being installed (pid %s): wait for it, then flash again.\nui_print\n' "$op" >> "/proc/self/fd/$OUTFD" 2>/dev/null
+		echo "another a52s-k612 zip is being installed (pid $op)" >&2
+		exit 1
+	fi
+	rm -rf "$LOCK"
+	mkdir "$LOCK" 2>/dev/null || { echo "cannot take $LOCK" >&2; exit 1; }
+fi
+echo $$ > "$LOCK/pid"
 : > "$LOG"
 log "a52s-k612 update-binary: api=$1 outfd=$OUTFD zip=$ZIPFILE testmode=$TESTMODE"
 ui_print "Galaxy A52s 5G (SM-A528B) - Linux 6.12 kernel for LineageOS 24"
@@ -681,24 +1232,50 @@ if unzip -o -q "$ZIPFILE" a52s-k612.conf -d "$W" >> "$LOG" 2>&1; then
 fi
 unpack
 ui_print "Package: $TITLE"
-check_rom
-check_parts
-do_backup
-if [ "$MODE" = install ]; then
+case $MODE in
+install)
+	check_rom
+	check_parts
+	do_backup
 	vendor_preflight
 	vendor_install
+	flash_images;;
+restore)
+	check_rom
+	check_parts
+	do_backup
 	flash_images
-else
+	vendor_remove;;
+ak)
+	ak_setup
+	check_rom_ak
+	snapshot_parts
+	build_images
+	do_backup_ak
+	if [ "$(conf ADDON)" = vendor ]; then
+		vendor_preflight
+		vendor_install
+	fi
 	flash_images
-	vendor_remove
-fi
+	[ "$(conf ADDON)" = vendor ] || vendor_drop_old_addon;;
+akrestore)
+	ak_setup
+	snapshot_parts
+	restore_ak;;
+esac
 PHASE=done
 [ -n "$BK_DIR" ] && [ "$BK_OK" = 1 ] && ui_print "Backup: $BK_DIR"
 cleanup
-if [ "$MODE" = install ]; then
+case $MODE in
+install)
 	ui_print "Done. Reboot to system: the first boot takes about 25 s to the lock screen."
-	ui_print "Rollback: flash your ROM's boot, vendor_boot and dtbo images (or the backup)."
-else
-	ui_print "Done. Reboot to system: the stock LineageOS 5.4 kernel is back."
-fi
+	ui_print "Rollback: flash your ROM's boot, vendor_boot and dtbo images (or the backup).";;
+ak)
+	ui_print "Done. Reboot to system: the first boot takes about 25 s to the lock screen."
+	ui_print "Rollback: flash the restore zip (it writes the backup back), or your ROM's own images.";;
+akrestore)
+	ui_print "Done. Reboot to system: the ROM's own kernel images are back.";;
+*)
+	ui_print "Done. Reboot to system: the stock LineageOS 5.4 kernel is back.";;
+esac
 exit 0

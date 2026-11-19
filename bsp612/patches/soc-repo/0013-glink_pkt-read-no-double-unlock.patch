@@ -1,0 +1,17 @@
+a52sxq: glink_pkt: no second unlock on the O_NONBLOCK empty-queue path
+
+glink_pkt_read() drops gpdev->lock before it looks at the queue; the O_NONBLOCK path for an
+empty queue unlocked it again. Unlocking a mutex that another task (write, poll, ioctl, the
+rpdev remove during SSR) holds breaks its mutual exclusion (audit 2026-11-18, low 24).
+
+--- a/drivers/rpmsg/glink_pkt.c
++++ b/drivers/rpmsg/glink_pkt.c
+@@ -496,7 +496,7 @@
+ 	if (skb_queue_empty(&gpdev->queue) && !gpdev->rskb) {
+ 		if (file->f_flags & O_NONBLOCK) {
+ 			spin_unlock_irq(&gpdev->queue_lock);
+-			mutex_unlock(&gpdev->lock);
++			/* a52sxq: gpdev->lock was already dropped above; no second unlock */
+ 			return -EAGAIN;
+ 		}
+ 

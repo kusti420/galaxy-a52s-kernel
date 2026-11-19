@@ -9,6 +9,35 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
+#include <linux/arm-smccc.h>
+#include <linux/string.h>
+
+/*
+ * a52sxq DEBUG builds only (androidboot.a52sxq.debug=1): one READ-ONLY look at the hypervisor's
+ * virtual watchdog (vendor-hyp STATUS, the call modules/hhwdt and the a52bc diag kernel use), so
+ * a phone without root can show in the kernel log (a52kmsg) whether its bootloader hands the
+ * kernel an ARMED watchdog (a1 bit 0) before WDT=1 is considered for it (2026-11-19). Arms,
+ * pets and changes nothing. This module is used because it is a small first-stage module that
+ * every real-boot build already loads.
+ */
+#define A52_VWDT_STATUS ARM_SMCCC_CALL_VAL(ARM_SMCCC_FAST_CALL, ARM_SMCCC_SMC_32, \
+					   ARM_SMCCC_OWNER_VENDOR_HYP, 0x0006)
+static void a52_vwdt_status_once(void)
+{
+	static bool done;
+	const char *args = NULL;
+	struct arm_smccc_res res;
+
+	if (done)
+		return;
+	done = true;
+	if (!of_chosen || of_property_read_string(of_chosen, "bootargs", &args) || !args ||
+	    !strstr(args, "androidboot.a52sxq.debug=1"))
+		return;
+	arm_smccc_1_1_smc(A52_VWDT_STATUS, 0, &res);
+	pr_info("a52 vwdt STATUS (read only): a0=%ld a1=0x%lx a2=%lu a3=%lu (a1 bit0 = enabled, bit31 = expired)\n",
+		(long)res.a0, res.a1, res.a2, res.a3);
+}
 
 struct qfprom_sys {
 	int cell_count;
@@ -46,6 +75,8 @@ static int qfprom_sys_probe(struct platform_device *pdev)
 	int cell_count;
 	int i, ret;
 	const char **cells;
+
+	a52_vwdt_status_once();
 
 	cell_count = of_property_count_strings(dev->of_node, "nvmem-cell-names");
 	if (cell_count <= 0)

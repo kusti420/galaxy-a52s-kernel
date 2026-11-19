@@ -1,0 +1,44 @@
+a52sxq: pinctrl-msm: msm_gpio_mpm_wake_set must not read INTR_CFG without a wakeup-present bit
+
+yupik has no intr_wakeup_present_bit (0 = INTR_ENABLE). msm_gpio_mpm_wake_set() read the GPIO's own
+INTR_CFG anyway; with patch 0014 that read hits the TZ-owned GPIOs 48, 51, 56, 59 (qcom,gpios-reserved,
+also on wakeup-disabled-gpios) at pinctrl probe and the SoC resets silently (rehearsal rh612p2a45,
+2026-11-18). 5.4 only touched the shared wake_reg. Read INTR_CFG only when the SoC has the bit.
+(found 2026-11-19; needed by 0014)
+
+--- a/drivers/pinctrl/qcom/pinctrl-msm.c	2026-11-19 07:24:55.304213277 +0200
++++ b/drivers/pinctrl/qcom/pinctrl-msm.c	2026-11-19 07:24:55.305010905 +0200
+@@ -2098,16 +2098,25 @@
+ 
+ 	raw_spin_lock_irqsave(&msm_pinctrl_data->lock, flags);
+ 
+-	intr_cfg = msm_readl_intr_cfg(msm_pinctrl_data, g);
+-	if (intr_cfg & BIT(g->intr_wakeup_present_bit)) {
+-		if (enable)
+-			intr_cfg |= BIT(g->intr_wakeup_enable_bit);
+-		else
+-			intr_cfg &= ~BIT(g->intr_wakeup_enable_bit);
++	/*
++	 * a52sxq: only SoCs with a wakeup-present bit keep the wake enable in the GPIO's own
++	 * INTR_CFG. Without one (yupik: bit 0 = INTR_ENABLE) the test below read the per-GPIO
++	 * register for nothing: on a TZ-owned GPIO (qcom,gpios-reserved 48-51, 56-59, four of
++	 * them on Samsung's wakeup-disabled-gpios list) that read resets the SoC, and on an
++	 * enabled GPIO it cleared INTR_ENABLE instead of the wake bit. 5.4 touched wake_reg only.
++	 */
++	if (g->intr_wakeup_present_bit) {
++		intr_cfg = msm_readl_intr_cfg(msm_pinctrl_data, g);
++		if (intr_cfg & BIT(g->intr_wakeup_present_bit)) {
++			if (enable)
++				intr_cfg |= BIT(g->intr_wakeup_enable_bit);
++			else
++				intr_cfg &= ~BIT(g->intr_wakeup_enable_bit);
+ 
+-		msm_writel_intr_cfg(intr_cfg, msm_pinctrl_data, g);
++			msm_writel_intr_cfg(intr_cfg, msm_pinctrl_data, g);
+ 
+-		goto exit;
++			goto exit;
++		}
+ 	}
+ 
+ 	val = readl_relaxed(msm_pinctrl_data->regs[g->tile] + g->wake_reg);

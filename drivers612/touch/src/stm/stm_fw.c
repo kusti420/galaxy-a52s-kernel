@@ -606,6 +606,9 @@ int stm_ts_fw_update_on_probe(struct stm_ts_data *ts)
 		input_err(true, &ts->client->dev,
 				"%s: Firmware image %s not available\n", __func__,
 				fw_path);
+		/* a52sxq 6.12: first-stage probe, no /vendor/firmware yet: re-check once it is mounted */
+		if (retval == -ENOENT)
+			ts->fw_bin_missing = true;
 		retval = STM_TS_NOT_ERROR;
 		goto exit_fwload;
 	}
@@ -925,4 +928,104 @@ int stm_ts_fw_update_on_hidden_menu(struct stm_ts_data *ts, int update_type)
 	return retval;
 }
 EXPORT_SYMBOL(stm_ts_fw_update_on_hidden_menu);
+
+/*
+ * a52sxq 6.12: stm_ts is loaded by first-stage init, before /vendor/firmware is mounted, so
+ * the request_firmware() in stm_ts_fw_update_on_probe() fails with -ENOENT (on 5.4 the module
+ * was loaded after the mount). This runs once, 60 s after a successful probe: it reads the
+ * bin header, fills the *_of_bin versions and, only if the IC is older than the bin (same
+ * compare as at probe, without the checksum case: probe already succeeded), updates through
+ * the existing fw_update command path (stm_ts_fw_update_on_hidden_menu). A corrupted IC is
+ * not covered here (probe fails first); that needs the bin in the first-stage ramdisk.
+ */
+void stm_ts_fw_recheck_work(struct work_struct *work)
+{
+	struct stm_ts_data *ts = container_of(work, struct stm_ts_data, work_fw_recheck.work);
+	const struct firmware *fw_entry = NULL;
+	const struct stm_ts_header *header;
+	int retval;
+
+	if (!ts->plat_data->firmware_name || ts->plat_data->bringup == 1)
+		return;
+
+	mutex_lock(&ts->modechange);
+
+	if (ts->plat_data->shutdown_called || !ts->probe_done || !ts->fw_bin_missing)
+		goto out;
+
+	if (ts->plat_data->power_state != SEC_INPUT_STATE_POWER_ON) {
+		/* screen off / LPM: do not touch the IC now, look again later (bounded) */
+		if (ts->fw_recheck_retry++ < STM_TS_FW_RECHECK_RETRY)
+			schedule_delayed_work(&ts->work_fw_recheck,
+					msecs_to_jiffies(STM_TS_FW_RECHECK_MS));
+		goto out;
+	}
+
+	retval = request_firmware(&fw_entry, ts->plat_data->firmware_name, &ts->client->dev);
+	if (retval) {
+		input_err(true, &ts->client->dev, "%s: Firmware image %s not available (%d)\n",
+				__func__, ts->plat_data->firmware_name, retval);
+		goto out;
+	}
+	ts->fw_bin_missing = false;
+
+	if (fw_entry->size < sizeof(struct stm_ts_header)) {
+		input_err(true, &ts->client->dev, "%s: bin too small (%zu)\n",
+				__func__, fw_entry->size);
+		release_firmware(fw_entry);
+		goto out;
+	}
+
+	header = (struct stm_ts_header *)fw_entry->data;
+
+	ts->fw_version_of_bin = (u16)header->fw_ver;
+	ts->fw_main_version_of_bin = (u16)header->ext_release_ver;
+	ts->config_version_of_bin = (u16)header->cfg_ver;
+	ts->project_id_of_bin = header->project_id;
+	ts->ic_name_of_bin = header->ic_name;
+	ts->module_version_of_bin = header->module_ver;
+	ts->plat_data->img_version_of_bin[2] = ts->module_version_of_bin;
+	ts->plat_data->img_version_of_bin[3] = ts->fw_main_version_of_bin & 0xFF;
+
+	input_info(true, &ts->client->dev,
+			"%s: [BIN] Firmware Ver: 0x%04X, Config Ver: 0x%04X, Main Ver: 0x%04X\n", __func__,
+			ts->fw_version_of_bin,
+			ts->config_version_of_bin,
+			ts->fw_main_version_of_bin);
+	input_info(true, &ts->client->dev,
+			"%s: [BIN] Project ID: 0x%02X, IC Name: 0x%02X, Module Ver: 0x%02X\n",
+			__func__, ts->project_id_of_bin,
+			ts->ic_name_of_bin, ts->module_version_of_bin);
+
+	release_firmware(fw_entry);
+
+	if (ts->plat_data->bringup == 2)
+		retval = STM_TS_NOT_ERROR;
+	else if ((ts->ic_name_of_ic == 0xFF) && (ts->project_id_of_ic == 0xFF) && (ts->module_version_of_ic == 0xFF))
+		retval = STM_TS_NEED_FW_UPDATE;
+	else if (ts->ic_name_of_ic != ts->ic_name_of_bin)
+		retval = STM_TS_NOT_UPDATE;
+	else if (ts->project_id_of_ic != ts->project_id_of_bin)
+		retval = STM_TS_NEED_FW_UPDATE;
+	else if (ts->module_version_of_ic != ts->module_version_of_bin)
+		retval = STM_TS_NOT_UPDATE;
+	else if ((ts->fw_main_version_of_ic < ts->fw_main_version_of_bin)
+			|| ((ts->config_version_of_ic < ts->config_version_of_bin))
+			|| ((ts->fw_version_of_ic < ts->fw_version_of_bin)))
+		retval = STM_TS_NEED_FW_UPDATE;
+	else
+		retval = STM_TS_NOT_ERROR;
+
+	if (retval != STM_TS_NEED_FW_UPDATE) {
+		input_info(true, &ts->client->dev, "%s: skip fw update\n", __func__);
+		goto out;
+	}
+
+	input_info(true, &ts->client->dev, "%s: IC is older than the bin, update\n", __func__);
+	retval = stm_ts_fw_update_on_hidden_menu(ts, TSP_BUILT_IN);
+	if (retval < 0)
+		input_err(true, &ts->client->dev, "%s: failed [%d]\n", __func__, retval);
+out:
+	mutex_unlock(&ts->modechange);
+}
 MODULE_LICENSE("GPL");

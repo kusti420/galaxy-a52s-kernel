@@ -12,7 +12,7 @@ import sys
 import zipfile
 
 DATE = (2008, 1, 1, 0, 0, 0)
-EXEC = {"META-INF/com/google/android/update-binary"}
+EXEC = {"META-INF/com/google/android/update-binary", "bin/a52boot"}
 
 
 def main():

@@ -1,0 +1,67 @@
+# Allowed differences between the 5.4 uapi headers (abi54/linux, what the
+# vendor ipacm/libipanat were built with) and the dataipa r30 headers.
+# Read by ../abi-check.py. Every line needs a reason. Format:
+#   struct NAME          layout may differ
+#   prefix NAME          the 5.4 layout must be a prefix of the new one
+#   member NAME          new-header member that sits in 5.4 padding
+#   value  NAME [NEW]    constant may differ (optionally: must equal NEW)
+
+# r30 added one byte to struct ipa_ipfltri_rule_eq inside its 5.4 tail
+# padding (offset 181, sizeof stays 184). No driver code reads it.
+member is_frag_encoding
+
+# V2 rule ioctls carry rule_add_size / rule_mdfy_size. The driver accepts
+# any size <= its own struct and zero-fills the rest (ipa.c, the
+# "unexpected rule_add_size" checks), so the 5.4 structs only have to be a
+# prefix. r30 tail: ttl_update, qos_class (+ skip_ingress for rt).
+prefix ipa_rt_rule_v2
+prefix ipa_rt_rule_add_v2
+prefix ipa_rt_rule_add_ext_v2
+prefix ipa_rt_rule_mdfy_v2
+prefix ipa_flt_rule_v2
+prefix ipa_flt_rule_add_v2
+prefix ipa_flt_rule_mdfy_v2
+
+# EoGRE. IpaDscpVlanPcpMap_t is also the command the driver sends to the IPA
+# uC, so it stays as r30 has it. Not a silent mismatch: ADD/DEL_EoGRE_MAPPING
+# encode sizeof(struct ipa_ioc_eogre_info) in the ioctl number, so a 5.4
+# caller gets -ENOTTY, and the EoGRE events are only sent after that ioctl.
+struct IpaDscpVlanPcpMap_t
+struct ipa_ipgre_info
+struct ipa_ioc_eogre_info
+value IPA_IOC_ADD_EoGRE_MAPPING
+value IPA_IOC_DEL_EoGRE_MAPPING
+
+# QMI C structs. The wire format is TLV; these four are only used inside the
+# driver (ipa_qmi_service.c), never as a /dev/wwan_ioctl payload.
+struct ipa_indication_reg_req_msg_v01
+struct ipa_set_data_usage_quota_req_msg_v01
+struct ipa_stop_data_usage_quota_req_msg_v01
+struct ipa_data_usage_quota_reached_ind_msg_v01
+value QMI_IPA_SET_DATA_USAGE_QUOTA_REQ_MAX_MSG_LEN_V01
+value QMI_IPA_STOP_DATA_USAGE_QUOTA_REQ_MAX_MSG_LEN_V01
+value QMI_IPA_DATA_USAGE_QUOTA_REACHED_IND_MAX_MSG_LEN_V01
+
+# Limits of the r30 driver itself. No struct both headers share is sized by
+# them (the layout comparison would show it).
+#  - client table: 5.4 ends at 128, r30 at 141. NOTE the values 126 and 128
+#    mean different clients (5.4: Q6_DL_NLO_ETH_DATA_PROD / APPS_WAN_ETH_PROD,
+#    r30: reserved / IPSEC_DECAP_PROD); ethernet-only, not on this phone.
+value IPA_CLIENT_MAX 142
+#  - one event more than 5.4: IPA_WARNING_LIMIT_REACHED = 59, after all 5.4
+#    events (a 5.4 ipacm ignores it).
+value IPA_EVENT_MAX 60
+value IPA_EVENT_MAX_NUM 60
+#  - AP-side FnR counters: r30 gives the AP 32 (24 HW), 5.4 gave 128 (120).
+#    A request for more than 24 fails cleanly.
+value IPA_MAX_FLT_RT_CNT_INDEX 32
+value IPA_FLT_RT_HW_COUNTER 24
+#  - enum tails: 5.4 has L2 types 4-5 (AST) and proc types 13-15
+#    (WWAN_TO_ETHII_EX, GRE add/remove); r30 has RTP_METADATA_STREAM0-3 at
+#    13-16. Neither set is used on this phone (no AST/GRE/RTP offload).
+value IPA_HDR_L2_MAX 4
+value IPA_HDR_PROC_MAX 17
+value IPA_HW_MAX 26
+#  - 5.4 has IPACM_CLIENT_DEVICE_TYPE_ETH1 = 4; r30 rejects it.
+value IPACM_CLIENT_DEVICE_MAX 4
+value IPACM_MAX_CLIENT_DEVICE_TYPES 4

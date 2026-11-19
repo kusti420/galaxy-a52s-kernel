@@ -1372,7 +1372,50 @@
  						.common_data.num_usecases = 2;
  				} else {
  					rc =  of_property_read_string(
-@@ -467,6 +466,8 @@
+@@ -448,25 +447,40 @@
+ 					client_name);
+ 			}
+ 
+-			parent_node = of_parse_phandle(curr_node,
+-				"parent-node", 0);
+-			if (parent_node) {
+-				of_property_read_u32(parent_node, "cell-index",
+-					&cell_idx);
+-				curr_node_ptr->parent_node =
+-					soc_private->tree_node[cell_idx];
+-			} else {
+-				CAM_DBG(CAM_CPAS,
+-					"no parent node at this level");
+-			}
+ 		}
+ 	}
++	/*
++	 * a52sxq: link parents only after every level is parsed. The 6.12
++	 * board tree (fdtoverlay-merged) lists level0..level3, while 5.4
++	 * listed level3..level0, so the parent's tree_node[] was still NULL
++	 * and every AXI vote was dropped.
++	 */
++	for (i = 0; i < CAM_CPAS_MAX_TREE_NODES; i++) {
++		curr_node_ptr = soc_private->tree_node[i];
++		if (!curr_node_ptr)
++			continue;
++		parent_node = of_parse_phandle(curr_node_ptr->tree_dev_node,
++			"parent-node", 0);
++		if (!parent_node)
++			continue;
++		rc = of_property_read_u32(parent_node, "cell-index", &cell_idx);
++		of_node_put(parent_node);
++		if (rc || cell_idx >= CAM_CPAS_MAX_TREE_NODES ||
++		    !soc_private->tree_node[cell_idx]) {
++			CAM_ERR(CAM_CPAS, "%s: unresolved parent-node",
++				curr_node_ptr->node_name);
++			return -EINVAL;
++		}
++		curr_node_ptr->parent_node = soc_private->tree_node[cell_idx];
++	}
+ 	mutex_init(&cpas_core->tree_lock);
+ 	cam_cpas_util_debug_parse_data(soc_private);
+ 
  	return 0;
  }
  
@@ -1381,7 +1424,7 @@
  int cam_cpas_get_hw_features(struct platform_device *pdev,
  	struct cam_cpas_private_soc *soc_private)
  {
-@@ -484,7 +485,8 @@
+@@ -484,7 +498,8 @@
  	CAM_DBG(CAM_CPAS, "fuse info elements count %d", count);
  
  	if (count <= 0) {
@@ -1391,7 +1434,7 @@
  		goto end;
  	} else if (count%5 != 0) {
  		CAM_INFO(CAM_CPAS, "fuse entries should be multiple of 5 %d",
-@@ -715,6 +717,7 @@
+@@ -715,6 +730,7 @@
  		}
  
  		cpas_core->ahb_bus_client.common_data.dst_id = dst_args.args[0];
@@ -1399,7 +1442,7 @@
  
  		rc = of_property_read_u32(of_node, "cam-ahb-num-cases",
  			&cpas_core->ahb_bus_client.common_data.num_usecases);
-@@ -951,7 +954,7 @@
+@@ -951,7 +967,7 @@
  		return rc;
  	}
  

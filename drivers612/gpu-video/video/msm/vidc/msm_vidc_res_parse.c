@@ -1009,6 +1009,9 @@ static int msm_vidc_setup_context_bank(struct msm_vidc_platform_resources *res,
 	 /*
 	  * When memory is fragmented, below configuration increases the
 	  * possibility to get a mapping for buffer in the configured CB.
+	  * 6.12: iommu_dma_enable_best_fit_algo() is gone; the replacement is
+	  * the CB node's DT properties qcom,iova-best-fit and
+	  * qcom,iova-max-align-shift (a52sxq-video.dtsi).
 	  */
 
 	 /*

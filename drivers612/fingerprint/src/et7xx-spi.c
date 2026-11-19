@@ -518,6 +518,17 @@ static int et7xx_release(struct inode *inode, struct file *filp)
 #ifndef ENABLE_SENSORS_FPRINT_SECURE
 		int	dofree;
 #endif
+		/* a52sxq 6.12: the HAL died inside a sensor session (between
+		 * FP_SET_SPI_CLOCK and FP_DISABLE_SPI_CLOCK): drop the wakelock
+		 * and the rail, so suspend works and the restarted HAL gets a
+		 * real power-on sequence instead of "called duplicate".
+		 * Lock order device_list_lock -> buf_lock; ioctl takes only
+		 * buf_lock. */
+		mutex_lock(&etspi->buf_lock);
+		if (etspi->ldo_enabled)
+			et7xx_power_control(etspi, 0);
+		spi_clk_disable(etspi->clk_setting);
+		mutex_unlock(&etspi->buf_lock);
 		kfree(etspi->buf);
 		etspi->buf = NULL;
 

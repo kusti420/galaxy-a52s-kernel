@@ -222,7 +222,47 @@
  
  #if (KERNEL_VERSION(6, 12, 0) > LINUX_VERSION_CODE)
  static void msm_fb_output_poll_changed(struct drm_device *dev)
-@@ -1078,6 +1099,10 @@
+@@ -905,6 +926,30 @@
+ 	return ret;
+ }
+ 
++#if (KERNEL_VERSION(6, 12, 0) <= LINUX_VERSION_CODE)
++/*
++ * a52sxq: 6.12 removed drm_driver.lastclose; drm_lastclose() only calls the restore callback of the
++ * registered DRM clients. The donor registered "kms_client" with NULL funcs, so msm_lastclose() (plane /
++ * crtc custom property reset + null commit when the last DRM file closes) never ran: after the composer
++ * exited, the next DRM master inherited stale plane state (e.g. a scaler_v2 config) and its modeset
++ * failed in _sde_plane_validate_scaler_v2 (IchthysOS Abyss, 2026-11-18). 5.4 ran it via .lastclose.
++ */
++static void msm_lastclose(struct drm_device *dev);
++static int msm_kms_client_restore(struct drm_client_dev *client)
++{
++	msm_lastclose(client->dev);
++	return 0;
++}
++
++static const struct drm_client_funcs msm_kms_client_funcs = {
++	.owner = THIS_MODULE,
++	.restore = msm_kms_client_restore,
++};
++#define MSM_KMS_CLIENT_FUNCS (&msm_kms_client_funcs)
++#else
++#define MSM_KMS_CLIENT_FUNCS NULL
++#endif
++
+ static int msm_drm_component_init(struct device *dev)
+ {
+ 	struct platform_device *pdev = to_platform_device(dev);
+@@ -1012,7 +1057,7 @@
+ 
+ 	/* create drm client only when fbdev is not supported */
+ 	if (!priv->fbdev) {
+-		ret = drm_client_init(ddev, &kms->client, "kms_client", NULL);
++		ret = drm_client_init(ddev, &kms->client, "kms_client", MSM_KMS_CLIENT_FUNCS);
+ 		if (ret) {
+ 			DRM_ERROR("failed to init kms_client: %d\n", ret);
+ 			kms->client.dev = NULL;
+@@ -1078,6 +1123,10 @@
   * DRM operations:
   */
  
@@ -233,7 +273,7 @@
  static int context_init(struct drm_device *dev, struct drm_file *file)
  {
  	struct msm_file_private *ctx;
-@@ -1109,6 +1134,14 @@
+@@ -1109,6 +1158,14 @@
  
  static void context_close(struct msm_file_private *ctx)
  {
@@ -248,7 +288,7 @@
  	kfree(ctx);
  }
  
-@@ -1709,6 +1742,11 @@
+@@ -1709,6 +1766,11 @@
  
  	priv = dev->dev_private;
  
@@ -260,7 +300,167 @@
  	mutex_lock(&ctx->power_lock);
  
  	old_cnt = ctx->enable_refcnt;
-@@ -2446,6 +2484,11 @@
+@@ -1844,6 +1906,146 @@
+ 			DRM_UNLOCKED),
+ };
+ 
++/*
++ * a52sxq: the 5.4 display UAPI told userspace the panel type in drm_mode_modeinfo.flags
++ * (DRM_MODE_FLAG_VID_MODE_PANEL 1 << 29, DRM_MODE_FLAG_CMD_MODE_PANEL 1 << 30; 5.4
++ * dsi_drm.c convert_to_drm_mode). The ROM's composer (hardware/qcom-caf/sm8350/display,
++ * sdm hw_device_drm.cpp PopulateDisplayAttributes) sets smart_panel only from that flag, and
++ * HWCSession::GetDozeSupport() = HasSmartPanelConfig(): without it the composer reports "no doze",
++ * SurfaceFlinger sends ON for DOZE, CONNECTOR_PROP_LP never becomes LP1 and the panel never enters
++ * LPM (AOD at full power, 120 Hz; pm_suspend then blanks the non-LP connector). The r7 techpack
++ * moved the information into the mode blob (panel_mode_capabilities) and the GKI DRM core rejects
++ * unknown mode flags (drm_mode_validate_basic: ~DRM_MODE_FLAG_ALL -> MODE_BAD), so the flag cannot
++ * live in the kernel's own modes. Translate at the ioctl boundary instead:
++ *  - GETCONNECTOR: add the flag to every mode copied out for a DSI connector;
++ *  - CREATEPROPBLOB of a mode / SETCRTC: strip the two bits again before the core sees them.
++ */
++#define A52_MODE_FLAG_VID_PANEL	(1U << 29)
++#define A52_MODE_FLAG_CMD_PANEL	(1U << 30)
++#define A52_MODE_FLAG_PANEL	(A52_MODE_FLAG_VID_PANEL | A52_MODE_FLAG_CMD_PANEL)
++int a52_dsi_conn_panel_cmd_mode(struct drm_connector *connector);
++
++static long a52_createblob(struct file *filp, void __user *uarg, bool *handled)
++{
++	struct drm_file *file_priv = filp->private_data;
++	struct drm_device *dev = file_priv->minor->dev;
++	struct drm_mode_create_blob cb;
++	struct drm_mode_modeinfo m;
++	struct drm_property_blob *blob;
++
++	*handled = false;
++	if (copy_from_user(&cb, uarg, sizeof(cb)) || cb.length != sizeof(m))
++		return 0;
++	if (copy_from_user(&m, u64_to_user_ptr(cb.data), sizeof(m)) ||
++	    !(m.flags & A52_MODE_FLAG_PANEL))
++		return 0;
++
++	/* the body of drm_mode_createblob_ioctl() with the cleaned mode */
++	*handled = true;
++	m.flags &= ~A52_MODE_FLAG_PANEL;
++	blob = drm_property_create_blob(dev, sizeof(m), &m);
++	if (IS_ERR(blob))
++		return PTR_ERR(blob);
++	mutex_lock(&dev->mode_config.blob_lock);
++	cb.blob_id = blob->base.id;
++	if (copy_to_user(uarg, &cb, sizeof(cb))) {
++		mutex_unlock(&dev->mode_config.blob_lock);
++		drm_property_blob_put(blob);
++		return -EFAULT;
++	}
++	list_add_tail(&blob->head_file, &file_priv->blobs);
++	mutex_unlock(&dev->mode_config.blob_lock);
++	return 0;
++}
++
++static void a52_getconnector_fixup(struct file *filp, void __user *uarg, u32 in_count)
++{
++	struct drm_file *file_priv = filp->private_data;
++	struct drm_device *dev = file_priv->minor->dev;
++	struct drm_mode_get_connector gc;
++	struct drm_mode_modeinfo __user *um;
++	struct drm_connector *conn;
++	u32 i, flags, add;
++	int cmd;
++
++	if (copy_from_user(&gc, uarg, sizeof(gc)) || !gc.modes_ptr || !gc.count_modes ||
++	    in_count < gc.count_modes)		/* the core copied modes only when they all fit */
++		return;
++	conn = drm_connector_lookup(dev, file_priv, gc.connector_id);
++	if (!conn)
++		return;
++	cmd = a52_dsi_conn_panel_cmd_mode(conn);
++	drm_connector_put(conn);
++	if (cmd < 0)
++		return;
++	add = cmd ? A52_MODE_FLAG_CMD_PANEL : A52_MODE_FLAG_VID_PANEL;
++	um = u64_to_user_ptr(gc.modes_ptr);
++	for (i = 0; i < gc.count_modes; i++) {
++		if (get_user(flags, &um[i].flags))
++			return;
++		if (put_user((flags & ~A52_MODE_FLAG_PANEL) | add, &um[i].flags))
++			return;
++	}
++}
++
++static long a52_drm_ioctl_common(struct file *filp, unsigned int cmd, unsigned long arg,
++		long (*fn)(struct file *, unsigned int, unsigned long))
++{
++	void __user *uarg = (void __user *)arg;
++	u32 in_count = 0;
++	long ret;
++
++	switch (cmd) {
++	case DRM_IOCTL_MODE_CREATEPROPBLOB: {
++		bool handled;
++
++		ret = a52_createblob(filp, uarg, &handled);
++		if (handled)
++			return ret;
++		break;
++	}
++	case DRM_IOCTL_MODE_SETCRTC: {
++		struct drm_mode_crtc c;
++
++		/* legacy modeset with a mode taken from GETCONNECTOR (_IOWR: the core copies the struct back anyway) */
++		if (!copy_from_user(&c, uarg, sizeof(c)) && c.mode_valid &&
++		    (c.mode.flags & A52_MODE_FLAG_PANEL)) {
++			c.mode.flags &= ~A52_MODE_FLAG_PANEL;
++			if (copy_to_user(uarg, &c, sizeof(c)))
++				return -EFAULT;
++		}
++		break;
++	}
++	case DRM_IOCTL_MODE_GETCONNECTOR: {
++		struct drm_mode_get_connector gc;
++
++		if (!copy_from_user(&gc, uarg, sizeof(gc)))
++			in_count = gc.count_modes;
++		break;
++	}
++	default:
++		break;
++	}
++
++	ret = fn(filp, cmd, arg);
++	if (!ret && cmd == DRM_IOCTL_MODE_GETCONNECTOR)
++		a52_getconnector_fixup(filp, uarg, in_count);
++	return ret;
++}
++
++static long a52_drm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++	return a52_drm_ioctl_common(filp, cmd, arg, drm_ioctl);
++}
++
++#ifdef CONFIG_COMPAT
++static long a52_drm_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
++{
++	/* the three structs have the same layout for 32-bit callers (u64 pointers) */
++	return a52_drm_ioctl_common(filp, cmd, arg, drm_compat_ioctl);
++}
++#endif
++
+ static const struct file_operations fops = {
+ 	.owner              = THIS_MODULE,
+ 	.open               = drm_open,
+@@ -1851,8 +2053,10 @@
+ #if (KERNEL_VERSION(6, 10, 0) <= LINUX_VERSION_CODE)
+ 	.fop_flags          = FOP_UNSIGNED_OFFSET,
+ #endif
+-	.unlocked_ioctl     = drm_ioctl,
+-	.compat_ioctl       = drm_compat_ioctl,
++	.unlocked_ioctl     = a52_drm_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl       = a52_drm_compat_ioctl,
++#endif
+ 	.poll               = drm_poll,
+ 	.read               = drm_read,
+ #if (KERNEL_VERSION(6, 12, 0) > LINUX_VERSION_CODE)
+@@ -2446,6 +2650,11 @@
  module_init(msm_drm_register);
  module_exit(msm_drm_unregister);
  
@@ -2372,6 +2572,28 @@
  		memset(&drm_mode, 0x0, sizeof(drm_mode));
  		dsi_convert_to_drm_mode(&modes[i], &drm_mode);
  		m = drm_mode_duplicate(connector->dev, &drm_mode);
+@@ -1569,3 +1628,21 @@
+ 
+ 	return 0;
+ }
++
++/*
++ * a52sxq: 5.4 UAPI compatibility (see a52_drm_ioctl() in msm_drv.c): is this DSI connector's
++ * panel a command-mode panel? 1 = command, 0 = video, -1 = not a DSI panel / unknown.
++ */
++int a52_dsi_conn_panel_cmd_mode(struct drm_connector *connector)
++{
++	struct sde_connector *c_conn;
++	struct dsi_display *display;
++
++	if (!connector || connector->connector_type != DRM_MODE_CONNECTOR_DSI)
++		return -1;
++	c_conn = to_sde_connector(connector);
++	display = c_conn->display;
++	if (!display || !display->panel)
++		return -1;
++	return display->panel->panel_mode == DSI_OP_CMD_MODE ? 1 : 0;
++}
 --- a/msm/dsi/dsi_panel.c
 +++ b/msm/dsi/dsi_panel.c
 @@ -18,6 +18,10 @@
@@ -5028,6 +5250,55 @@
  			pre_off_ms = vreg->pre_off_sleep;
  			post_off_ms = vreg->post_off_sleep;
  
+--- a/msm/sde/sde_color_processing.c
++++ b/msm/sde/sde_color_processing.c
+@@ -1347,6 +1347,23 @@
+ 	return ret;
+ }
+ 
++/*
++ * a52sxq: the phone's composer/QDCM blobs are built against the 5.4 UAPI, where
++ * struct drm_msm_sixzone ends after curve[] (kernel_a52sxq_bone msm_drm_pp.h). r7 appended
++ * sat_adjust_p0/p1 and curve_p2[]; the 5.4 struct is a strict prefix.
++ */
++struct drm_msm_sixzone_v54 {
++	__u64 flags;
++	__u32 threshold;
++	__u32 adjust_p0;
++	__u32 adjust_p1;
++	__u32 sat_hold;
++	__u32 val_hold;
++	struct drm_msm_sixzone_curve curve[SIXZONE_LUT_SIZE];
++};
++static_assert(offsetofend(struct drm_msm_sixzone_v54, curve) ==
++		offsetof(struct drm_msm_sixzone, sat_adjust_p0));
++
+ static int _sde_cp_crtc_cache_blob_property(struct drm_crtc *crtc,
+ 					       struct sde_cp_node *prop_node,
+ 					       uint64_t val)
+@@ -1371,6 +1388,22 @@
+ 		DRM_ERROR("invalid blob id %lld feature %d\n", val, prop_node->feature);
+ 		return -EINVAL;
+ 	}
++	if (prop_node->feature == SDE_CP_CRTC_DSPP_SIXZONE &&
++			prop_node->prop_blob_sz == sizeof(struct drm_msm_sixzone) &&
++			blob->length == sizeof(struct drm_msm_sixzone_v54)) {
++		/* a52sxq: 5.4-size sixzone blob: zero-extend it (new r7 fields off) instead of
++		 * rejecting it. Only the named fields are copied, not the 5.4 tail padding. */
++		struct drm_property_blob *nb = drm_property_create_blob(crtc->dev,
++				sizeof(struct drm_msm_sixzone), NULL);
++
++		if (IS_ERR(nb)) {
++			drm_property_blob_put(blob);
++			return PTR_ERR(nb);
++		}
++		memcpy(nb->data, blob->data, offsetofend(struct drm_msm_sixzone_v54, curve));
++		drm_property_blob_put(blob);
++		blob = nb;
++	}
+ 	if (blob->length != prop_node->prop_blob_sz) {
+ 		DRM_ERROR("invalid blob len %zd exp %d feature %d\n",
+ 		    blob->length, prop_node->prop_blob_sz, prop_node->feature);
 --- a/msm/sde/sde_connector.c
 +++ b/msm/sde/sde_connector.c
 @@ -22,6 +22,9 @@
@@ -5168,7 +5439,7 @@
  int sde_connector_pre_kickoff(struct drm_connector *connector)
  {
  	struct sde_connector *c_conn;
-@@ -1023,6 +1064,11 @@
+@@ -1023,6 +1064,12 @@
  	struct msm_display_kickoff_params params;
  	struct dsi_display *display;
  	int rc;
@@ -5176,11 +5447,12 @@
 +	struct samsung_display_driver_data *vdd;
 +	u32 finger_mask_state;
 +	bool fod, fod_edge, prop_edge, want;
++	int sysfs_req;
 +#endif
  
  	if (!connector) {
  		SDE_ERROR("invalid argument\n");
-@@ -1061,6 +1107,77 @@
+@@ -1061,6 +1108,102 @@
  
  	SDE_EVT32_VERBOSE(connector->base.id);
  
@@ -5207,6 +5479,15 @@
 +			 * default mask level (331, what the HAL writes), a value > 1 is the mask
 +			 * level itself. S23 stock compared the property with vdd->finger_mask on
 +			 * every kickoff, which would cancel a mask set through sysfs.
++			 *
++			 * The sysfs path itself: the S23 mask_brightness store only records a
++			 * level, so ss_finger_hbm_store leaves a one-shot request in
++			 * vdd->ichthys_sysfs_mask_req and it is applied below, at the next
++			 * kickoff (where 5.4 dsi_display_pre_kickoff consumed the store's
++			 * finger_mask_updated). A sysfs write is authoritative when it arrives,
++			 * as on 5.4: the HAL's fallback "331" lights the mask with the property
++			 * at 0, and its release watchdog's "0" drops a mask the composer still
++			 * holds through a property stuck at 1 (no edge).
 +			 */
 +			/*
 +			 * a52sxq: LineageOS 5.4 FOD (5.4 sde_crtc.c:5036-5057 +
@@ -5231,8 +5512,24 @@
 +			c_conn->ichthys_fod_layer = fod;
 +			c_conn->ichthys_finger_mask_prop = finger_mask_state;
 +			want = fod || finger_mask_state != 0;
++			sysfs_req = xchg(&vdd->ichthys_sysfs_mask_req, 0);
 +
-+			if ((prop_edge || fod_edge || (fod && !vdd->finger_mask)) &&
++			if (sysfs_req) {
++				/* 0 = none, 1 = off, level + 1 = on (ss_finger_hbm_store) */
++				want = sysfs_req > 1;
++				if (want != !!vdd->finger_mask) {
++					mutex_lock(&vdd->vrr.vrr_lock);
++					vdd->br_info.common_br.finger_mask_bl_level =
++						want ? sysfs_req - 1 : 0;
++					SDE_INFO("[FINGER_MASK] sysfs %d -> mask %d\n",
++						sysfs_req - 1, want);
++					vdd->finger_mask_updated = true;
++					vdd->finger_mask = want;
++					ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
++					vdd->finger_mask_updated = false;
++					mutex_unlock(&vdd->vrr.vrr_lock);
++				}
++			} else if ((prop_edge || fod_edge || (fod && !vdd->finger_mask)) &&
 +					want != !!vdd->finger_mask) {
 +				mutex_lock(&vdd->vrr.vrr_lock);
 +				vdd->br_info.common_br.finger_mask_bl_level = !want ? 0 :
@@ -5258,7 +5555,7 @@
  	rc = c_conn->ops.pre_kickoff(connector, c_conn->display, &params);
  
  	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI)
-@@ -1159,6 +1276,9 @@
+@@ -1159,6 +1302,9 @@
  	struct sde_connector *c_conn = NULL;
  	struct dsi_display *display;
  	struct sde_kms *sde_kms;
@@ -5268,7 +5565,7 @@
  
  	sde_kms = sde_connector_get_kms(connector);
  	if (!sde_kms) {
-@@ -1184,7 +1304,24 @@
+@@ -1184,7 +1330,24 @@
  	if (!sde_in_trusted_vm(sde_kms) && c_conn->bl_device && !display->poms_pending) {
  		c_conn->bl_device->props.power = FB_BLANK_UNBLANK;
  		c_conn->bl_device->props.state &= ~BL_CORE_FBBLANK;
@@ -5293,7 +5590,7 @@
  	}
  }
  
-@@ -2807,6 +2944,14 @@
+@@ -2807,6 +2970,14 @@
  
  	SDE_EVT32(SDE_EVTLOG_ERROR);
  	conn->panel_dead = true;
@@ -5308,7 +5605,7 @@
  	sde_encoder_display_failure_notification(conn->encoder,
  		skip_pre_kickoff);
  
-@@ -2863,8 +3008,13 @@
+@@ -2863,8 +3034,13 @@
  		mutex_unlock(&sde_conn->lock);
  		return -ETIMEDOUT;
  	}
@@ -5322,7 +5619,7 @@
  	mutex_unlock(&sde_conn->lock);
  
  	if (ret <= 0) {
-@@ -2916,8 +3066,10 @@
+@@ -2916,8 +3092,10 @@
  		/* If debugfs property is not set then take default value */
  		interval = conn->esd_status_interval ?
  			conn->esd_status_interval : STATUS_CHECK_INTERVAL_MS;
@@ -5333,7 +5630,7 @@
  		return;
  	}
  
-@@ -3300,6 +3452,13 @@
+@@ -3300,6 +3478,13 @@
  		0x0, 0, MAX_BL_SCALE_LEVEL, MAX_BL_SCALE_LEVEL,
  		CONNECTOR_PROP_BL_SCALE);
  

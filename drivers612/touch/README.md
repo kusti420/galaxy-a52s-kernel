@@ -9,7 +9,7 @@ the phone.
 |---|---|
 | `src/` | The ported sources + `Kbuild`. Builds 8 modules (below). |
 | `orig/` | Untouched copy of the same files from the phone's 5.4 kernel (`drivers/input/sec_input` and `stm/`). `diff -ru orig src` is the complete change record. |
-| `port-5.4-to-6.12.patch` | That diff, sources only (8 files, 363 lines). Regenerate after any source change. |
+| `port-5.4-to-6.12.patch` | That diff, sources only (8 files, 547 lines). Regenerate after any source change. |
 | `build.sh` | Compile check against `bsp612/out/lahaina` (read-only). `VBUS=1 ./build.sh` also hooks the charger notifier of `drivers612/power`. |
 | `a52sxq-touch.dtsi` | Touch node, pins, rail, `ss_touch`, hall alternative; keys check in a comment. Applies on `bsp612/out/dist/dtb/yupik.dtb` (tested with `fdtoverlay`; the merged node equals the phone's value for value). |
 | `touch-test.sh` | First on-device test for the busybox ramdisk. |
@@ -60,6 +60,14 @@ INPUT_SEC_NOTIFIER, INPUT_SEC_SECURE_TOUCH, DRV_SAMSUNG, TOUCHSCREEN_STM, SAMSUN
 5. `stm_cmd.c`: six `snprintf` calls relied on truncation (`-Wformat-truncation` is an error
    now); the format strings were shortened to exactly what was printed before. Output unchanged.
 6. `stm_fw.c`: `static const int` return type; `stm_core.c`: an unused variable.
+7. Audit 2026-11-18. `stm_core.c` `stm_ts_stop_device()`: drops the LPM irq wake itself
+   (a reset in LPM leaked wake depth; the 6.12 TLMM re-enables a wake-armed IRQ at suspend);
+   the duplicate call in `stm_cmd.c` `fod_enable` is removed. `stm_fw.c` / `stm_core.c` /
+   `stm_dev.h`: when the firmware bin is not readable at probe (first-stage load, `-ENOENT`),
+   `work_fw_recheck` reads it once 60 s after probe (retries while the screen is off, 5 x
+   60 s), fills the `*_of_bin` versions and updates only if the IC is older (same compare as
+   at probe). A corrupted IC is not covered by this: the bin must be in the first-stage
+   ramdisk (`/lib/firmware/tsp_stm/`), which is a realboot packaging change.
 7. `CONFIG_GH_RM_DRV` guards renamed to `CONFIG_SEC_INPUT_GH_TRUSTED_TOUCH` (never defined).
    The 6.12 BSP sets `GH_RM_DRV=m`, which would have switched on Qualcomm trusted-touch code
    that the phone's 5.4 kernel never built (it has `HH_RM_DRV`, a different name).

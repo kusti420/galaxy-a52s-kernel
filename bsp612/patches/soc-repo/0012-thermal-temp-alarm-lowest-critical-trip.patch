@@ -1,0 +1,48 @@
+a52sxq: qcom-spmi-temp-alarm: use the lowest critical trip
+
+qpnp_tm_init() (no TEMP_DAC, not LITE) sets the PMIC stage thresholds from
+thermal_zone_get_crit_temp(), i.e. the first critical trip in DT order. The a52sxq zones have
+two critical trips (115 C and 145 C) and an overlay merge reversed their order once: the driver
+then took 145 C, every over-temperature stage moved up by 10 C and the stage 2 shutdown
+override was lost (audit 2026-11-18, confirmed 43; the DT order is fixed in dt-fix.sh). Take
+the lowest critical trip so that the result no longer depends on the node order. With trips in
+ascending order (5.4 and the fixed tree) nothing changes.
+
+--- a/drivers/thermal/qcom/qcom-spmi-temp-alarm.c
++++ b/drivers/thermal/qcom/qcom-spmi-temp-alarm.c
+@@ -645,6 +645,23 @@
+  * current thermal stage and threshold. Setup threshold control and
+  * disable shutdown override.
+  */
++/*
++ * a52sxq: lowest critical trip of the zone. thermal_zone_get_crit_temp() returns the first
++ * critical trip in DT order, and an overlay merge can reverse the trips (trip2 145 C ahead of
++ * trip1 115 C: every stage +10 C). 5.4 had the 115 C trip first; do not depend on the order.
++ */
++static int qpnp_tm_lowest_crit_trip(struct thermal_trip *trip, void *data)
++{
++	int *crit_temp = data;
++
++	if (trip->type == THERMAL_TRIP_CRITICAL &&
++	    trip->temperature != THERMAL_TEMP_INVALID &&
++	    (*crit_temp == THERMAL_TEMP_INVALID || trip->temperature < *crit_temp))
++		*crit_temp = trip->temperature;
++
++	return 0;
++}
++
+ static int qpnp_tm_init(struct qpnp_tm_chip *chip)
+ {
+ 	unsigned int stage;
+@@ -690,9 +707,8 @@
+ 	} else {
+ 		mutex_unlock(&chip->lock);
+ 
+-		ret = thermal_zone_get_crit_temp(chip->tz_dev, &crit_temp);
+-		if (ret)
+-			crit_temp = THERMAL_TEMP_INVALID;
++		crit_temp = THERMAL_TEMP_INVALID;
++		thermal_zone_for_each_trip(chip->tz_dev, qpnp_tm_lowest_crit_trip, &crit_temp);
+ 
+ 		mutex_lock(&chip->lock);
+ 

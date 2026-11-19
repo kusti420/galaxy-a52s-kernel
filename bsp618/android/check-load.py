@@ -64,15 +64,16 @@ def modinfo(e):
 def analyse(path):
     e = Elf(path)
     und, weak, exp = set(), set(), {}
-    kcrc_i = e.by.get('__kcrctab', (None,))[0]
-    kcrc = e.sec('__kcrctab')
+    # EXPORT_SYMBOL CRCs live in __kcrctab, EXPORT_SYMBOL_GPL ones in __kcrctab_gpl (2026-11-18: the
+    # GPL section was not read, so a stale ion_alloc CRC in camera.ko passed and init's insmod failed)
+    kcrcs = {e.by[n][0]: e.sec(n) for n in ('__kcrctab', '__kcrctab_gpl') if n in e.by and e.sec(n) is not None}
     for name, bind, shndx, val in e.symbols():
         if not name:
             continue
         if shndx == 0:
             (weak if bind == 2 else und).add(name)
-        elif name.startswith('__crc_') and kcrc is not None and shndx == kcrc_i:
-            exp[name[6:]] = struct.unpack_from('<I', kcrc, val)[0]
+        elif name.startswith('__crc_') and shndx in kcrcs:
+            exp[name[6:]] = struct.unpack_from('<I', kcrcs[shndx], val)[0]
         elif name.startswith('__ksymtab_') and not name.startswith('__ksymtab_strings'):
             exp.setdefault(name[10:], None)
     for s in (e.sec('__ksymtab_strings') or b'').split(b'\0'):

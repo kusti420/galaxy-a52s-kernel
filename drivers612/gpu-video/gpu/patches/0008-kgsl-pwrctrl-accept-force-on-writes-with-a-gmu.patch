@@ -1,0 +1,26 @@
+diff --git a/drivers612/gpu-video/gpu/src/kgsl_pwrctrl.c b/drivers612/gpu-video/gpu/src/kgsl_pwrctrl.c
+index 3d68a35..3b50ced 100644
+--- a/drivers612/gpu-video/gpu/src/kgsl_pwrctrl.c
++++ b/drivers612/gpu-video/gpu/src/kgsl_pwrctrl.c
+@@ -745,13 +745,18 @@ static ssize_t __force_on_store(struct device *dev,
+ 	struct kgsl_device *device = dev_get_drvdata(dev);
+ 	int ret;
+ 
+-	if (gmu_core_gpmu_isenabled(device))
+-		return -EOPNOTSUPP;
+-
+ 	ret = kstrtou32(buf, 0, &val);
+ 	if (ret)
+ 		return ret;
+ 
++	/*
++	 * a52sxq: with a GMU the force flags cannot be honoured (the GMU owns clocks and rails), but
++	 * the ROM's Power HAL writes force_clk_on / force_rail_on on every hint and retries a failed
++	 * node every 0.5 s for ever (5.4 accepted the write). Accept a well-formed value and ignore it.
++	 */
++	if (gmu_core_gpmu_isenabled(device))
++		return count;
++
+ 	kgsl_mutex_lock(&device->mutex);
+ 	__force_on(device, flag, val);
+ 	kgsl_mutex_unlock(&device->mutex);

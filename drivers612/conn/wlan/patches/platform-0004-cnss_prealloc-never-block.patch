@@ -1,0 +1,68 @@
+Subject: [PATCH] cnss_prealloc: never block in wcnss_prealloc_get()
+
+In process context wcnss_prealloc_get() passed GFP_KERNEL to
+mempool_alloc(), which then never returns NULL: with the reserve used up it
+sleeps uninterruptibly in 5 s steps, so qdf's kzalloc fallback is never
+reached. The 5.4 driver returned NULL at once. Drop direct reclaim (and
+__GFP_ZERO, which mempool forbids; qdf memsets the buffer), do not take a
+bigger class's reserve for a small request on slab-backed pools, and make
+the now-normal "not available" message a ratelimited debug print.
+(audit 2026-11-18)
+---
+ cnss_prealloc/cnss_prealloc.c | 23 +++++++++++++----------
+ 1 file changed, 13 insertions(+), 10 deletions(-)
+
+--- a/cnss_prealloc/cnss_prealloc.c
++++ b/cnss_prealloc/cnss_prealloc.c
+@@ -999,7 +999,7 @@
+ {
+ 
+ 	void *mem = NULL;
+-	gfp_t gfp_mask = __GFP_ZERO;
++	gfp_t gfp_mask = __GFP_NOWARN;	/* qdf memsets; mempool forbids __GFP_ZERO */
+ 	unsigned long irq_flags;
+ 	int i;
+ 	int ret = 0;
+@@ -1009,11 +1009,11 @@
+ 
+ 	if (in_interrupt() || !preemptible() || rcu_preempt_depth())
+ 		gfp_mask |= GFP_ATOMIC;
+-	else {
+-		gfp_mask |= GFP_KERNEL;
+-		if (cnss_force_prealloc_pool)
+-			gfp_mask &= ~__GFP_DIRECT_RECLAIM;
+-	}
++	else
++		/* Never sleep in mempool_alloc() waiting for the reserve: return
++		 * NULL so qdf falls back to kzalloc (the 5.4 wcnss_prealloc contract).
++		 */
++		gfp_mask |= GFP_KERNEL & ~__GFP_DIRECT_RECLAIM;
+ 
+ 	if (size > cnss_pool_alloc_threshold()) {
+ 
+@@ -1037,6 +1037,11 @@
+ 							       irq_flags);
+ 					break;
+ 				}
++				/* Slab-backed pools (WCN6750): do not burn a bigger
++				 * class's reserve on a small request; let qdf kzalloc it.
++				 */
++				if (!cnss_force_prealloc_pool)
++					break;
+ 			}
+ 		}
+ 	}
+@@ -1045,10 +1050,9 @@
+ 		mem = NULL;
+ 	}
+ 
+-	if (!mem && size > cnss_pool_alloc_threshold()) {
+-		pr_err("cnss_prealloc: not available for size %zu, flag %x\n",
+-		       size, gfp_mask);
+-	}
++	if (!mem && size > cnss_pool_alloc_threshold())
++		pr_debug_ratelimited("cnss_prealloc: not available for size %zu, flag %x\n",
++				     size, gfp_mask);
+ 
+ 	return mem;
+ }

@@ -685,6 +685,7 @@ struct tas256x_priv {
 	struct mutex file_lock;
 #endif
 	struct delayed_work irq_work;
+	bool irq_work_deferred; /* a52sxq: irq work skipped while suspended */
 	struct delayed_work init_work;
 	struct delayed_work dc_work;
 	int iv_enable;

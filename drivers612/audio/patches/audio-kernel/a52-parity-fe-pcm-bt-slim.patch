@@ -1,0 +1,179 @@
+a52sxq 6.12 audio: 5.4 parity for the HAL's PCM ids and the Bluetooth back ends (2026-11-18)
+
+Offline parity audit (drivers612/PARITY-2026-11-18.md, P0 items 1 and 2). Compiled only.
+
+1. asoc/msm-dai-fe.c: FE DAI "MultiMedia11" (hw:24) is a PCM again. The Samsung HAL opens
+   hw:24 as primary-playback; 5.4 drops .compress_new under CONFIG_SEC_SND_PRIMARY, the port
+   had kept msm_fe_compress_dai_ops (compress node C0D24, "cannot open device 24").
+2. asoc/lahaina.c: link hw:43 "Compress3" is MultiMedia10 on msm-pcm-dsp.1 (PCM) as on 5.4,
+   not MultiMedia20 on msm-compress-dsp.
+3. asoc/lahaina.c: the 5.4 Bluetooth back-end table (SLIMBUS_7_RX/TX, msm_wcn_init,
+   msm_wcn_ops) is compiled again and selected by the sound node property qcom,wcn-btfm
+   (empty or <1>); <2> selects Qualcomm's 3-link table (adds SLIMBUS_8_TX). qcom,wcn-bt stays
+   ignored (see the comment in populate_snd_card_dailinks). Codec name stays
+   "btfmslim_slave": that is what drivers612/conn/bt/btfmslim registers (built with
+   -DCONFIG_BTFM_SLIM).
+
+Apply in audio-kernel/ with: patch -p1 < this file (after a52-audit-2026-11-18.patch).
+
+--- a/asoc/msm-dai-fe.c	2026-11-18 20:57:28.359993454 +0200
++++ b/asoc/msm-dai-fe.c	2026-11-18 20:57:28.361149103 +0200
+@@ -2405,8 +2405,12 @@
+ 			.rate_min =	8000,
+ 			.rate_max = 384000,
+ 		},
+-		.ops = &msm_fe_compress_dai_ops,
+-		//.compress_new = msm_compr_new,
++		/*
++		 * a52sxq: hw:24 is the Samsung HAL's primary-playback PCM. 5.4 drops
++		 * .compress_new here under CONFIG_SEC_SND_PRIMARY (and the machine link
++		 * is MultiMedia11 on msm-pcm-dsp.0), so this must be a PCM front end.
++		 */
++		.ops = &msm_fe_Multimedia_dai_ops,
+ 		.name = "MultiMedia11",
+ 	},
+ 	{
+--- a/asoc/lahaina.c	2026-11-18 20:57:28.359905960 +0200
++++ b/asoc/lahaina.c	2026-11-18 20:57:28.360896830 +0200
+@@ -5659,7 +5659,6 @@
+ 	return ret;
+ }
+ 
+-#if 0
+ static int msm_wcn_hw_params(struct snd_pcm_substream *substream,
+ 			     struct snd_pcm_hw_params *params)
+ {
+@@ -5694,7 +5693,6 @@
+ err:
+ 	return ret;
+ }
+-#endif
+ 
+ #ifndef CONFIG_AUXPCM_DISABLE
+ static struct snd_soc_ops lahaina_aux_be_ops = {
+@@ -5724,9 +5722,9 @@
+ 	.hw_params = msm_snd_cdc_dma_hw_params,
+ };
+ 
+-/*static struct snd_soc_ops msm_wcn_ops = {
++static struct snd_soc_ops msm_wcn_ops = {
+ 	.hw_params = msm_wcn_hw_params,
+-};*/
++};
+ 
+ static struct snd_soc_ops msm_wcn_ops_lito = {
+ 	.hw_params = msm_wcn_hw_params_lito,
+@@ -5838,7 +5836,6 @@
+ 	SND_SOC_DAPM_MIC("Digital Mic7", NULL),
+ };
+ 
+-#if 0
+ static int msm_wcn_init(struct snd_soc_pcm_runtime *rtd)
+ {
+ 	unsigned int rx_ch[WCN_CDC_SLIM_RX_CH_MAX] = {157, 158};
+@@ -5848,7 +5845,6 @@
+ 	return snd_soc_dai_set_channel_map(codec_dai, ARRAY_SIZE(tx_ch),
+ 					   tx_ch, ARRAY_SIZE(rx_ch), rx_ch);
+ }
+-#endif
+ 
+ static int msm_wcn_init_lito(struct snd_soc_pcm_runtime *rtd)
+ {
+@@ -6453,6 +6449,12 @@
+ 		SND_SOC_DAILINK_REG(afepcm_tx1),
+ 	},
+         {/* hw:x,43 */
++		/*
++		 * a52sxq: as on the phone's 5.4 kernel (Samsung): hw:43 keeps the name
++		 * "Compress3" but is a second PCM front end of MultiMedia10 on
++		 * msm-pcm-dsp.1 (mixer_paths routes this use case through
++		 * "... Audio Mixer MultiMedia10"), not MultiMedia20 on msm-compress-dsp.
++		 */
+ 		.name = "Compress3",
+ 		.stream_name = "Compress3",
+ 		.dynamic = 1,
+@@ -6462,8 +6464,8 @@
+ 		.ignore_suspend = 1,
+ 		.ignore_pmdown_time = 1,
+ 		/* this dainlink has playback support */
+-		.id = MSM_FRONTEND_DAI_MULTIMEDIA20,
+-		SND_SOC_DAILINK_REG(multimedia20),
++		.id = MSM_FRONTEND_DAI_MULTIMEDIA10,
++		SND_SOC_DAILINK_REG(multimedia10),
+ 	},
+ 	{/* hw:x,44 */
+ 		.name = "Secondary MI2S_TX Hostless",
+@@ -6767,7 +6769,11 @@
+ 	},
+ };
+ 
+-#if 0
++/*
++ * a52sxq: the 5.4 Bluetooth back ends (SLIMBUS_7_RX/TX on the bt_fm_slim codec, device
++ * name "btfmslim_slave"). 5.4 adds them for qcom,wcn-bt = <1>; here they are added for
++ * qcom,wcn-btfm (see populate_snd_card_dailinks).
++ */
+ static struct snd_soc_dai_link msm_wcn_be_dai_links[] = {
+ 	{
+ 		.name = LPASS_BE_SLIMBUS_7_RX,
+@@ -6795,7 +6801,6 @@
+ 		SND_SOC_DAILINK_REG(slimbus_7_tx),
+ 	},
+ };
+-#endif
+ 
+ static struct snd_soc_dai_link msm_wcn_btfm_be_dai_links[] = {
+ 	{
+@@ -7409,7 +7414,7 @@
+ 			ARRAY_SIZE(msm_rx_tx_cdc_dma_be_dai_links) +
+ 			ARRAY_SIZE(msm_va_cdc_dma_be_dai_links) +
+ 			ARRAY_SIZE(ext_disp_be_dai_link) +
+-			//ARRAY_SIZE(msm_wcn_be_dai_links) +
++			ARRAY_SIZE(msm_wcn_be_dai_links) +
+ 			ARRAY_SIZE(msm_afe_rxtx_lb_be_dai_link) +
+ 			ARRAY_SIZE(msm_wcn_btfm_be_dai_links)];
+ 
+@@ -7799,19 +7804,38 @@
+ 				ARRAY_SIZE(msm_afe_rxtx_lb_be_dai_link);
+ 		}
+ 
+-		rc = of_property_read_u32(dev->of_node, "qcom,wcn-btfm",
+-					  &wcn_btfm_intf);
+-		if (rc) {
+-			dev_err(dev, "%s: No DT match wcn btfm interface\n",
++		/*
++		 * a52sxq Bluetooth back ends. "qcom,wcn-btfm;" (no value) or
++		 * "qcom,wcn-btfm = <1>": the 5.4 set, SLIMBUS_7_RX + SLIMBUS_7_TX
++		 * (what 5.4 adds for qcom,wcn-bt = <1>). "qcom,wcn-btfm = <2>":
++		 * the Qualcomm 6.12 set, which also has SLIMBUS_8_TX (FM).
++		 * qcom,wcn-bt stays ignored on purpose: the board tree has always
++		 * carried it, and a link whose codec (bt_fm_slim.ko, "btfmslim_slave")
++		 * is not loaded keeps the whole card deferred. Set qcom,wcn-btfm only
++		 * in builds that load bam_dma, slimbus, slim-qcom-ngd-ctrl, bt_fm_slim.
++		 */
++		if (!of_property_present(dev->of_node, "qcom,wcn-btfm")) {
++			dev_info(dev, "%s: No DT match wcn btfm interface\n",
+ 				__func__);
+ 		} else {
+-			if (wcn_btfm_intf) {
++			wcn_btfm_intf = 1;
++			of_property_read_u32(dev->of_node, "qcom,wcn-btfm",
++					     &wcn_btfm_intf);
++			if (wcn_btfm_intf == 2) {
+ 				memcpy(msm_lahaina_dai_links + total_links,
+ 					msm_wcn_btfm_be_dai_links,
+ 					sizeof(msm_wcn_btfm_be_dai_links));
+ 				total_links +=
+ 					ARRAY_SIZE(msm_wcn_btfm_be_dai_links);
++			} else if (wcn_btfm_intf) {
++				memcpy(msm_lahaina_dai_links + total_links,
++					msm_wcn_be_dai_links,
++					sizeof(msm_wcn_be_dai_links));
++				total_links +=
++					ARRAY_SIZE(msm_wcn_be_dai_links);
+ 			}
++			dev_info(dev, "%s: wcn btfm back ends: mode %u\n",
++				 __func__, wcn_btfm_intf);
+ 		}
+ 		dailink = msm_lahaina_dai_links;
+ 	} else if(!strcmp(match->data, "stub_codec")) {

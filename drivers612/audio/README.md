@@ -64,6 +64,11 @@ Samsung (from the phone's 5.4 techpack, names unchanged):
 Fixes found on hardware (one patch each in `patches/audio-kernel/`, applied in `audio-kernel/`):
 - `a52-import-cma-map-fix.patch`, `a52-wcd938x-amic-direct-routes.patch`,
   `a52-fe-qos-vote-fix.patch` (see the project log).
+- `a52-audit-2026-11-18.patch`: the audio fixes from the 2026-11-18 audit (list in the patch
+  header; built, not yet tested on a phone).
+- `a52-parity-fe-pcm-bt-slim.patch`, then `a52-parity-mbhc-samsung-cfg.patch` (2026-11-18, 5.4
+  parity: hw:24 and hw:43 are PCMs, BT back ends for `qcom,wcn-btfm`, Samsung headset button
+  thresholds; compiled only): see `PARITY-FIXES.md` and `BT-SLIM-HANDOFF.md`.
 - `a52-voice-cal-assign-direction.patch` (2026-11-15, rb16 call with heavy far-end noise):
   the donor's hyp_assign_phys -> qcom_scm_assign_mem conversion put the RECLAIM vmids
   (source LPASS|ADSP_HEAP, dest HLOS) into the two LEND calls, `voice_get_cal()` (q6voice) and
@@ -112,8 +117,11 @@ control names, which `audio_platform_info*.xml` the HAL loads (`mixer/hal-pcm-id
   holding `/dev/ion` and the calibration ioctls (`/dev/msm_audio_cal`) carrying ION fds. The
   kernel side only does `dma_buf_get(fd)` (`msm_audio_ion_import`), so any dma-buf works:
   `modules/ioncompat` is the bridge (its heap 25 "system" is backed by the dma-heap "system",
-  which on this BSP is Qualcomm's system heap). `dma_buf_get_flags()` returns 0 for buffers
-  without the op, so cached handling is the default.
+  which on this BSP is Qualcomm's system heap). No 6.12 exporter implements `get_flags`, so
+  `dma_buf_get_flags()` returns 0 with flags 0 and every imported buffer is attached with
+  `DMA_ATTR_SKIP_CPU_SYNC` (no cache maintenance), whether its mapping is cached or not. The
+  CMA cal heap (`qcom,audio_ml`) therefore has to be uncached in the board DT
+  (`qcom,uncached-heap`, audit 2026-11-18; not done yet, board-DT change).
 
 ## Load order (first-stage shell, after the ADSP is up)
 Needs from the BSP first (not built here): `qcom_dma_heaps`, `rproc_qcom_common` + the ADSP PAS

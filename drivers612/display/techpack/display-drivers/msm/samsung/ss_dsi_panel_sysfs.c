@@ -4613,7 +4613,10 @@ static ssize_t ss_finger_hbm_store(struct device *dev,
 		return size;
 
 	LCD_INFO(vdd,"mask_bl_level value : %d\n", value);
-	vdd->br_info.common_br.finger_mask_bl_level = value;
+	/* a52sxq / IchthysOS 5.4 semantics: a write switches the finger mask on (value > 0) or
+	 * off at the next kickoff (sde_connector_pre_kickoff). The level is set there, at the
+	 * transition, so a write cannot disturb a mask that is being held. */
+	WRITE_ONCE(vdd->ichthys_sysfs_mask_req, value > 0 ? value + 1 : 1);
 
 	return size;
 

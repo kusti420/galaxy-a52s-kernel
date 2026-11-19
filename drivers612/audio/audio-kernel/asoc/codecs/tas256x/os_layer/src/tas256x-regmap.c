@@ -1009,15 +1009,19 @@ static void irq_work_routine(struct work_struct *work)
 #endif
 	if (plat_data->mb_runtime_suspend) {
 		pr_info("%s, Runtime Suspended\n", __func__);
+		/* a52sxq: the IRQ is edge-triggered and stays latched low, so
+		 * run the skipped work again at resume */
+		p_tas256x->irq_work_deferred = true;
 		goto end;
 	}
 	/*Logical Layer IRQ function, return is ignored*/
 	tas256x_irq_work_func(p_tas256x);
 
+end:
+	/* a52sxq: unlock on the suspended path too (was skipped by the goto) */
 #if IS_ENABLED(CONFIG_TAS256X_CODEC)
 	mutex_unlock(&p_tas256x->codec_lock);
 #endif
-end:
 	return;
 }
 
@@ -1057,12 +1061,9 @@ static int tas256x_runtime_suspend(struct tas256x_priv *p_tas256x)
 	plat_data = (struct linux_platform *) p_tas256x->platform_data;
 	dev_dbg(plat_data->dev, "%s\n", __func__);
 
+	/* a52sxq: callers hold codec_lock, which irq_work takes: only set the
+	 * flag here, tas256x_pm_suspend() cancels the work after unlocking */
 	plat_data->mb_runtime_suspend = true;
-
-	if (delayed_work_pending(&p_tas256x->irq_work)) {
-		dev_dbg(plat_data->dev, "cancel IRQ work\n");
-		cancel_delayed_work_sync(&p_tas256x->irq_work);
-	}
 
 	return 0;
 }
@@ -1085,7 +1086,7 @@ static int tas256x_pm_suspend(struct device *dev)
 	struct linux_platform *plat_data = NULL;
 
 	if (!p_tas256x) {
-		dev_err(plat_data->dev, "drvdata is NULL\n");
+		dev_err(dev, "drvdata is NULL\n");
 		return -EINVAL;
 	}
 	plat_data = (struct linux_platform *) p_tas256x->platform_data;
@@ -1093,6 +1094,10 @@ static int tas256x_pm_suspend(struct device *dev)
 	mutex_lock(&p_tas256x->codec_lock);
 	tas256x_runtime_suspend(p_tas256x);
 	mutex_unlock(&p_tas256x->codec_lock);
+	/* a52sxq: never wait for the irq work while holding the lock it takes.
+	 * Work cancelled before it ran is re-run at resume as well. */
+	if (cancel_delayed_work_sync(&p_tas256x->irq_work))
+		p_tas256x->irq_work_deferred = true;
 	return 0;
 }
 
@@ -1102,13 +1107,18 @@ static int tas256x_pm_resume(struct device *dev)
 	struct linux_platform *plat_data = NULL;
 
 	if (!p_tas256x) {
-		dev_err(plat_data->dev, "drvdata is NULL\n");
+		dev_err(dev, "drvdata is NULL\n");
 		return -EINVAL;
 	}
 	plat_data = (struct linux_platform *) p_tas256x->platform_data;
 
 	mutex_lock(&p_tas256x->codec_lock);
 	tas256x_runtime_resume(p_tas256x);
+	if (p_tas256x->irq_work_deferred) {
+		p_tas256x->irq_work_deferred = false;
+		schedule_delayed_work(&p_tas256x->irq_work,
+				      msecs_to_jiffies(100));
+	}
 	mutex_unlock(&p_tas256x->codec_lock);
 	return 0;
 }

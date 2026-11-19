@@ -168,6 +168,54 @@ resub("cam_cpas/cam_cpas_soc.c", r"of_find_node_by_name\(curr_node,\s*\"qcom,axi
 resub("cam_cpas/cam_cpas_soc.c", r"of_find_node_by_name\(curr_node,\s*\"qcom,axi-port-camnoc\"\)",
       'of_get_child_by_name(curr_node, "qcom,axi-port-camnoc")')
 
+# Same DT-order change, second victim: parents were linked in the same pass that parses
+# the levels, which only works root-first (5.4: level3..level0). The fdtoverlay-merged
+# 6.12 tree lists level0..level3, so tree_node[] of the parent was still NULL, every node
+# got parent_node = NULL and cam_cpas_hw.c dropped every AXI/MNOC bandwidth vote without
+# an error (audit 2026-11-18, x-dt-order). Link parents in a second pass instead.
+edit("cam_cpas/cam_cpas_soc.c", [("""			parent_node = of_parse_phandle(curr_node,
+				"parent-node", 0);
+			if (parent_node) {
+				of_property_read_u32(parent_node, "cell-index",
+					&cell_idx);
+				curr_node_ptr->parent_node =
+					soc_private->tree_node[cell_idx];
+			} else {
+				CAM_DBG(CAM_CPAS,
+					"no parent node at this level");
+			}
+		}
+	}
+	mutex_init(&cpas_core->tree_lock);
+""", """		}
+	}
+	/*
+	 * a52sxq: link parents only after every level is parsed. The 6.12
+	 * board tree (fdtoverlay-merged) lists level0..level3, while 5.4
+	 * listed level3..level0, so the parent's tree_node[] was still NULL
+	 * and every AXI vote was dropped.
+	 */
+	for (i = 0; i < CAM_CPAS_MAX_TREE_NODES; i++) {
+		curr_node_ptr = soc_private->tree_node[i];
+		if (!curr_node_ptr)
+			continue;
+		parent_node = of_parse_phandle(curr_node_ptr->tree_dev_node,
+			"parent-node", 0);
+		if (!parent_node)
+			continue;
+		rc = of_property_read_u32(parent_node, "cell-index", &cell_idx);
+		of_node_put(parent_node);
+		if (rc || cell_idx >= CAM_CPAS_MAX_TREE_NODES ||
+		    !soc_private->tree_node[cell_idx]) {
+			CAM_ERR(CAM_CPAS, "%s: unresolved parent-node",
+				curr_node_ptr->node_name);
+			return -EINVAL;
+		}
+		curr_node_ptr->parent_node = soc_private->tree_node[cell_idx];
+	}
+	mutex_init(&cpas_core->tree_lock);
+""")])
+
 # SMMU: qcom domain attributes of 5.4 have no 6.12 equivalent (fault model is
 # a DT property "qcom,iommu-faults" now; the discard region must be kept out
 # with iommu-addresses / qcom,iommu-dma-addr-pool in the DT)

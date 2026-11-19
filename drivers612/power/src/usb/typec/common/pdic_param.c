@@ -22,6 +22,8 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
+#include <linux/of.h>
+#include <linux/string.h>
 #include <linux/usb/typec/common/pdic_param.h>
 
 static const char * const pdic_param_mode[] = {
@@ -153,6 +155,24 @@ int is_lpcharge_pdic_param(void)
 		ret = pdic_param_lpcharge;
 		goto out;
 	}
+
+#if !IS_BUILTIN(CONFIG_PDIC_NOTIFIER)
+	{
+		/*
+		 * a52sxq 6.12: as a module the early_param("androidboot.mode") above is compiled
+		 * out and the bootloader passes no pdic_notifier_module.pdic_param_lpcharge=, so
+		 * derive off-mode charging (LPM) from the cmdline ABL writes to /chosen/bootargs
+		 * (it appends "androidboot.mode=charger" and "sec-battery.lpcharge=1"). Cached.
+		 */
+		const char *args = NULL;
+
+		if (of_chosen && !of_property_read_string(of_chosen, "bootargs", &args) && args &&
+		    (strstr(args, "androidboot.mode=charger") || strstr(args, "sec-battery.lpcharge=1")))
+			ret = 1;
+		pdic_param_lpcharge = ret;	/* single store: no transient 0 for a concurrent caller */
+		goto out;
+	}
+#endif
 
 	ret = lpcharge;
 

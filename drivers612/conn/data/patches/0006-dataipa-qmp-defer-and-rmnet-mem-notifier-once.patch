@@ -1,0 +1,56 @@
+a52sxq: two small fixes (audit 2026-11-18, low)
+
+ - ipa3_get_qmp() took PTR_ERR() after setting the pointer to NULL, so it
+   always returned 0 and an AOSS -EPROBE_DEFER left qmp NULL for the whole
+   boot (no ipa_pc handshake). Defer the probe instead; other errors keep
+   the old "continue without qmp" behaviour.
+ - COAL_CONS and WAN_CONS registered the one rmnet_mem notifier block twice
+   (WARN in notifier_chain_register on every data-call setup) and the first
+   teardown removed it for both. Count the users.
+
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa.c
+@@ -7100,8 +7100,11 @@ static int ipa3_get_qmp(struct device *d
+ 	if (IS_ERR(ipa3_ctx->qmp)) {
+ 		if (PTR_ERR(ipa3_ctx->qmp) != -ENODEV)
+ 			IPAERR("fail to get QMP Node: %ld\n", PTR_ERR(ipa3_ctx->qmp));
++		/* a52sxq: PTR_ERR was taken after the NULL, swallowing a defer */
++		int err = PTR_ERR(ipa3_ctx->qmp);
++
+ 		ipa3_ctx->qmp = NULL;
+-		return PTR_ERR(ipa3_ctx->qmp);
++		return err == -EPROBE_DEFER ? err : 0;
+ 	}
+ 	return 0;
+ }
+--- a/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c
++++ b/drivers/platform/msm/ipa/ipa_v3/ipa_dp.c
+@@ -1456,6 +1456,8 @@ static struct notifier_block ipa3_rmnet_
+ 	.notifier_call = ipa3_rmnet_mem_notifier,
+ 	.priority = INT_MAX,
+ };
++/* a52sxq: COAL_CONS and WAN_CONS share the block; register it once */
++static atomic_t ipa3_rmnet_mem_blk_users = ATOMIC_INIT(0);
+ #endif
+ 
+ /**
+@@ -1846,7 +1848,8 @@ int ipa_setup_sys_pipe(struct ipa_sys_co
+ 				IPADBG("Temp pool capacity for client:%d, value:%u\n",
+ 						sys_in->client,
+ 						atomic_read(&ipa3_ctx->ipa_temp_pool_capacity));
+-				rmnet_mem_register_notifier(&ipa3_rmnet_mem_blk);
++				if (atomic_inc_return(&ipa3_rmnet_mem_blk_users) == 1)
++					rmnet_mem_register_notifier(&ipa3_rmnet_mem_blk);
+ #endif
+ 			}
+ 			atomic_set(&ep->sys->repl->pending, 0);
+@@ -3947,7 +3950,8 @@ static void ipa3_cleanup_rx(struct ipa3_
+ #ifdef CONFIG_IPA_RMNET_MEM
+ 		if (sys->ep->client == IPA_CLIENT_APPS_WAN_CONS ||
+ 			sys->ep->client == IPA_CLIENT_APPS_WAN_COAL_CONS) {
+-			rmnet_mem_unregister_notifier(&ipa3_rmnet_mem_blk);
++			if (atomic_dec_if_positive(&ipa3_rmnet_mem_blk_users) == 0)
++				rmnet_mem_unregister_notifier(&ipa3_rmnet_mem_blk);
+ 		}
+ #endif
+ 	}

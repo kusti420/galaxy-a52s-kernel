@@ -1,0 +1,44 @@
+a52sxq: msm_adreno_tz: optional busy step-up net + decision trace
+
+The TZ DCVS algorithm was seen to keep an 83 % busy GPU on the lowest level on 6.12 (cause not
+found offline; governor source equals 5.4). a52_busy_up_pct (default 0 = off) steps one level up
+when TZ does not and the window was at least that busy; a52_trace logs the decisions. Module
+parameters, writable at run time. No exported symbol changes. (2026-11-19, b5)
+
+--- a/drivers/devfreq/governor_msm_adreno_tz.c	2026-11-19 19:39:56.122275791 +0200
++++ b/drivers/devfreq/governor_msm_adreno_tz.c	2026-11-19 19:39:56.132790273 +0200
+@@ -55,6 +55,19 @@
+ 
+ #define TAG "msm_adreno_tz: "
+ 
++/*
++ * a52sxq (2026-11-19): on 6.12 the TZ algorithm was seen to leave a GPU that is 83 % busy on the
++ * lowest level (broken screen, St gl 7: 61 fps at 315 MHz, 94 fps with min_freq forced to 550).
++ * a52_busy_up_pct (0 = off = Qualcomm behaviour; e.g. 75): when TZ does not ask for a faster
++ * level although busy/total of the evaluated window is at least this percentage, step one level
++ * up. a52_trace=1 logs every TZ decision (rate limited). Both writable at run time:
++ * /sys/module/governor_msm_adreno_tz/parameters/.
++ */
++static unsigned int a52_busy_up_pct;
++module_param(a52_busy_up_pct, uint, 0644);
++static bool a52_trace;
++module_param(a52_trace, bool, 0644);
++
+ static u64 suspend_time;
+ static u64 suspend_start;
+ static unsigned long acc_total, acc_relative_busy;
+@@ -408,6 +421,14 @@
+ 			priv->bin.busy_time, context_count, priv);
+ 	}
+ 
++	if (a52_trace)
++		pr_info_ratelimited(TAG "a52: level %d total %lld us busy %lld us ctx %d -> val %d (ca %d, 64 %d)\n",
++			level, priv->bin.total_time, priv->bin.busy_time, context_count, val,
++			priv->ctxt_aware_enable, priv->is_64);
++	if (a52_busy_up_pct && a52_busy_up_pct <= 100 && val >= 0 && level > 0 &&
++	    priv->bin.busy_time * 100 >= priv->bin.total_time * (s64)a52_busy_up_pct)
++		val = -1;
++
+ 	priv->bin.total_time = 0;
+ 	priv->bin.busy_time = 0;
+ 

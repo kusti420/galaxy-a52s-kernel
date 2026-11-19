@@ -1,0 +1,16 @@
+# Samsung adsp_factory (5.4 drivers/adsp_factory + drivers/sensors/sensors_core.c) for 6.12, one module.
+# Same objects as the ROM kernel config: ADSP_FACTORY, LSM6DSO, STK31610, AK09918, FLIP_COVER_DETECTOR, VBUS_NOTIFIER, SEC_VIB_NOTIFIER.
+obj-m := adsp_factory_dlkm.o
+adsp_factory_dlkm-objs := main.o sensors_core.o adsp_factory.o ssc_core.o lsm6dso_accel.o lsm6dso_gyro.o stk31610_light.o ak09918_mag.o flip_cover_detector.o
+ccflags-y += -I$(src) -I$(src)/include -I$(src)/../power/include -I$(src)/../vibrator/src/include -I$(src)/../touch/src/include
+ccflags-y += -DCONFIG_ADSP_FACTORY -DCONFIG_VBUS_NOTIFIER -DCONFIG_SEC_A52SXQ_PROJECT -DCONFIG_LSM6DSO_FACTORY -DCONFIG_STK31610_FACTORY -DCONFIG_AK09918_FACTORY -DCONFIG_FLIP_COVER_DETECTOR_FACTORY
+ccflags-y += -include $(src)/compat612.h
+ccflags-y += -Wno-error -Wno-unused-function -Wno-missing-prototypes -Wno-unused-variable
+CFLAGS_sensors_core.o += -DA52_OBJ=sensors_core
+CFLAGS_adsp_factory.o += -DA52_OBJ=adsp_factory
+CFLAGS_ssc_core.o += -DA52_OBJ=ssc_core
+CFLAGS_lsm6dso_accel.o += -DA52_OBJ=lsm6dso_accel
+CFLAGS_lsm6dso_gyro.o += -DA52_OBJ=lsm6dso_gyro
+CFLAGS_stk31610_light.o += -DA52_OBJ=stk31610_light
+CFLAGS_ak09918_mag.o += -DA52_OBJ=ak09918_mag
+CFLAGS_flip_cover_detector.o += -DA52_OBJ=flip_cover_detector

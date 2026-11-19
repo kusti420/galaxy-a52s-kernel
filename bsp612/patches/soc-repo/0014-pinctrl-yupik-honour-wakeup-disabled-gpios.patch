@@ -1,0 +1,137 @@
+a52sxq: pinctrl: honour wakeup-disabled-gpios on yupik
+
+Samsung's board DT lists 69 TLMM GPIOs in "wakeup-disabled-gpios". The 5.4 pinctrl-yupik parsed
+it into soc->no_wake_gpios and pinctrl-msm took those GPIOs out of skip_wake_irqs and cleared
+their wakeup enable (msm_gpio_mpm_wake_set(gpio, false)): they stayed on the TLMM summary IRQ
+and could not wake the SoC through the PDC. On 6.12 nothing read the property (only
+pinctrl-lahaina fills no_wake_gpios, and pinctrl-msm has no user), so all of them were
+PDC-routed wakeup interrupts (panel ESD gpio3, NFC IRQ gpio41, amp IRQ gpio55, ...).
+
+pinctrl-yupik: read the property into yupik_tlmm.no_wake_gpios before msm_pinctrl_probe().
+pinctrl-msm: in msm_gpio_init() take the listed GPIOs out of skip_wake_irqs and clear their
+wakeup enable; msm_gpio_wakeirq() reports no wakeup parent for them (GPIO_NO_WAKE_IRQ, the
+same path as a GPIO without a wakeirq_map entry). pinctrl_msm.no_wake_gpios=0 on the kernel
+command line restores the Qualcomm behaviour. No exported symbol or shared struct changes.
+(audit 2026-11-18, low 35 and 44)
+
+--- a/drivers/pinctrl/qcom/pinctrl-msm.c
++++ b/drivers/pinctrl/qcom/pinctrl-msm.c
+@@ -83,6 +83,8 @@
+ 	DECLARE_BITMAP(dual_edge_irqs, MAX_NR_GPIO);
+ 	DECLARE_BITMAP(enabled_irqs, MAX_NR_GPIO);
+ 	DECLARE_BITMAP(skip_wake_irqs, MAX_NR_GPIO);
++	/* a52sxq: wakeirq_map GPIOs the board DT took off the wakeup parent (soc->no_wake_gpios) */
++	DECLARE_BITMAP(no_wake_irqs, MAX_NR_GPIO);
+ 	DECLARE_BITMAP(disabled_for_mux, MAX_NR_GPIO);
+ 	DECLARE_BITMAP(ever_gpio, MAX_NR_GPIO);
+ 
+@@ -1620,6 +1622,15 @@
+ 	chained_irq_exit(chip, desc);
+ }
+ 
++/*
++ * a52sxq: honour soc->no_wake_gpios (yupik: the board DT's "wakeup-disabled-gpios") as the
++ * 5.4 pinctrl-msm did. 0 = Qualcomm 6.12 behaviour (every wakeirq_map GPIO goes to the PDC).
++ * Read once at probe.
++ */
++static bool no_wake_gpios = true;
++module_param(no_wake_gpios, bool, 0444);
++MODULE_PARM_DESC(no_wake_gpios, "keep the DT's wakeup-disabled GPIOs off the wakeup parent (default 1)");
++
+ static int msm_gpio_wakeirq(struct gpio_chip *gc,
+ 			    unsigned int child,
+ 			    unsigned int child_type,
+@@ -1635,6 +1646,10 @@
+ 	*parent = GPIO_NO_WAKE_IRQ;
+ 	*parent_type = IRQ_TYPE_EDGE_RISING;
+ 
++	/* a52sxq: like a GPIO without a wakeirq_map entry: TLMM summary IRQ only */
++	if (test_bit(child, pctrl->no_wake_irqs))
++		return 0;
++
+ 	for (i = 0; i < pctrl->soc->nwakeirq_map; i++) {
+ 		map = &pctrl->soc->wakeirq_map[i];
+ 		if (map->gpio == child) {
+@@ -1737,6 +1752,21 @@
+ 			gpio = pctrl->soc->wakeirq_map[i].gpio;
+ 			set_bit(gpio, pctrl->skip_wake_irqs);
+ 		}
++		/*
++		 * a52sxq: as 5.4 msm_gpio_init(): GPIOs on the SoC driver's no-wake list stay on
++		 * the TLMM summary IRQ and are not wakeup capable through the PDC.
++		 */
++		for (i = 0; skip && no_wake_gpios && i < pctrl->soc->n_no_wake_gpios; i++) {
++			gpio = pctrl->soc->no_wake_gpios[i];
++			if (gpio >= ngpio || !test_bit(gpio, pctrl->skip_wake_irqs))
++				continue;
++			clear_bit(gpio, pctrl->skip_wake_irqs);
++			set_bit(gpio, pctrl->no_wake_irqs);
++			msm_gpio_mpm_wake_set(gpio, false);
++		}
++		if (bitmap_weight(pctrl->no_wake_irqs, ngpio))
++			dev_info(pctrl->dev, "%u GPIOs kept off the wakeup parent (no-wake list)\n",
++				 bitmap_weight(pctrl->no_wake_irqs, ngpio));
+ 	}
+ 
+ 	girq = &chip->irq;
+--- a/drivers/pinctrl/qcom/pinctrl-yupik.c
++++ b/drivers/pinctrl/qcom/pinctrl-yupik.c
+@@ -1921,7 +1921,8 @@
+ 	{ 174, 167 },
+ };
+ 
+-static const struct msm_pinctrl_soc_data yupik_tlmm = {
++/* a52sxq: not const, probe fills no_wake_gpios from the DT */
++static struct msm_pinctrl_soc_data yupik_tlmm = {
+ 	.pins = yupik_pins,
+ 	.npins = ARRAY_SIZE(yupik_pins),
+ 	.functions = yupik_functions,
+@@ -1951,6 +1952,37 @@
+ 		msm_gpio_mpm_wake_set(config_mpm_wake_disable_gpios[i], false);
+ }
+ 
++/*
++ * a52sxq: Samsung's 5.4 yupik_pinctrl_no_wake_probe(): the board DT lists the wakeirq_map GPIOs
++ * that must not be routed to the PDC ("wakeup-disabled-gpios"); pinctrl-msm keeps them on the
++ * TLMM summary IRQ. Without the property nothing changes.
++ */
++static int yupik_tlmm_no_wake_probe(struct platform_device *pdev)
++{
++	struct device_node *np = pdev->dev.of_node;
++	unsigned int *gpios;
++	int n, ret;
++
++	n = of_property_count_u32_elems(np, "wakeup-disabled-gpios");
++	if (n <= 0)
++		return 0;
++
++	gpios = devm_kcalloc(&pdev->dev, n, sizeof(*gpios), GFP_KERNEL);
++	if (!gpios)
++		return -ENOMEM;
++
++	ret = of_property_read_u32_array(np, "wakeup-disabled-gpios", gpios, n);
++	if (ret) {
++		dev_warn(&pdev->dev, "wakeup-disabled-gpios unreadable (%d), ignored\n", ret);
++		return 0;
++	}
++
++	yupik_tlmm.no_wake_gpios = gpios;
++	yupik_tlmm.n_no_wake_gpios = n;
++
++	return 0;
++}
++
+ static int yupik_tlmm_probe(struct platform_device *pdev)
+ {
+ 	const struct msm_pinctrl_soc_data *pinctrl_data;
+@@ -1960,6 +1992,10 @@
+ 	if (!pinctrl_data)
+ 		return -EINVAL;
+ 
++	ret = yupik_tlmm_no_wake_probe(pdev);
++	if (ret)
++		return ret;
++
+ 	ret = msm_pinctrl_probe(pdev, pinctrl_data);
+ 	if (ret)
+ 		return ret;

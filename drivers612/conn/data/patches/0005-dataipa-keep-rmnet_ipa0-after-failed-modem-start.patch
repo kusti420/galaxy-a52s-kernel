@@ -1,0 +1,36 @@
+a52sxq: AFTER_SHUTDOWN without BEFORE_SHUTDOWN must not free rmnet_ipa0 (audit 2026-11-18)
+
+A failed modem start delivers BEFORE_POWERUP then AFTER_SHUTDOWN only (rproc
+unprepares the subdevices; seen in rb31). The netdev was freed while
+rmnet_ipa stayed bound (is_initialized 1, is_ssr 0), so AFTER_POWERUP of a
+later good start never re-registered it: no mobile data until reboot.
+
+--- a/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
++++ b/drivers/platform/msm/ipa/ipa_v3/rmnet_ipa.c
+@@ -4124,13 +4124,21 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(
+ 		/* Clean up netdev resources in AFTER_SHUTDOWN for remoteproc
+ 		 * enabled targets. */
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0))
+-		IPAWANINFO("rmnet_ipa unregister_netdev\n");
+-		if (IPA_NETDEV())
++		if (atomic_read(&rmnet_ipa3_ctx->is_initialized)) {
++			/*
++			 * a52sxq: a failed modem start sends BEFORE_POWERUP
++			 * then AFTER_SHUTDOWN only (rproc unprepares the
++			 * subdevices). No BEFORE_SHUTDOWN unbound rmnet_ipa,
++			 * so the netdev must stay or it never comes back.
++			 */
++			IPAWANINFO("AFTER_SHUTDOWN w/o BEFORE_SHUTDOWN: keep rmnet_ipa0\n");
++		} else if (IPA_NETDEV()) {
++			IPAWANINFO("rmnet_ipa unregister_netdev\n");
+ 			unregister_netdev(IPA_NETDEV());
+-		ipa3_wwan_deregister_netdev_pm_client();
+-		if (IPA_NETDEV())
++			ipa3_wwan_deregister_netdev_pm_client();
+ 			free_netdev(IPA_NETDEV());
+-		rmnet_ipa3_ctx->wwan_priv = NULL;
++			rmnet_ipa3_ctx->wwan_priv = NULL;
++		}
+ #endif
+ 		if (atomic_read(&rmnet_ipa3_ctx->is_ssr) &&
+ 			ipa3_ctx_get_type(IPA_HW_TYPE) < IPA_HW_v4_0)

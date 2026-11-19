@@ -1,0 +1,24 @@
+a52sxq: qtee_shmbridge: 4 MiB default pool as on 5.4
+
+The shared QTEE shm-bridge pool is static (QCOM_TZMEM_POLICY_STATIC, never grows) and 6.12
+creates it with 512 KiB; the 5.4 default bridge was 4 MiB (DEFAULT_BRIDGE_SIZE SZ_4M). Every
+smcinvoke call allocates its in/out buffers from it, and the smcinvoke release path has no
+fallback when the allocation fails (the TZ object is then leaked in QTEE). qseecom, ICE and
+qcom_scm share the same pool. Restore the 5.4 headroom (audit 2026-11-18, low 32).
+
+--- a/drivers/firmware/qcom/qtee_shmbridge.c
++++ b/drivers/firmware/qcom/qtee_shmbridge.c
+@@ -275,7 +275,12 @@
+ 	if (IS_ENABLED(CONFIG_QCOM_TZMEM_LOW_MEMORY))
+ 		pool_config.initial_size = SZ_256K - SZ_32K; /* 224K */
+ 	else
+-		pool_config.initial_size = SZ_512K;
++		/*
++		 * a52sxq: 4 MiB as the 5.4 default bridge (DEFAULT_BRIDGE_SIZE), not 512 KiB. The
++		 * pool is static and shared by smcinvoke (every invoke's in/out buffers and the
++		 * object release path, which has no fallback), qseecom, ICE and qcom_scm.
++		 */
++		pool_config.initial_size = SZ_4M;
+ 	pool_config.policy = QCOM_TZMEM_POLICY_STATIC;
+ 	pool_config.max_size = pool_config.initial_size;
+ 	pool_config.is_cached = true;

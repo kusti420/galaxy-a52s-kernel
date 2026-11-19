@@ -20,6 +20,47 @@
 	status = "disabled";
 };
 
+/*
+ * ---- memory map: 6.12-base regions the 5.4 phone does not lose RAM to (audit 2026-11-18).
+ * non_secure_display: no such region and no "display" ION heap on 5.4; enabled it is 100 MiB of
+ * CMA that nothing allocates from and only movable pages can use.
+ * dump_mem: 5.4 had it as reusable CMA; in the 6.12 base it is a static 44 MiB carve-out that
+ * only memory_dump_v2.ko gives back, and that module is not loaded.
+ * ramoops_mem: 2 MiB no-map for qcom,ramoops (CONFIG_QCOM_DYNAMIC_RAMOOPS is not set); pstore
+ * uses Samsung's ramoops@F0B00000.
+ */
+&non_secure_display_memory {
+	status = "disabled";
+};
+
+&dump_mem {
+	status = "disabled";
+};
+
+&ramoops_mem {
+	status = "disabled";
+};
+
+/*
+ * REQUIRED together with the region disables above and with &cdsp_secure_heap_mem (disabled in
+ * a52sxq-memory.dtsi): parse_heap_dt() returns -EINVAL for an available heap child whose
+ * memory-region is not reserved, and that aborts every DT heap (qseecom, qseecom_ta,
+ * secure_display, audio_ml, user_contig). kexec/mkandroidtree.sh and build-realboot.sh set the
+ * same two with fdtput; keep those as a second safety.
+ */
+&{/soc/qcom,dma-heaps/qcom,display} {
+	status = "disabled";
+};
+
+&{/soc/qcom,dma-heaps/qcom,secure_cdsp} {
+	status = "disabled";
+};
+
+/* only consumer of dump_mem: a later memory_dump_v2 load must not probe without its region */
+&{/soc/mem_dump} {
+	status = "disabled";
+};
+
 &reserved_memory {
 	/* 5.4 base of the phone: cvp@8b200000 (label pil_video_mem there); absent in the 6.12 base */
 	a52_cvp_mem: cvp@8b200000 {
@@ -182,6 +223,50 @@
 	sdm-skin-therm-usr {
 		thermal-sensors = <&pmk8350_adc_tm 4>;
 		status = "disabled";
+	};
+};
+
+/*
+ * ---- BCL level zones (audit 2026-11-18). 5.4 kept them off ("disable-thermal-zone", which no
+ * 6.12 code reads), so on 6.12 they are live. The sensor reads 0/1 and the 6.x thermal core ends
+ * mitigation only below temperature - hysteresis: with the phone's 1/1 that is 0 < 0, never, so
+ * one battery-voltage dip throttled modem/CDSP/GPU until reboot. Qualcomm's 6.x trees use 0.
+ */
+&c_bcl_lvl0 {
+	hysteresis = <0>;
+};
+
+&c_bcl_lvl1 {
+	hysteresis = <0>;
+};
+
+&c_bcl_lvl2 {
+	hysteresis = <0>;
+};
+
+/*
+ * ---- pm7325_tz CPU maps: 5.4 isolated cpu4..7 at the 95 C passive trip through cpuN_isolate
+ * (qcom,cpu-isolation), which 6.12 does not have (inert placeholders, "could not get
+ * #cooling-cells"). The 6.12 equivalent is thermal_pause's cpuN_pause (max state 1).
+ * The BCL lvl0 vph_cpuN maps are left on the placeholders on purpose: 5.4 never ran them.
+ */
+&pm7325_temp_alarm {
+	cooling-maps {
+		pm7325_cpu4 {
+			cooling-device = <&cpu4_pause 1 1>;
+		};
+
+		pm7325_cpu5 {
+			cooling-device = <&cpu5_pause 1 1>;
+		};
+
+		pm7325_cpu6 {
+			cooling-device = <&cpu6_pause 1 1>;
+		};
+
+		pm7325_cpu7 {
+			cooling-device = <&cpu7_pause 1 1>;
+		};
 	};
 };
 
