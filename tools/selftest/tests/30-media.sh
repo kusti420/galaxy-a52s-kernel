@@ -5,8 +5,9 @@ t_audio() {
 	[ "${DAILY:-0}" = 1 ] && { skip "audible loopback (daily phone: volume must not change)"; return; }
 	has_st || { skip "tone + capture FFT (todo: St loop)"; return; }
 	# the only audible part of the suite: 1.5 s tones at stream index 1 (lowest step), restored to 0 by the tool and by mute;
-	# SILENT=1 keeps the phone fully muted (the loopback then reports SKIP)
-	local um=unmute; [ "${SILENT:-0}" = 1 ] && um=
+	# without AUDIBLE=1 the phone stays fully muted (the loopback then reports SKIP)
+	# silent is the default since 2026-11-19: the audible loopback needs AUDIBLE=1 (SILENT=1 still wins)
+	local um=; [ "${AUDIBLE:-0}" = 1 ] && [ "${SILENT:-0}" != 1 ] && um=unmute
 	strun loop media 1000 MIC $um; mute
 	strun loop ll 1500 MIC $um; mute
 	[ "$QUICK" = 1 ] || { strun loop media 2000 CAMCORDER $um; mute; strun loop voice 1000 MIC $um; mute; }

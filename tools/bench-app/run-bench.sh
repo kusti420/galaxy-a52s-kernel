@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs the A52 Kernel Bench app on a phone and collects everything.
-# Usage: tools/bench-app/run-bench.sh <serial> [tests=all] [seconds=0] [extra am extras...]
+# Usage: tools/bench-app/run-bench.sh <serial> [tests=all] [seconds=0] [--audible] [extra am extras...]
 #   tests: all | comma list of ids or prefixes (gpu,camera.still,soak.mixed)     seconds: per-test duration override (0 = defaults)
 #   extra: passed to am start, e.g.  --es gpu_mb 512  --es storage_mb 64  --es url https://...
 # Output: logs/bench/<serial>-<time>/ (results.json, evidence, logcat, kernel log delta, kbad.txt), table on stdout; exit 1 on FAIL.
@@ -8,6 +8,16 @@
 set -u
 S=${1:?serial}; TESTS=${2:-all}; SECS=${3:-0}; shift; shift 2>/dev/null; shift 2>/dev/null
 HERE=$(cd "$(dirname "$0")" && pwd); TOP=$(cd "$HERE/../.." && pwd)
+# Silent by default: the tests that make sound (audio.out, audio.offload, soak.mixed plays a tone)
+# only run with --audible (anywhere after the serial) or AUDIBLE=1. "all" then means all silent tests.
+AUD=${AUDIBLE:-0}; _x=(); for _a in "$@"; do if [ "$_a" = --audible ]; then AUD=1; else _x+=("$_a"); fi; done; set -- "${_x[@]}"
+[ "$TESTS" = --audible ] && { AUD=1; TESTS=all; }; [ "$SECS" = --audible ] && { AUD=1; SECS=0; }
+if [ "$AUD" != 1 ]; then
+  [ "$TESTS" = all ] && TESTS=gpu.render,gpu.torture,gpu.vulkan,display.pattern,display.refresh,audio.mic,camera.still,camera.video,camera.flash,codec.roundtrip,sensors.all,wifi.net,bt.le,storage.io,storage.sd,crypto.keystore,drm.widevine,cpu.perf,thermal.load,gnss.fix
+  _t=; for _i in $(echo "$TESTS" | tr , ' '); do case "$_i" in audio|audio.out|audio.offload|soak|soak.mixed) echo "silent run: $_i left out (--audible to include)";; *) _t="${_t:+$_t,}$_i";; esac; done
+  [ "$TESTS" != "$_t" ] && case ",$TESTS," in *,audio,*) _t="${_t:+$_t,}audio.mic";; esac
+  TESTS=$_t; [ -n "$TESTS" ] || { echo "nothing left to run without --audible"; exit 0; }
+fi
 case "$S" in DAILYPHONE|OTHERPHONE) [ "${OWNER_OK:-}" = 1 ] || { echo "refusing $S (not a kernel test phone); OWNER_OK=1 to override"; exit 2; };; esac
 APK=$TOP/out/a52bench.apk; [ -f "$APK" ] || "$HERE/build.sh" || exit 2
 PKG=org.a52sxq.bench; DEVDIR=/sdcard/Android/data/$PKG/files

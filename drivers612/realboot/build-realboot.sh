@@ -545,7 +545,7 @@ grep -q 'sdhci-msm\|cqhci' "$DIST/lib/modules/$KREL/modules.builtin" && fail "sd
 # when TZ does not ask for a faster level and the window was at least <percent> busy, step one level up.
 if [ -n "${GPU_BUSY_UP:-}" ]; then
 	case "$GPU_BUSY_UP" in *[!0-9]*) fail "GPU_BUSY_UP: a number 1..100";; esac
-	strings "$W/plan/first/governor_msm_adreno_tz.ko" | grep -q '^parm=a52_busy_up_pct:' || fail "GPU_BUSY_UP: the governor of REF=$REF has no a52_busy_up_pct (needs s97+)"
+	strings "$W/plan/first/governor_msm_adreno_tz.ko" | grep -q '^parmtype=a52_busy_up_pct:' || fail "GPU_BUSY_UP: the governor of REF=$REF has no a52_busy_up_pct (needs s97+)"
 	echo "options governor_msm_adreno_tz a52_busy_up_pct=$GPU_BUSY_UP" >> "$W/plan/first.params"
 	say "GPU_BUSY_UP=$GPU_BUSY_UP: modules.options governor_msm_adreno_tz a52_busy_up_pct=$GPU_BUSY_UP"
 fi
