@@ -89,7 +89,7 @@ t_gpu() {
 	local s=6 mb=768; [ "$QUICK" = 1 ] && { s=3; mb=256; }
 	local f0 f1; have_root && f0=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk)
 	strun gl $s
-	have_root && { ( st gl 4 >/dev/null 2>&1 & ); sleep 2; f1=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); sleep 4; local f2; f2=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); metric gpu_clk_loaded "$f1"; metric gpu_clk_idle "$f2"; echo "  gpuclk idle-before $f0 loaded $f1 idle-after $f2"
+	have_root && { st gl 4 >/dev/null 2>&1 & local sp=$!; sleep 2; f1=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); wait $sp; local f2 i; for i in $(seq 20); do sleep 1; f2=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); [ "${f2:-0}" -lt "${f1:-0}" ] && break; done; metric gpu_clk_loaded "$f1"; metric gpu_clk_idle "$f2"; echo "  gpuclk idle-before $f0 loaded $f1 idle-after $f2"
 		if [ "${f1:-0}" -gt "${f2:-0}" ]; then ok "GPU clock scaled up under load ($f1 Hz) and back down ($f2 Hz)"; elif [ "${f1:-0}" = "$(rd /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies | tr ' ' '\n' | grep . | sort -n | head -1)" ]; then skip "GPU frequency scaling: the vsync-limited GL loop (about 60-120 fps of a small scene) runs at the lowest OPP ($f1 Hz) on this governor; needs a heavier load (bench gpu.torture) to prove scaling"
 		else fail "GPU clock did not scale: loaded $f1, idle $f2"; fi; } || skip "GPU frequency scaling (needs root: kgsl sysfs)"
 	strun glalloc $mb

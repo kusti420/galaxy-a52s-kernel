@@ -1,5 +1,17 @@
 # USB gadget (PC side), charging, Wi-Fi, hotspot, Bluetooth, NFC, GNSS, modem
 usb_sys() { local d; for d in /sys/bus/usb/devices/*; do [ "$(cat $d/serial 2>/dev/null)" = "$S" ] && { echo $d; return; }; done; }
+# MTP: only the pinned phone is opened (mtppin.py: libmtp raw device matched by bus/devnum; mtp-detect
+# opens every MTP device on the PC, incl. other sessions' phones). The phone is always put back to adb-only;
+# when adb does not re-list it within 30 s the suite stops with "adb lost" (no adb kill-server here: other
+# sessions share the adb server; no USB reset: no proven per-device method).
+MTPPIN=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/mtppin.py
+usb_listed() { adb devices | grep -q "^$S[[:space:]]*device"; }
+usb_adb_back() {
+	local i
+	for i in $(seq 30); do usb_listed && { sleep 1; return 0; }; sleep 1; done
+	echo "adb lost: restart the adb server (adb kill-server; adb start-server) when no other session needs adb"
+	fail "adb did not re-list $S within 30 s after leaving MTP mode: adb lost, suite stopped"; exit 3
+}
 reg usb - 1 "USB gadget from the PC side: speed, interfaces, MTP session + adb when switched to MTP"
 t_usb() {
 	local d; d=$(usb_sys); [ -n "$d" ] || { fail "PC sysfs has no USB device with serial $S"; return; }
@@ -7,12 +19,12 @@ t_usb() {
 	chk "enumerated at $sp Mbit/s (>= high speed)" [ "$sp" -ge 480 ]
 	chk "adb interface (ff/42/01) present on the PC" grep -qs 42 $d/*:*/bInterfaceSubClass
 	if [ "${DAILY:-0}" = 1 ] || [ "$UNLOCKED" = 0 ]; then skip "MTP switch (needs an unlocked test phone)"; else
-		wake; A 'svc usb setFunctions mtp' >/dev/null; sleep 6; adb -s "$S" wait-for-device 2>/dev/null; d=$(usb_sys); for i in $d/*:*; do echo "   mtp-mode if $(basename $i) class $(cat $i/bInterfaceClass)/$(cat $i/bInterfaceSubClass)/$(cat $i/bInterfaceProtocol) $(cat $i/interface 2>/dev/null)"; done
-		if grep -qsi mtp $d/*:*/interface || grep -qs 06 $d/*:*/bInterfaceClass; then local o; o=$(timeout 40 mtp-detect 2>&1); echo "$o" | grep -aE "Serial number|Model:|StorageDescription|MaxCapacity|FreeSpaceInBytes|Device version|error|Unable" | head -12
-			if echo "$o" | grep -aq "Serial number: *$S" || echo "$o" | grep -aq "Model: "; then if echo "$o" | grep -aq MaxCapacity; then ok "MTP: PC opened a session and read the storage list"; else ok "MTP: PC opened a session (device info read)"; skip "MTP storage list empty (phone locked?); file round trip (todo: mtp-sendfile/getfile with checksum)"; fi
+		wake; A 'svc usb setFunctions mtp' >/dev/null; sleep 6; timeout 30 adb -s "$S" wait-for-device 2>/dev/null; d=$(usb_sys); for i in $d/*:*; do echo "   mtp-mode if $(basename $i) class $(cat $i/bInterfaceClass)/$(cat $i/bInterfaceSubClass)/$(cat $i/bInterfaceProtocol) $(cat $i/interface 2>/dev/null)"; done
+		if grep -qsi mtp $d/*:*/interface || grep -qs 06 $d/*:*/bInterfaceClass; then local o; o=$(timeout 40 python3 -I "$MTPPIN" info "$(cat $d/busnum)" "$(cat $d/devnum)" 2>&1); echo "$o" | grep -aE "Serial number|Model:|StorageDescription|MaxCapacity|FreeSpaceInBytes|Device version|error|Unable" | head -12
+			if echo "$o" | grep -aq "Model: "; then if echo "$o" | grep -aq MaxCapacity; then ok "MTP: PC opened a session and read the storage list"; else ok "MTP: PC opened a session (device info read)"; skip "MTP storage list empty (phone locked?); file round trip (todo: mtp-sendfile/getfile with checksum)"; fi
 			else fail "MTP interface enumerates but mtp-detect could not open the device: $(echo "$o" | grep -aiE 'error|unable|busy' | head -1 | cut -c1-140)"; fi
 		else fail "svc usb setFunctions mtp is not applied: sys.usb.state stays '$(A getprop sys.usb.state)', the PC sees no MTP interface ($(A dumpsys usb | grep -m1 -oE 'current_functions_applied=[a-z]+'))"; A 'logcat -d -t 200 | grep -iE "usb" | tail -10' | cut -c1-200; fi
-		A 'svc usb setFunctions' >/dev/null; sleep 5; adb -s "$S" wait-for-device 2>/dev/null; sleep 1
+		A 'svc usb setFunctions' >/dev/null; usb_adb_back
 		chk "adb back after leaving MTP mode" [ "$(A echo hi)" = hi ]
 	fi
 	hands "USB: unplug/replug the cable, OTG stick + mouse, USB-C headphones/DAC (USB audio), PD fast charger"

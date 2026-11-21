@@ -1598,7 +1598,20 @@
  endif
 --- a/asoc/codecs/bolero/bolero-cdc.c
 +++ b/asoc/codecs/bolero/bolero-cdc.c
-@@ -1378,6 +1378,35 @@
+@@ -259,6 +259,12 @@
+ 				priv->component,
+ 				BOLERO_MACRO_EVT_HPHR_HD2_ENABLE, data);
+ 		break;
++	case SEC_WCD_BOLERO_EVT_IMPED_TRUE:
++		if (priv->macro_params[RX_MACRO].event_handler)
++			priv->macro_params[RX_MACRO].event_handler(
++				priv->component,
++				SEC_BOLERO_MACRO_EVT_IMPED_TRUE, data);
++		break;
+ 	default:
+ 		dev_err(priv->dev, "%s: Invalid event %d trigger from wcd\n",
+ 			__func__, event);
+@@ -1378,6 +1384,35 @@
  	struct clk *lpass_core_hw_vote = NULL;
  	struct clk *lpass_audio_hw_vote = NULL;
  
@@ -1634,7 +1647,7 @@
  	priv = devm_kzalloc(&pdev->dev, sizeof(struct bolero_priv),
  			    GFP_KERNEL);
  	if (!priv)
-@@ -1452,7 +1481,7 @@
+@@ -1452,7 +1487,7 @@
  	lpass_core_hw_vote = devm_clk_get(&pdev->dev, "lpass_core_hw_vote");
  	if (IS_ERR(lpass_core_hw_vote)) {
  		ret = PTR_ERR(lpass_core_hw_vote);
@@ -1643,27 +1656,106 @@
  			__func__, "lpass_core_hw_vote", ret);
  		lpass_core_hw_vote = NULL;
  		ret = 0;
+--- a/asoc/codecs/bolero/bolero-cdc.h
++++ b/asoc/codecs/bolero/bolero-cdc.h
+@@ -60,6 +60,7 @@
+ 	BOLERO_MACRO_EVT_RX_PA_GAIN_UPDATE,
+ 	BOLERO_MACRO_EVT_HPHL_HD2_ENABLE, /* Enable HD2 cfg for HPHL */
+ 	BOLERO_MACRO_EVT_HPHR_HD2_ENABLE, /* Enable HD2 cfg for HPHR */
++	SEC_BOLERO_MACRO_EVT_IMPED_TRUE, /* a52sxq: Samsung imped offset (5.4) */
+ };
+ 
+ enum {
 --- a/asoc/codecs/bolero/rx-macro.c
 +++ b/asoc/codecs/bolero/rx-macro.c
-@@ -3195,6 +3195,17 @@
+@@ -497,6 +497,8 @@
+ 
+ static struct snd_soc_dai_driver rx_macro_dai[];
+ static const DECLARE_TLV_DB_SCALE(digital_gain, 0, 1, 0);
++/* a52sxq: Samsung headphone-impedance gain offset, see a52_hph_vol_put() */
++static int a52_wcd_impedance_offset;
+ 
+ static const char * const rx_int_mix_mux_text[] = {
+ 	"ZERO", "RX0", "RX1", "RX2", "RX3", "RX4", "RX5"
+@@ -1618,6 +1620,11 @@
+ 		snd_soc_component_update_bits(component,
+ 				BOLERO_CDC_RX_RX1_RX_PATH_CFG0, 0x04, data);
+ 		break;
++	case SEC_BOLERO_MACRO_EVT_IMPED_TRUE:
++		a52_wcd_impedance_offset = (int)data;
++		pr_info("%s: selected impedance offset = %d\n", __func__,
++			a52_wcd_impedance_offset);
++		break;
+ 	}
+ done:
+ 	return ret;
+@@ -3188,6 +3195,49 @@
+ 	return 0;
+ }
+ 
++/*
++ * a52sxq: Samsung's headphone-impedance gain offset (5.4 CONFIG_SND_SOC_IMPED_SENSING,
++ * wcd_impedance_vol_get/put): the HPH digital volume the HAL writes gets the offset of the
++ * impedance table row the MBHC measured (event SEC_BOLERO_MACRO_EVT_IMPED_TRUE) added. Same
++ * register result as 5.4 for every value 5.4 writes correctly; the S8 sign is handled properly here.
++ */
++static int a52_hph_vol_get(struct snd_kcontrol *kcontrol,
++			   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct soc_mixer_control *mc = (struct soc_mixer_control *)kcontrol->private_value;
++	int db = (s8)(snd_soc_component_read(component, mc->reg) & 0xff);
++
++	db -= a52_wcd_impedance_offset;
++	db = clamp(db, mc->min, mc->max);
++	ucontrol->value.integer.value[0] = db - mc->min;
++	return 0;
++}
++
++static int a52_hph_vol_put(struct snd_kcontrol *kcontrol,
++			   struct snd_ctl_elem_value *ucontrol)
++{
++	struct snd_soc_component *component = snd_kcontrol_chip(kcontrol);
++	struct soc_mixer_control *mc = (struct soc_mixer_control *)kcontrol->private_value;
++	long idx = ucontrol->value.integer.value[0];
++	int db;
++
++	if (idx < 0 || idx > mc->max - mc->min)
++		return -EINVAL;
++	db = clamp((int)idx + mc->min + a52_wcd_impedance_offset, mc->min, mc->max);
++	pr_debug("%s: %s index %ld offset %d -> %d dB\n", __func__, kcontrol->id.name,
++		 idx, a52_wcd_impedance_offset, db);
++	return snd_soc_component_update_bits(component, mc->reg, 0xff, (u8)(s8)db);
++}
++
++#define A52_HPH_DIGITAL_VOLUME(xname, xreg) \
++{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = (xname), \
++	.access = SNDRV_CTL_ELEM_ACCESS_TLV_READ | SNDRV_CTL_ELEM_ACCESS_READWRITE, \
++	.tlv.p = digital_gain, .info = snd_soc_info_volsw, \
++	.get = a52_hph_vol_get, .put = a52_hph_vol_put, \
++	.private_value = (unsigned long)&(struct soc_mixer_control) \
++	{.reg = xreg, .rreg = xreg, .min = -84, .max = 40, .sign_bit = 7,} }
++
+ static const struct snd_kcontrol_new rx_macro_snd_controls[] = {
+ 	SOC_SINGLE_S8_TLV("RX_RX0 Digital Volume",
+ 			  BOLERO_CDC_RX_RX0_RX_VOL_CTL,
+@@ -3195,6 +3245,15 @@
  	SOC_SINGLE_S8_TLV("RX_RX1 Digital Volume",
  			  BOLERO_CDC_RX_RX1_RX_VOL_CTL,
  			  -84, 40, digital_gain),
 +	/*
 +	 * a52sxq: Samsung 5.4 names (CONFIG_SND_SOC_IMPED_SENSING) used by the HAL's
-+	 * mixer_paths.xml. Here they are plain aliases of the RX0/RX1 volume: Samsung's
-+	 * headphone-impedance gain offset (wcd_impedance_vol_get/put) is NOT ported.
++	 * mixer_paths.xml. a52sxq: like 5.4 they add Samsung's headphone-impedance gain offset
++	 * (a52_hph_vol_get/put; offset from the MBHC impedance measurement).
 +	 */
-+	SOC_SINGLE_S8_TLV("RX_RX0 HPH Digital Volume",
-+			  BOLERO_CDC_RX_RX0_RX_VOL_CTL,
-+			  -84, 40, digital_gain),
-+	SOC_SINGLE_S8_TLV("RX_RX1 HPH Digital Volume",
-+			  BOLERO_CDC_RX_RX1_RX_VOL_CTL,
-+			  -84, 40, digital_gain),
++	A52_HPH_DIGITAL_VOLUME("RX_RX0 HPH Digital Volume",
++			       BOLERO_CDC_RX_RX0_RX_VOL_CTL),
++	A52_HPH_DIGITAL_VOLUME("RX_RX1 HPH Digital Volume",
++			       BOLERO_CDC_RX_RX1_RX_VOL_CTL),
  	SOC_SINGLE_S8_TLV("RX_RX2 Digital Volume",
  			  BOLERO_CDC_RX_RX2_RX_VOL_CTL,
  			  -84, 40, digital_gain),
-@@ -4210,6 +4221,15 @@
+@@ -4210,6 +4269,15 @@
  		return -EPROBE_DEFER;
  	}
  
@@ -1854,9 +1946,71 @@
  		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
  	endif
  
+--- a/asoc/codecs/wcd938x/internal.h
++++ b/asoc/codecs/wcd938x/internal.h
+@@ -127,6 +127,15 @@
+ 	u8 bias1_cfilt_sel;
+ };
+ 
++/* a52sxq: Samsung's headphone impedance -> extra digital gain table (5.4 CONFIG_SND_SOC_IMPED_SENSING) */
++#define MAX_IMPEDANCE_TABLE 8
++
++struct wcd938x_gain_table {
++	uint32_t min;      /* Min impedance */
++	uint32_t max;      /* Max impedance */
++	int gain;   /* additional gain */
++};
++
+ struct wcd938x_pdata {
+ 	struct device_node *rst_np;
+ 	struct device_node *rx_slave;
+@@ -135,6 +144,7 @@
+ 
+ 	struct cdc_regulator *regulator;
+ 	int num_supplies;
++	struct wcd938x_gain_table imp_table[MAX_IMPEDANCE_TABLE];
+ };
+ 
+ struct wcd_ctrl_platform_data {
 --- a/asoc/codecs/wcd938x/wcd938x-mbhc.c
 +++ b/asoc/codecs/wcd938x/wcd938x-mbhc.c
-@@ -665,10 +665,11 @@
+@@ -21,6 +21,7 @@
+ #include <asoc/wcd-mbhc-v2-api.h>
+ #include "wcd938x-registers.h"
+ #include "internal.h"
++#include <asoc/bolero-slave-internal.h> /* a52sxq: SEC_WCD_BOLERO_EVT_IMPED_TRUE */
+ 
+ #define WCD938X_ZDET_SUPPORTED          true
+ /* Z value defined in milliohm */
+@@ -591,6 +592,27 @@
+ 	dev_dbg(component->dev, "%s: impedance on HPH_L = %d(ohms)\n",
+ 		__func__, *zl);
+ 
++	/* a52sxq: Samsung impedance detection and additional digital gain (5.4 IMPED_SENSING) */
++	{
++		struct wcd938x_pdata *pdata = dev_get_platdata(wcd938x->dev);
++		int i, offset = 0;
++
++		if (pdata) {
++			for (i = 0; i < ARRAY_SIZE(pdata->imp_table); i++) {
++				if (*zl >= pdata->imp_table[i].min &&
++				    *zl <= pdata->imp_table[i].max) {
++					offset = pdata->imp_table[i].gain;
++					dev_info(component->dev, "%s: zl = %d, imped offset = %d\n",
++						 __func__, *zl, offset);
++					break;
++				}
++			}
++			if (wcd938x->update_wcd_event)
++				wcd938x->update_wcd_event(wcd938x->handle,
++						SEC_WCD_BOLERO_EVT_IMPED_TRUE, offset);
++		}
++	}
++
+ 	/* Start of right impedance ramp and calculation */
+ 	wcd938x_mbhc_zdet_ramp(component, zdet_param_ptr, NULL, &z1R, d1);
+ 	if (WCD938X_MBHC_IS_SECOND_RAMP_REQUIRED(z1R)) {
+@@ -665,10 +687,11 @@
  		mbhc->hph_type = WCD_MBHC_HPH_MONO;
  	}
  
@@ -1938,7 +2092,46 @@
  	{"AMIC7_MIXER", "Switch", "AMIC7"},
  	{"AMIC7_MIXER", NULL, "VA_AMIC7_MIXER"},
  	{"VA_AMIC7_MIXER", "Switch", "VA AMIC7"},
-@@ -4636,18 +4641,30 @@
+@@ -4347,6 +4352,38 @@
+ 
+ 	wcd938x_dt_parse_micbias_info(dev, &pdata->micbias);
+ 
++	/* a52sxq: Samsung imp-table (DT `imp-table` + `#list-imp-cells`, else Samsung's defaults) */
++	{
++		static const struct wcd938x_gain_table default_table[MAX_IMPEDANCE_TABLE] = {
++			{    0,       0, 6},
++			{    1,      13, 0},
++			{   14,      25, 3},
++			{   26,      42, 4},
++			{   43,     100, 5},
++			{  101,     200, 7},
++			{  201,    1000, 8},
++			{ 1001, INT_MAX, 6},
++		};
++		struct of_phandle_args imp_list;
++		int i, rc;
++
++		for (i = 0; i < ARRAY_SIZE(pdata->imp_table); i++) {
++			rc = of_parse_phandle_with_args(dev->of_node, "imp-table",
++							"#list-imp-cells", i, &imp_list);
++			if (rc < 0 || imp_list.args_count < 3) {
++				pdata->imp_table[i] = default_table[i];
++			} else {
++				pdata->imp_table[i].min = imp_list.args[0];
++				pdata->imp_table[i].max = imp_list.args[1];
++				pdata->imp_table[i].gain = imp_list.args[2];
++				of_node_put(imp_list.np);
++			}
++			dev_info(dev, "impedance gain table %u, %u, %d%s\n",
++				 pdata->imp_table[i].min, pdata->imp_table[i].max,
++				 pdata->imp_table[i].gain, rc < 0 ? " (default)" : "");
++		}
++	}
++
+ 	return pdata;
+ }
+ 
+@@ -4636,18 +4673,30 @@
  	ret =  wcd938x_reset(dev);
  	if (ret == -EPROBE_DEFER) {
  		dev_err(dev, "%s: wcd reset failed!\n", __func__);
@@ -1972,7 +2165,7 @@
  	return ret;
  }
  
-@@ -4659,9 +4676,16 @@
+@@ -4659,9 +4708,16 @@
  #endif
  {
  	struct wcd938x_priv *wcd938x = NULL;
@@ -3042,6 +3235,16 @@
  		INCS    +=  -include $(AUDIO_ROOT)/config/lahainaautoconf.h
  	endif
  	ifeq ($(CONFIG_QTI_QUIN_GVM), y)
+--- a/include/asoc/bolero-slave-internal.h
++++ b/include/asoc/bolero-slave-internal.h
+@@ -14,6 +14,7 @@
+ 	SLV_BOLERO_EVT_RX_PA_GAIN_UPDATE,
+ 	SLV_BOLERO_EVT_HPHL_HD2_ENABLE, /* to enable hd2 config for hphl */
+ 	SLV_BOLERO_EVT_HPHR_HD2_ENABLE, /* to enable hd2 config for hphr */
++	SEC_WCD_BOLERO_EVT_IMPED_TRUE = 100,	/* a52sxq: Samsung imped offset (5.4) */
+ };
+ 
+ /* from bolero to SLV events */
 --- a/include/asoc/wcd-mbhc-v2.h
 +++ b/include/asoc/wcd-mbhc-v2.h
 @@ -148,6 +148,7 @@

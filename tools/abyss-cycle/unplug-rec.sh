@@ -9,7 +9,11 @@
 #   the user unplugs, waits 1 minute, presses the power key ONCE, then touches nothing; the script records the
 #   suspend before the press, the wake reason, the key's IRQ count, the screen coming on, the screen timing out
 #   again and the next suspends, until USB is back (or after_s seconds after the press).
-MODE=phases; [ "${1:-}" = key ] && { MODE=key; AFTER_S=${2:-150}; }
+# Keys mode (several keys from REAL suspend):  setsid nohup sh unplug-rec.sh keys ... &
+#   the user unplugs, then presses keys with a dark screen and about 1 minute between presses
+#   (e.g. Volume Up, Volume Down, Power), then plugs back in; every key IRQ, the resume reason
+#   before it and the framework's wake reason are recorded until USB is back (max 30 min).
+MODE=phases; [ "${1:-}" = key ] && { MODE=key; AFTER_S=${2:-150}; }; [ "${1:-}" = keys ] && MODE=keys
 DOZE_S=${1:-300}; ABYSS_S=${2:-240}
 O=/data/local/tmp/unplug; rm -rf $O; mkdir -p $O; R=$O/report.txt
 mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
@@ -28,6 +32,43 @@ summary() { # $1 = dmesg file, $2 = label
 irqn() { awk -v n="$1" '$NF==n {c=0; for (i=2;i<=9;i++) c+=$i; print c}' /proc/interrupts; }
 irqs() { echo "irq counts: pwrkey=$(irqn pmic_pwrkey) resin=$(irqn pmic_resin) volume_up=$(irqn volume_up) stm_ts=$(irqn stm_ts) rtc=$(irqn pm8xxx_rtc_alarm)"; }
 wake() { dumpsys power | grep -oE 'mWakefulness=[A-Za-z]+' | cut -d= -f2; }
+if [ $MODE = keys ]; then
+{
+echo "unplug-rec KEYS start $(date '+%F %T') $(uname -r) uptime $(cut -d' ' -f1 /proc/uptime) doze_always_on=$(settings get secure doze_always_on) volkey_wakeup=$(cat /sys/power/volkey_wakeup 2>/dev/null)"
+input keyevent SLEEP; sleep 6
+echo "wakefulness $(wake) usb=$(usb)"; stats; batt; irqs
+for d in /sys/class/input/event*; do n=$(cat $d/device/name 2>/dev/null); case "$n" in pmic_pwrkey|pmic_resin|gpio-keys|sec_touchscreen) echo "wakeup capable: $n $(cat $d/device/device/power/wakeup 2>/dev/null)";; esac; done
+echo "waiting for the unplug (max 30 min)"
+} > $R 2>&1
+t=$(now); while [ "$(usb)" = 1 ] && [ $(( $(now) - t )) -lt 1800 ]; do sleep 1; done
+[ "$(usb)" = 1 ] && { echo "never unplugged: end" >> $R; exit 0; }
+T0=$(now); dmesg -c > $O/dmesg-before.txt; logcat -c; : > $O/dmesg-keys.txt
+{
+echo "=== KEYS: unplugged at $(date +%T)"; stats; irqs
+lp=$(irqn pmic_pwrkey); lu=$(irqn volume_up); ld=$(irqn pmic_resin); last=""; lastp=0; lastd=0
+while [ "$(usb)" != 1 ]; do
+  w=$(wake); el=$(( $(now) - T0 ))
+  cp=$(irqn pmic_pwrkey); cu=$(irqn volume_up); cd=$(irqn pmic_resin)
+  if [ "$cp" != "$lp" ] || [ "$cu" != "$lu" ] || [ "$cd" != "$ld" ]; then
+    echo "KEYS +${el}s $(date +%T) key IRQ change: power $lp->$cp volume_up $lu->$cu volume_down(resin) $ld->$cd; wakefulness $w; last_resume_reason: $(cat /sys/kernel/wakeup_reasons/last_resume_reason 2>/dev/null | tr '\n' ' ')"; stats
+    lp=$cp; lu=$cu; ld=$cd; fi
+  if [ "$w" != "$last" ] || [ $(( el - lastp )) -ge 30 ]; then
+    echo "KEYS +${el}s $(date +%T) up=$(cut -d' ' -f1 /proc/uptime) $w $(batt) last_resume: $(cat /sys/kernel/wakeup_reasons/last_resume_reason 2>/dev/null | head -1)"; last=$w; lastp=$el; fi
+  [ $(( el - lastd )) -ge 60 ] && { dmesg -c >> $O/dmesg-keys.txt; lastd=$el; }
+  [ $el -ge 1800 ] && break
+  sleep 2
+done
+dmesg -c >> $O/dmesg-keys.txt; logcat -d -b main -b system > $O/logcat-keys.txt 2>/dev/null
+echo "=== end $(date '+%F %T') usb=$(usb)"; stats; batt; irqs
+summary $O/dmesg-keys.txt KEYS
+echo "[KEYS] key wakes from suspend (kernel):"
+grep -E "Resume caused by|pm_system_irq_wakeup" $O/dmesg-keys.txt | grep -iE "pwrkey|resin|volume|gpio|key" | cut -c1-140
+echo "[KEYS] framework wakes:"
+grep -E "Waking up from|Going to sleep|powerPress|interceptKeyBeforeQueueing.*VOLUME" $O/logcat-keys.txt | cut -c1-170 | tail -20
+echo DONE
+} >> $R 2>&1
+exit 0
+fi
 if [ $MODE = key ]; then
 {
 echo "unplug-rec KEY start $(date '+%F %T') $(uname -r) uptime $(cut -d' ' -f1 /proc/uptime) doze_always_on=$(settings get secure doze_always_on) screen_off_timeout=$(settings get system screen_off_timeout)"
