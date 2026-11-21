@@ -1,0 +1,47 @@
+--- a/asoc/msm-pcm-voip-v2.c
++++ b/asoc/msm-pcm-voip-v2.c
+@@ -1338,6 +1338,34 @@
+ 	return 0;
+ }
+ 
++/*
++ * a52sxq: hw_params may run more than once per open (ALSA allows it in SETUP/PREPARED). The donor
++ * allocated a new DMA area every time and left the old one (and its nodes) queued: a leak, and with
++ * per-call period counts the queues mixed two areas. Unlink this area's nodes and free it first.
++ */
++static void voip_drop_area(struct snd_pcm_substream *substream, struct snd_dma_buffer *dma_buf)
++{
++	struct voip_drv_info *prtd = &voip_info;
++	bool play = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
++	spinlock_t *lock = play ? &prtd->dsp_lock : &prtd->dsp_ul_lock;
++	struct list_head *q[2] = { play ? &prtd->in_queue : &prtd->out_queue,
++				   play ? &prtd->free_in_queue : &prtd->free_out_queue };
++	struct list_head *ptr, *next;
++	unsigned long flags;
++	char *lo = dma_buf->area, *hi = lo + dma_buf->bytes;
++	int i;
++
++	spin_lock_irqsave(lock, flags);
++	for (i = 0; i < 2; i++)
++		list_for_each_safe(ptr, next, q[i])
++			if ((char *)ptr >= lo && (char *)ptr < hi)
++				list_del(ptr);
++	spin_unlock_irqrestore(lock, flags);
++	dma_free_coherent(substream->pcm->card->dev, dma_buf->bytes, dma_buf->area, dma_buf->addr);
++	dma_buf->area = NULL;
++	dma_buf->bytes = 0;
++}
++
+ static int msm_pcm_hw_params(struct snd_soc_component *component,
+ 		struct snd_pcm_substream *substream,
+ 				struct snd_pcm_hw_params *params)
+@@ -1357,6 +1385,9 @@
+ 	pr_info("%s: periods = %d\n", __func__, periods);
+ 	runtime->hw.buffer_bytes_max = sizeof(struct voip_buf_node) * periods;
+ 
++	if (dma_buf->area)
++		voip_drop_area(substream, dma_buf);
++
+ 	dma_buf->dev.type = SNDRV_DMA_TYPE_DEV;
+ 	dma_buf->dev.dev = substream->pcm->card->dev;
+ 	dma_buf->private_data = NULL;

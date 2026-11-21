@@ -1,0 +1,70 @@
+a52sxq: ufs-qcom: run-time knobs for the 5.4 devfreq behaviour (A/B)
+
+The 5.4 ufs-qcom scaled with upthreshold 70 / downdifferential 5 and never suspended clock scaling
+between requests; this driver uses 70 / 65 and suspend_on_no_request. Module parameters (0644,
+-1 = keep): a52_scale_upthreshold, a52_scale_downdiff, a52_scale_suspend_on_no_req. Applied at
+config_scaling_param and on every write. (2026-11-21, storage gap vs 5.4)
+
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -5212,6 +5212,48 @@
+ }
+ 
+ #if IS_ENABLED(CONFIG_DEVFREQ_GOV_SIMPLE_ONDEMAND)
++/*
++ * a52 (Galaxy A52s, 2026-11-21): the 5.4 ufs-qcom used upthreshold 70 / downdifferential 5 and never
++ * suspended clock scaling between requests; this driver uses 70 / 65 and suspend_on_no_request.
++ * Run-time A/B knobs (0644), -1 = keep the driver's value:
++ *   a52_scale_upthreshold, a52_scale_downdiff (simple_ondemand data), a52_scale_suspend_on_no_req (0/1).
++ */
++static struct ufs_hba *a52_scale_hba;
++static struct devfreq_simple_ondemand_data *a52_scale_od;
++static int a52_scale_upthreshold = -1, a52_scale_downdiff = -1, a52_scale_suspend_on_no_req = -1;
++
++static void a52_scale_apply(void)
++{
++	if (a52_scale_od) {
++		unsigned int up = a52_scale_upthreshold >= 0 ? a52_scale_upthreshold : a52_scale_od->upthreshold;
++		unsigned int dn = a52_scale_downdiff >= 0 ? a52_scale_downdiff : a52_scale_od->downdifferential;
++
++		if (up <= 100 && dn <= up) {
++			WRITE_ONCE(a52_scale_od->upthreshold, up);
++			WRITE_ONCE(a52_scale_od->downdifferential, dn);
++		}
++	}
++	if (a52_scale_hba && a52_scale_suspend_on_no_req >= 0)
++		WRITE_ONCE(a52_scale_hba->clk_scaling.suspend_on_no_request, !!a52_scale_suspend_on_no_req);
++	if (a52_scale_hba)
++		pr_info("ufs-qcom: a52: devfreq upthreshold %u downdifferential %u suspend_on_no_request %d\n",
++			a52_scale_od ? a52_scale_od->upthreshold : 0, a52_scale_od ? a52_scale_od->downdifferential : 0,
++			a52_scale_hba->clk_scaling.suspend_on_no_request);
++}
++
++static int a52_scale_set(const char *val, const struct kernel_param *kp)
++{
++	int ret = param_set_int(val, kp);
++
++	if (!ret)
++		a52_scale_apply();
++	return ret;
++}
++static const struct kernel_param_ops a52_scale_ops = { .set = a52_scale_set, .get = param_get_int };
++module_param_cb(a52_scale_upthreshold, &a52_scale_ops, &a52_scale_upthreshold, 0644);
++module_param_cb(a52_scale_downdiff, &a52_scale_ops, &a52_scale_downdiff, 0644);
++module_param_cb(a52_scale_suspend_on_no_req, &a52_scale_ops, &a52_scale_suspend_on_no_req, 0644);
++
+ static void ufs_qcom_config_scaling_param(struct ufs_hba *hba,
+ 					struct devfreq_dev_profile *p,
+ 					struct devfreq_simple_ondemand_data *d)
+@@ -5229,6 +5271,11 @@
+ 	of_property_read_u32(np, "qcom,devfreq_downdifferential", &d->downdifferential);
+ 
+ 	hba->clk_scaling.suspend_on_no_request = true;
++
++	/* a52 (5.4 parity A/B): module parameters, -1 = keep the values above */
++	a52_scale_hba = hba;
++	a52_scale_od = d;
++	a52_scale_apply();
+ }
+ 
+ #else

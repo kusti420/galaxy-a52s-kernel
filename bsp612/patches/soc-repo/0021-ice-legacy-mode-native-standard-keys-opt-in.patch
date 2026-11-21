@@ -1,0 +1,98 @@
+a52sxq: ICE legacy mode + native inline crypto for standard (raw) keys (opt-in)
+
+The 6.12 Qualcomm ufshcd-crypto-qti advertises only HW-wrapped keys and the yupik DT sets
+qcom,ice-use-hwkm, while the A52s ROMs use standard keys (fstab: aes-256-xts v2+inlinecrypt_optimized,
+metadata via dm-default-key, no wrappedkey): every /data bio went through blk-crypto-fallback (CPU AES).
+qcom_ice.a52_no_hwkm=1 keeps ICE in legacy mode; ufshcd_crypto_qti.a52_raw_keys=1 then advertises
+BLK_CRYPTO_KEY_TYPE_STANDARD and programs raw keys with qcom_ice_program_key (SCM ice_set_key, the
+upstream ufs-qcom path). qcom_ice_program_key_hwkm() returns 0 for a raw key without programming it, so
+the profile must never claim standard keys on that path. Both default 0. In legacy mode the evict uses the matching qcom_scm_ice_invalidate_key. (2026-11-21)
+
+--- a/drivers/soc/qcom/ice.c	2026-11-21 16:07:16.060300352 +0200
++++ b/drivers/soc/qcom/ice.c	2026-11-21 16:08:20.342647062 +0200
+--- a/drivers/soc/qcom/ice.c	2026-11-21 16:07:16.060300352 +0200
++++ b/drivers/soc/qcom/ice.c	2026-11-21 16:23:15.573315244 +0200
+@@ -99,6 +99,11 @@
+ 	};
+ };
+ 
++/* a52 (Galaxy A52s, 2026-11-21): ignore qcom,ice-use-hwkm (HWKM standard mode = wrapped keys only) */
++static bool a52_no_hwkm;
++module_param(a52_no_hwkm, bool, 0444);
++MODULE_PARM_DESC(a52_no_hwkm, "a52: keep ICE in legacy mode (raw keys via SCM) even with qcom,ice-use-hwkm (default 0)");
++
+ static bool qcom_ice_check_supported(struct qcom_ice *ice)
+ {
+ 	u32 regval = qcom_ice_readl(ice, QCOM_ICE_REG_VERSION);
+@@ -500,6 +505,10 @@
+ 			return 0;
+ 	}
+ 
++	/* a52: legacy mode (raw keys programmed with qcom_scm_ice_set_key): the matching invalidate call */
++	if (!ice->use_hwkm && a52_no_hwkm)
++		return qcom_scm_ice_invalidate_key(slot);
++
+ 	return qcom_scm_clear_ice_key(hwkm_slot, 0);
+ }
+ EXPORT_SYMBOL_GPL(qcom_ice_evict_key);
+@@ -601,6 +610,11 @@
+ 
+ 	engine->use_hwkm = of_property_read_bool(dev->of_node,
+ 						 "qcom,ice-use-hwkm");
++	/* a52: legacy (raw key) mode as on 5.4, whose ROMs use standard keys (no wrappedkey in fstab) */
++	if (a52_no_hwkm && engine->use_hwkm) {
++		dev_info(dev, "a52: qcom,ice-use-hwkm ignored (a52_no_hwkm=1): legacy mode, raw keys\n");
++		engine->use_hwkm = false;
++	}
+ 
+ 	if (!qcom_ice_check_supported(engine))
+ 		return ERR_PTR(-EOPNOTSUPP);
+--- a/drivers/ufs/host/ufshcd-crypto-qti.c	2026-11-21 16:07:16.067781663 +0200
++++ b/drivers/ufs/host/ufshcd-crypto-qti.c	2026-11-21 16:23:15.574022111 +0200
+@@ -76,10 +76,15 @@
+ 	}
+ 
+ 	ufshcd_hold(hba);
+-	err = qcom_ice_program_key_hwkm(host->ice,
+-					QCOM_ICE_CRYPTO_ALG_AES_XTS,
+-					ice_key_size, key,
+-					cfg.data_unit_size, slot);
++	if (key->crypto_cfg.key_type == BLK_CRYPTO_KEY_TYPE_HW_WRAPPED)
++		err = qcom_ice_program_key_hwkm(host->ice,
++						QCOM_ICE_CRYPTO_ALG_AES_XTS,
++						ice_key_size, key,
++						cfg.data_unit_size, slot);
++	else	/* a52: raw keys through the SCM ICE call (upstream ufs-qcom path; the hwkm call ignores them) */
++		err = qcom_ice_program_key(host->ice, QCOM_ICE_CRYPTO_ALG_AES_XTS,
++					   QCOM_ICE_CRYPTO_KEY_SIZE_256, key->raw,
++					   cfg.data_unit_size, slot);
+ 	if (err)
+ 		pr_err("%s: error programming key, err = %d, slot = %d\n",
+ 		       __func__, err, slot);
+@@ -162,8 +167,14 @@
+  *
+  * Return: 0 if crypto was initialized or is not supported, else a -errno value.
+  */
++/* a52 (Galaxy A52s, 2026-11-21): advertise standard keys when ICE is in legacy mode */
++static bool a52_raw_keys;
++module_param(a52_raw_keys, bool, 0444);
++MODULE_PARM_DESC(a52_raw_keys, "a52: native inline crypto for standard (raw) keys when ICE is in legacy mode (default 0)");
++
+ int ufshcd_qti_hba_init_crypto_capabilities(struct ufs_hba *hba)
+ {
++	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+ 	int cap_idx;
+ 	int err = 0;
+ 	enum blk_crypto_mode_num blk_mode_num;
+@@ -203,6 +214,11 @@
+ 	/* UFS only supports 8 bytes for any DUN */
+ 	hba->crypto_profile.max_dun_bytes_supported = 8;
+ 	hba->crypto_profile.key_types_supported = BLK_CRYPTO_KEY_TYPE_HW_WRAPPED;
++	/* a52: standard (raw) keys natively when ICE runs in legacy mode, as on 5.4 (else blk-crypto-fallback) */
++	if (a52_raw_keys && host->ice && !qcom_ice_hwkm_supported(host->ice)) {
++		hba->crypto_profile.key_types_supported = BLK_CRYPTO_KEY_TYPE_STANDARD;
++		dev_info(hba->dev, "a52: inline crypto for standard (raw) keys (ICE legacy mode)\n");
++	}
+ 	hba->crypto_profile.dev = hba->dev;
+ 
+ 	/*

@@ -89,8 +89,11 @@ t_gpu() {
 	local s=6 mb=768; [ "$QUICK" = 1 ] && { s=3; mb=256; }
 	local f0 f1; have_root && f0=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk)
 	strun gl $s
-	have_root && { st gl 4 >/dev/null 2>&1 & local sp=$!; sleep 2; f1=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); wait $sp; local f2 i; for i in $(seq 20); do sleep 1; f2=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); [ "${f2:-0}" -lt "${f1:-0}" ] && break; done; metric gpu_clk_loaded "$f1"; metric gpu_clk_idle "$f2"; echo "  gpuclk idle-before $f0 loaded $f1 idle-after $f2"
-		if [ "${f1:-0}" -gt "${f2:-0}" ]; then ok "GPU clock scaled up under load ($f1 Hz) and back down ($f2 Hz)"; elif [ "${f1:-0}" = "$(rd /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies | tr ' ' '\n' | grep . | sort -n | head -1)" ]; then skip "GPU frequency scaling: the vsync-limited GL loop (about 60-120 fps of a small scene) runs at the lowest OPP ($f1 Hz) on this governor; needs a heavier load (bench gpu.torture) to prove scaling"
+	have_root && { st gl 4 >/dev/null 2>&1 & local sp=$!; sleep 2; f1=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); wait $sp; local f2 i s0 s1 top; for i in $(seq 20); do sleep 1; f2=$(rd /sys/class/kgsl/kgsl-3d0/gpuclk); [ "${f2:-0}" -lt "${f1:-0}" ] && break; done
+		# the level index can stay up while the GPU slumbers (clocks off): then judge by the active time at the top
+		# level (gpu_clock_stats, us per level) over 5 s of idle
+		if [ "${f2:-0}" -ge "${f1:-0}" ]; then s0=$(rd /sys/class/kgsl/kgsl-3d0/gpu_clock_stats | awk '{print $1}'); sleep 5; s1=$(rd /sys/class/kgsl/kgsl-3d0/gpu_clock_stats | awk '{print $1}'); top=$(( (${s1:-0} - ${s0:-0}) / 1000 )); echo "  level index stays $f2 after the load; active at the top level: $top ms in 5 s"; [ "$top" -lt 250 ] && f2="$f2-slumber"; fi; metric gpu_clk_loaded "$f1"; metric gpu_clk_idle "$f2"; echo "  gpuclk idle-before $f0 loaded $f1 idle-after $f2"
+		if [ "${f2%-slumber}" != "$f2" ]; then ok "GPU clock scaled up under load ($f1 Hz); idle: index kept but ${top} ms active at it in 5 s (slumber)"; f2=${f2%-slumber}; elif [ "${f1:-0}" -gt "${f2:-0}" ]; then ok "GPU clock scaled up under load ($f1 Hz) and back down ($f2 Hz)"; elif [ "${f1:-0}" = "$(rd /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies | tr ' ' '\n' | grep . | sort -n | head -1)" ]; then skip "GPU frequency scaling: the vsync-limited GL loop (about 60-120 fps of a small scene) runs at the lowest OPP ($f1 Hz) on this governor; needs a heavier load (bench gpu.torture) to prove scaling"
 		else fail "GPU clock did not scale: loaded $f1, idle $f2"; fi; } || skip "GPU frequency scaling (needs root: kgsl sysfs)"
 	strun glalloc $mb
 	# real UI frames through HWUI/SurfaceFlinger

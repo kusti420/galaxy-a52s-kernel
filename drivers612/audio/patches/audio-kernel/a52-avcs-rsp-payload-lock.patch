@@ -1,0 +1,89 @@
+--- a/dsp/q6core.c
++++ b/dsp/q6core.c
+@@ -96,6 +96,12 @@
+ 
+ /* Global payload used for AVCS_CMD_RSP_MODULES command */
+ static struct avcs_load_unload_modules_payload *rsp_payload;
++/*
++ * a52sxq: rsp_payload is filled by the APR callback and freed by the waiter after its 1 s timeout;
++ * a late response could memcpy into freed memory. Both sides now hold this lock. (The load path was
++ * unreachable before a52-avcs-load-avs-state-5.4: every load failed with -ENODEV.)
++ */
++static DEFINE_SPINLOCK(rsp_payload_lock);
+ 
+ struct generic_get_data_ {
+ 	int valid;
+@@ -499,15 +505,24 @@
+ 	case AVCS_CMD_RSP_LOAD_MODULES:
+ 		pr_debug("%s: Received AVCS_CMD_RSP_LOAD_MODULES\n",
+ 			 __func__);
+-		if (!rsp_payload)
++	{
++		unsigned long flags;
++
++		spin_lock_irqsave(&rsp_payload_lock, flags);
++		if (!rsp_payload) {
++			spin_unlock_irqrestore(&rsp_payload_lock, flags);
+ 			return -EINVAL;
++		}
+ 		if (data->payload_size != ((sizeof(struct avcs_load_unload_modules_sec_payload)
+ 			* rsp_payload->num_modules) + sizeof(uint32_t))) {
++			spin_unlock_irqrestore(&rsp_payload_lock, flags);
+ 			pr_err("%s: payload size greater than expected size %d\n",
+ 				 __func__, data->payload_size);
+ 			return -EINVAL;
+ 		}
+ 		memcpy(rsp_payload, data->payload, data->payload_size);
++		spin_unlock_irqrestore(&rsp_payload_lock, flags);
++	}
+ 		q6core_lcl.avcs_module_resp_received = 1;
+ 		wake_up(&q6core_lcl.avcs_module_load_unload_wait);
+ 		break;
+@@ -1092,15 +1107,21 @@
+ 		return -ENOMEM;
+ 	}
+ 
+-	rsp_payload = kzalloc(payload_size, GFP_KERNEL);
+-	if (!rsp_payload) {
+-		kfree(mod);
+-		mutex_unlock(&(q6core_lcl.cmd_lock));
+-		return -ENOMEM;
++	{
++		struct avcs_load_unload_modules_payload *rp = kzalloc(payload_size, GFP_KERNEL);
++		unsigned long flags;
++
++		if (!rp) {
++			kfree(mod);
++			mutex_unlock(&(q6core_lcl.cmd_lock));
++			return -ENOMEM;
++		}
++		rp->num_modules = num_modules;
++		spin_lock_irqsave(&rsp_payload_lock, flags);
++		rsp_payload = rp;
++		spin_unlock_irqrestore(&rsp_payload_lock, flags);
+ 	}
+ 
+-	rsp_payload->num_modules = num_modules;
+-
+ 	memcpy((uint8_t *)mod + sizeof(struct apr_hdr) +
+ 		sizeof(struct avcs_load_unload_modules_meminfo),
+ 		payload, payload_size);
+@@ -1154,8 +1175,16 @@
+ 	}
+ done:
+ 	kfree(mod);
+-	kfree(rsp_payload);
+-	rsp_payload = NULL;
++	{
++		struct avcs_load_unload_modules_payload *rp;
++		unsigned long flags;
++
++		spin_lock_irqsave(&rsp_payload_lock, flags);
++		rp = rsp_payload;
++		rsp_payload = NULL;
++		spin_unlock_irqrestore(&rsp_payload_lock, flags);
++		kfree(rp);
++	}
+ 	mutex_unlock(&(q6core_lcl.cmd_lock));
+ 	return ret;
+ }

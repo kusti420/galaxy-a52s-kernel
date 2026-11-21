@@ -1,7 +1,7 @@
 #!/system/bin/sh
 # Off-cable test of the daily phone's AOD wake loop (root, on the phone, detached):
 #   setsid nohup sh unplug-wakeloop.sh [phase_s=180] >/dev/null 2>&1 &
-# Unplug the phone, and leaves the phone alone for 3 x phase_s (+ a minute), then plug it back in.
+# Unplug the phone, leave it alone for 3 x phase_s (+ a minute), then plug it back in.
 # Phase 0: AOD doze, nothing added (baseline); phase 1: /data/local/tmp/wakeloop with a 600 ms
 # CLOCK_MONOTONIC timerfd in an EPOLLWAKEUP epoll set (the "[timerfd]" wakeup source of the daily
 # phone); phase 2: the same with CLOCK_BOOTTIME. Counts per phase: suspend entries, "[timerfd]"

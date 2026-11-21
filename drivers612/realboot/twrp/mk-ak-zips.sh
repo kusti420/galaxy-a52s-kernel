@@ -105,6 +105,7 @@ for D in ${CHECK_DUMPS:-}; do
 	rm -f "$ST"/x-*.img
 done
 
+ICE_RAW=0; [ -f "$SRC/BUILDINFO" ] && grep -q ' ice_raw=1' "$SRC/BUILDINFO" && ICE_RAW=1
 # ---------------------------------------------------------------- staging
 stage_meta() { # <dir> <mode> <title> <need tmp kb>
 	local d=$1
@@ -120,6 +121,8 @@ stage_meta() { # <dir> <mode> <title> <need tmp kb>
 		echo "KREL=$KREL"
 		echo "ADDON=$ADDON"
 		echo "NEED_TMP_KB=$4"
+		# ICE_RAW=1 builds (ICE legacy mode, standard keys only): the installer refuses ROMs with wrappedkey in fstab
+		echo "ICE_RAW=$ICE_RAW"
 	} > "$d/a52s-k612.conf"
 }
 sums() { # <dir>: SHA256SUMS of the payload (everything but META-INF)

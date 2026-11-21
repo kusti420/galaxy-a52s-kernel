@@ -365,6 +365,11 @@ grep -q 'byte-identical to the build' "$T/mkak1.log" && ok "mk-ak-zips self-chec
 grep -q 'origin=match' "$T/mkak1.log" && ok "mk-ak-zips: LineageOS images give a matching origin" || bad "mk-ak-zips CHECK_DUMPS"
 ZA=$(ls "$T"/ak/a52s-k612-*-twrp.zip | grep -v restore)
 ZR=$T/ak/a52s-k612-restore-twrp.zip
+# ICE_RAW=1 variant (2026-11-21): the same zip with ICE_RAW=1 in its conf (SHA256SUMS redone like mk-ak-zips)
+rm -rf "$T/akice"; mkdir -p "$T/akice/z"; (cd "$T/akice/z" && unzip -q "$ZA")
+sed -i 's/^ICE_RAW=.*/ICE_RAW=1/' "$T/akice/z/a52s-k612.conf"; grep -q '^ICE_RAW=1' "$T/akice/z/a52s-k612.conf" || echo ICE_RAW=1 >> "$T/akice/z/a52s-k612.conf"
+(cd "$T/akice/z" && find . -type f ! -path './META-INF/*' ! -name SHA256SUMS | sed 's#^\./##' | LC_ALL=C sort | xargs sha256sum > ../sums && mv ../sums SHA256SUMS && zip -qr -X ../ice.zip .)
+ZI=$T/akice/ice.zip
 # kernel-only build (ADDON=vendor_boot, no vendor-addon/): AK_KO_SRC, default out/rbich7 (2026-11-19)
 AK_KO_SRC=${AK_KO_SRC:-$RB/out/rbich7}
 ZK=""
@@ -633,6 +638,23 @@ sed -i 's/^ro.lineage.version=.*/ro.lineage.version=23.2-20260901-NIGHTLY-a52sxq
 run_ak "$ZA" "$SH"
 expect_rc 1; expect_akparts "$AK_LIN"; expect_ak_safe; expect_msg "is not LineageOS 24"
 VBM_SRC=$AK_ICH/vbmeta.img
+
+SC="$SH/ak-ice-wrappedkey"; new_root_ak iceA "$AK_ICH" ichthys
+mkdir -p "$R/fake/parts/dm-1.d/etc"
+printf '/dev/block/bootdevice/by-name/userdata /data f2fs noatime,inlinecrypt latemount,wait,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0,metadata_encryption=aes-256-xts:wrappedkey_v0\n' > "$R/fake/parts/dm-1.d/etc/fstab.default"
+run_ak "$ZI" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "hardware-wrapped keys"
+
+SC="$SH/ak-ice-standard-keys"; new_root_ak iceB "$AK_ICH" ichthys
+mkdir -p "$R/fake/parts/dm-1.d/etc"
+printf '# wrappedkey in a comment is ignored\n/dev/block/bootdevice/by-name/userdata /data f2fs noatime,inlinecrypt latemount,wait,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized\n' > "$R/fake/parts/dm-1.d/etc/fstab.default"
+run_ak "$ZI" "$SH"
+expect_rc 0; expect_akparts "$EXI"; expect_ak_safe
+grep -q 'fstab: /data without wrappedkey' "$R/fake/last.log" && ok "$SC: fstab checked" || { bad "$SC: fstab check not logged"; grep -E 'fstab|vendor' "$R/fake/last.log" | tail -5; ls -la "$R/fake/parts/dm-1.d/etc"; }
+
+SC="$SH/ak-ice-no-fstab"; new_root_ak iceC "$AK_ICH" ichthys
+run_ak "$ZI" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "no fstab in /vendor/etc"
 
 SC="$SH/ak-vendor-not-a52sxq"; new_root_ak c5 "$AK_ICH" ichthys
 sed -i 's/^ro.product.vendor.device=.*/ro.product.vendor.device=a52q/' "$R/fake/parts/dm-1.d/build.prop"

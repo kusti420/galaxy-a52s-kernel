@@ -117,6 +117,8 @@
 #                     (2026-11-19, all default off until proven) parity items: see the comments at the options
 #   HOLD_MS=<ms>      (default unset = the module's 4000) a52sxq_dsp_boot hold_release_ms: ms after adsp_running until the
 #                     held audio tree is released (boot time: the sound card and audioserver come up that much later)
+#   ASYNC_MODS="m ..." (default none) async_probe=1 for these first-stage modules (boot time)
+#   ICE_RAW=1         (default 0; REF >= s99i) /data encryption in the ICE for standard keys (no blk-crypto-fallback)
 #   LPM=1             (default 0) cpuidle governor qcom-cpu-lpm (WALT busy hysteresis, as 5.4 lpm-levels): see the option
 #   GPU_BUSY_UP=<pct> (default unset; REF >= s97) adreno_tz governor steps up one level when >= pct busy (b5)
 #   KSU=1             (default 0) KernelSU-Next LKM: /ksuinit + /kernelsu.ko in the vendor ramdisk, rdinit=/ksuinit
@@ -199,6 +201,9 @@ fi
 IMAGE=${IMAGE:-$DIST/Image}
 BUSDCVS_CONF=$TOP/drivers612/busdcvs/busdcvs.conf
 ADDON=${ADDON:-vendor}; case "$ADDON" in vendor|vendor_boot) ;; *) echo "ADDON=vendor|vendor_boot" >&2; exit 2;; esac
+# HOLD_MS: a non-number would be a module parameter error = a52sxq_dsp_boot fails to load = FATAL first stage
+if [ -n "${HOLD_MS:-}" ]; then case "$HOLD_MS" in *[!0-9]*) echo "HOLD_MS: digits only (ms, 0..10000)" >&2; exit 2;; esac
+	[ "$HOLD_MS" -le 10000 ] || { echo "HOLD_MS: 0..10000 ms" >&2; exit 2; }; fi
 SELINUX=${SELINUX:-enforcing}; USB_EXTCON=${USB_EXTCON:-samsung}; MODEM=${MODEM:-0}
 case "$MODEM" in 0|1) ;; *) echo "MODEM=0|1" >&2; exit 2;; esac
 # SDCARD=1 (default since 2026-11-15, both kernels): microSD host (cqhci + sdhci-msm), proven read-only
@@ -567,6 +572,23 @@ if [ -n "${GPU_BUSY_UP:-}" ]; then
 	echo "options governor_msm_adreno_tz a52_busy_up_pct=$GPU_BUSY_UP" >> "$W/plan/first.params"
 	say "GPU_BUSY_UP=$GPU_BUSY_UP: modules.options governor_msm_adreno_tz a52_busy_up_pct=$GPU_BUSY_UP"
 fi
+# ICE_RAW=1 (2026-11-21, default 0; REF >= s99i, soc-repo patch 0021): /data inline crypto in the ICE hardware for the
+# ROM's standard (raw) keys instead of blk-crypto-fallback on the CPU: qcom_ice a52_no_hwkm=1 (ICE legacy mode, the
+# DT's qcom,ice-use-hwkm ignored) + ufshcd_crypto_qti a52_raw_keys=1 (advertise standard keys, program them with the
+# SCM ice_set_key call). Known-answer test vs AES-256-XTS: rehearsals rh612p2a87i/j.
+if [ "${ICE_RAW:-0}" = 1 ]; then
+	strings "$W/plan/first/qcom_ice.ko" | grep -q '^parmtype=a52_no_hwkm:' || fail "ICE_RAW=1: qcom_ice of REF=$REF has no a52_no_hwkm (needs s99i+)"
+	strings "$W/plan/first/ufshcd-crypto-qti.ko" | grep -q '^parmtype=a52_raw_keys:' || fail "ICE_RAW=1: ufshcd-crypto-qti of REF=$REF has no a52_raw_keys (needs s99i+)"
+	printf '%s\n' 'options qcom_ice a52_no_hwkm=1' 'options ufshcd_crypto_qti a52_raw_keys=1' >> "$W/plan/first.params"
+	say "ICE_RAW=1: modules.options qcom_ice a52_no_hwkm=1, ufshcd_crypto_qti a52_raw_keys=1"
+fi
+# ASYNC_MODS="<module> ..." (2026-11-21, default none): probe these first-stage modules asynchronously
+# (modules.options async_probe=1, as sec_battery): their slow synchronous probes no longer hold up first-stage init
+for m in ${ASYNC_MODS:-}; do
+	[ -f "$W/plan/first/$m.ko" ] || fail "ASYNC_MODS: $m.ko is not a first-stage module"
+	echo "options $m async_probe=1" >> "$W/plan/first.params"
+	say "ASYNC_MODS: modules.options $m async_probe=1"
+done
 cp "$W/plan/first.params" "$LM/modules.options"
 # The test loaded every module with a plain insmod in list order, so no softdep ever applied.
 # libmodprobe would honour the "pre:" ones and pull e.g. qcom_hwspinlock before smem, qcom-pdc
@@ -1066,7 +1088,7 @@ cp "$W/vendor_boot.dtb" "$O/vendor_boot.dtb"; cp "$W/realboot.dtbo" "$O/realboot
 cp "$W/vendor-cmdline.txt" "$W/dt-bootargs.txt" "$O/"; cp "$LM/modules.load" "$O/first-stage.modules.load"
 [ -f "$T/vs-tested.diff" ] && cp "$T/vs-tested.diff" "$O/dtb-vs-tested.diff"
 printf 'name=%s kernel=%s krel=%s ref=%s image=%s tree=%s diag=%s modem=%s sdcard=%s wlan=%s addon=%s debug=%s btslim=%s\n' "$NAME" "$KV" "$KREL" "$REFRD" "$IMAGE" "$TREF" "$DIAG" "$MODEM" "$SDCARD" "$WLD" "$ADDON" "$DEBUG" "${BTSLIM:-0}" > "$O/BUILDINFO"
-sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} lpm=${LPM:-0} hold_ms=${HOLD_MS:-} thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
+sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} lpm=${LPM:-0} hold_ms=${HOLD_MS:-} ice_raw=${ICE_RAW:-0} async_mods=$(echo ${ASYNC_MODS:-} | tr " " "+") thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
 if [ "$DIAG_KERNEL" = 1 ]; then cp "$(dirname "$IMAGE")/BUILDINFO" "$O/diag-kernel.BUILDINFO"; fi
 say "== summary"
 sed 's/^/  /' "$O/SHA256SUMS" | tee -a "$R"

@@ -1,0 +1,22 @@
+--- a/asoc/msm-pcm-voip-v2.c
++++ b/asoc/msm-pcm-voip-v2.c
+@@ -1048,8 +1048,9 @@
+ 				list_del(&buf_node->list);
+ 			}
+ 			spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
++			/* a52sxq: free with the size hw_params allocated for THIS buffer (periods differ per direction) */
+ 			dma_free_coherent(p_substream->pcm->card->dev,
+-				runtime->hw.buffer_bytes_max, p_dma_buf->area,
++				p_dma_buf->bytes, p_dma_buf->area,
+ 				p_dma_buf->addr);
+ 			p_dma_buf->area = NULL;
+ 		}
+@@ -1078,7 +1079,7 @@
+ 			}
+ 			spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
+ 			dma_free_coherent(c_substream->pcm->card->dev,
+-				runtime->hw.buffer_bytes_max, c_dma_buf->area,
++				c_dma_buf->bytes, c_dma_buf->area,
+ 				c_dma_buf->addr);
+ 			c_dma_buf->area = NULL;
+ 		}

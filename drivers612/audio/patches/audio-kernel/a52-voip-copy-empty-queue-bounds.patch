@@ -1,0 +1,49 @@
+--- a/asoc/msm-pcm-voip-v2.c
++++ b/asoc/msm-pcm-voip-v2.c
+@@ -848,7 +848,22 @@
+ 
+ 	if (ret > 0) {
+ 		if (fbytes <= VOIP_MAX_VOC_PKT_SIZE) {
++			/*
++			 * a52sxq: the wait also ends on VOIP_STOPPED, which is the state until both directions are
++			 * prepared: with an empty free queue list_first_entry() would return the list head inside
++			 * voip_info and the copy would overwrite it. Re-check under the lock.
++			 */
++			if (prtd->mode != MODE_PCM &&
++			    fbytes < sizeof(buf_node->frame.frm_hdr) + sizeof(buf_node->frame.pktlen)) {
++				pr_err_ratelimited("%s: frame of %lu bytes shorter than its header\n", __func__, fbytes);
++				return -EINVAL;
++			}
+ 			spin_lock_irqsave(&prtd->dsp_lock, dsp_flags);
++			if (list_empty(&prtd->free_in_queue)) {
++				spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
++				pr_err_ratelimited("%s: No free DL buffs (state %d)\n", __func__, prtd->state);
++				return -ETIMEDOUT;
++			}
+ 			buf_node =
+ 				list_first_entry(&prtd->free_in_queue,
+ 						struct voip_buf_node, list);
+@@ -869,7 +884,9 @@
+ 					goto put_back;
+ 				}
+ 				ret = 0;
+-				if (buf_node->frame.pktlen >= fbytes)
++				/* a52sxq: pktlen comes from user space: never beyond the bytes actually copied */
++				if (buf_node->frame.pktlen > fbytes -
++				    (sizeof(buf_node->frame.frm_hdr) + sizeof(buf_node->frame.pktlen)))
+ 					buf_node->frame.pktlen = fbytes -
+ 					(sizeof(buf_node->frame.frm_hdr) +
+ 					 sizeof(buf_node->frame.pktlen));
+@@ -930,6 +947,12 @@
+ 
+ 		if (fbytes <= VOIP_MAX_VOC_PKT_SIZE) {
+ 			spin_lock_irqsave(&prtd->dsp_ul_lock, dsp_flags);
++			/* a52sxq: as in playback: the wait also ends on VOIP_STOPPED with nothing queued */
++			if (list_empty(&prtd->out_queue)) {
++				spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
++				pr_err_ratelimited("%s: No UL data available (state %d)\n", __func__, prtd->state);
++				return -ETIMEDOUT;
++			}
+ 			buf_node = list_first_entry(&prtd->out_queue,
+ 					struct voip_buf_node, list);
+ 			list_del(&buf_node->list);

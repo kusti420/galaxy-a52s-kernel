@@ -783,6 +783,24 @@ ak_run() {
 	{ echo "a52boot $1:"; sed 's/^/  /' "$out"; } >> "$LOG"
 }
 
+# check_fstab_ak: an ICE_RAW=1 kernel keeps the ICE in legacy mode (standard keys only): a ROM whose userdata fstab
+# entry asks for hardware-wrapped keys (wrappedkey_v0) could not unlock /data with it: refuse before writing anything
+check_fstab_ak() {
+	[ "$(conf ICE_RAW)" = 1 ] || return 0
+	VD=$(dyn_dev vendor)
+	[ -n "$VD" ] || abort "no vendor partition (/dev/block/mapper/vendor)" "Cannot check the ROM's encryption settings."
+	open_ro "$VD" vendor || abort "cannot mount vendor read-only to check the ROM's fstab" \
+		"Mount Vendor in the recovery (Mount menu) and flash again."
+	fs=""; set +f; for f in "$O_MP"/etc/fstab.*; do [ -f "$f" ] && fs="$fs $f"; done; set -f
+	wk=0; [ -n "$fs" ] && grep -E '^[^#]*[[:space:]]/data[[:space:]]' $fs 2>/dev/null | grep -q wrappedkey && wk=1
+	[ -n "$fs" ] || log "fstab check: $O_MP/etc holds: $(ls "$O_MP/etc" 2>&1 | tr '\n' ' ')"
+	[ "$O_OWN" = 1 ] && close_ro
+	[ -n "$fs" ] || abort "no fstab in /vendor/etc" "Cannot check the ROM's encryption settings."
+	[ "$wk" = 0 ] || abort "this ROM encrypts /data with hardware-wrapped keys (wrappedkey in its fstab)" \
+		"This kernel supports the standard keys of LineageOS a52sxq only. Nothing was changed."
+	log "fstab: /data without wrappedkey ($fs)"
+}
+
 check_rom_ak() {
 	SYSDEV=$(dyn_dev system)
 	[ -n "$SYSDEV" ] || abort "no system partition (/dev/block/mapper/system)" \
@@ -1249,6 +1267,7 @@ restore)
 ak)
 	ak_setup
 	check_rom_ak
+	check_fstab_ak
 	snapshot_parts
 	build_images
 	do_backup_ak

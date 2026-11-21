@@ -1124,7 +1124,29 @@
  {
  	int ret = 0;
  	struct voip_buf_node *buf_node = NULL;
-@@ -849,22 +855,20 @@
+@@ -842,30 +848,45 @@
+ 
+ 	if (ret > 0) {
+ 		if (fbytes <= VOIP_MAX_VOC_PKT_SIZE) {
++			/*
++			 * a52sxq: the wait also ends on VOIP_STOPPED, which is the state until both directions are
++			 * prepared: with an empty free queue list_first_entry() would return the list head inside
++			 * voip_info and the copy would overwrite it. Re-check under the lock.
++			 */
++			if (prtd->mode != MODE_PCM &&
++			    fbytes < sizeof(buf_node->frame.frm_hdr) + sizeof(buf_node->frame.pktlen)) {
++				pr_err_ratelimited("%s: frame of %lu bytes shorter than its header\n", __func__, fbytes);
++				return -EINVAL;
++			}
+ 			spin_lock_irqsave(&prtd->dsp_lock, dsp_flags);
++			if (list_empty(&prtd->free_in_queue)) {
++				spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
++				pr_err_ratelimited("%s: No free DL buffs (state %d)\n", __func__, prtd->state);
++				return -ETIMEDOUT;
++			}
+ 			buf_node =
+ 				list_first_entry(&prtd->free_in_queue,
+ 						struct voip_buf_node, list);
  			list_del(&buf_node->list);
  			spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
  			if (prtd->mode == MODE_PCM) {
@@ -1153,11 +1175,15 @@
 +					pr_err("%s: copy from user failed\n", __func__);
 +					goto put_back;
  				}
+-				if (buf_node->frame.pktlen >= fbytes)
 +				ret = 0;
- 				if (buf_node->frame.pktlen >= fbytes)
++				/* a52sxq: pktlen comes from user space: never beyond the bytes actually copied */
++				if (buf_node->frame.pktlen > fbytes -
++				    (sizeof(buf_node->frame.frm_hdr) + sizeof(buf_node->frame.pktlen)))
  					buf_node->frame.pktlen = fbytes -
  					(sizeof(buf_node->frame.frm_hdr) +
-@@ -887,9 +891,15 @@
+ 					 sizeof(buf_node->frame.pktlen));
+@@ -887,9 +908,15 @@
  	}
  
  	return  ret;
@@ -1174,7 +1200,17 @@
  						unsigned long fbytes)
  {
  	int ret = 0;
-@@ -924,23 +934,22 @@
+@@ -920,27 +947,32 @@
+ 
+ 		if (fbytes <= VOIP_MAX_VOC_PKT_SIZE) {
+ 			spin_lock_irqsave(&prtd->dsp_ul_lock, dsp_flags);
++			/* a52sxq: as in playback: the wait also ends on VOIP_STOPPED with nothing queued */
++			if (list_empty(&prtd->out_queue)) {
++				spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
++				pr_err_ratelimited("%s: No UL data available (state %d)\n", __func__, prtd->state);
++				return -ETIMEDOUT;
++			}
+ 			buf_node = list_first_entry(&prtd->out_queue,
  					struct voip_buf_node, list);
  			list_del(&buf_node->list);
  			spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
@@ -1210,7 +1246,7 @@
  			}
  			spin_lock_irqsave(&prtd->dsp_ul_lock, dsp_flags);
  			list_add_tail(&buf_node->list,
-@@ -964,7 +973,7 @@
+@@ -964,7 +996,7 @@
  }
  static int msm_pcm_copy(struct snd_soc_component *component,
  	struct snd_pcm_substream *substream, int a,
@@ -1219,7 +1255,7 @@
  {
  	int ret = 0;
  
-@@ -975,7 +984,6 @@
+@@ -975,7 +1007,6 @@
  
  	return ret;
  }
@@ -1227,7 +1263,62 @@
  
  static int msm_pcm_close(struct snd_soc_component *component,
  		struct snd_pcm_substream *substream)
-@@ -1314,11 +1322,17 @@
+@@ -1040,8 +1071,9 @@
+ 				list_del(&buf_node->list);
+ 			}
+ 			spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
++			/* a52sxq: free with the size hw_params allocated for THIS buffer (periods differ per direction) */
+ 			dma_free_coherent(p_substream->pcm->card->dev,
+-				runtime->hw.buffer_bytes_max, p_dma_buf->area,
++				p_dma_buf->bytes, p_dma_buf->area,
+ 				p_dma_buf->addr);
+ 			p_dma_buf->area = NULL;
+ 		}
+@@ -1070,7 +1102,7 @@
+ 			}
+ 			spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
+ 			dma_free_coherent(c_substream->pcm->card->dev,
+-				runtime->hw.buffer_bytes_max, c_dma_buf->area,
++				c_dma_buf->bytes, c_dma_buf->area,
+ 				c_dma_buf->addr);
+ 			c_dma_buf->area = NULL;
+ 		}
+@@ -1306,6 +1338,34 @@
+ 	return 0;
+ }
+ 
++/*
++ * a52sxq: hw_params may run more than once per open (ALSA allows it in SETUP/PREPARED). The donor
++ * allocated a new DMA area every time and left the old one (and its nodes) queued: a leak, and with
++ * per-call period counts the queues mixed two areas. Unlink this area's nodes and free it first.
++ */
++static void voip_drop_area(struct snd_pcm_substream *substream, struct snd_dma_buffer *dma_buf)
++{
++	struct voip_drv_info *prtd = &voip_info;
++	bool play = substream->stream == SNDRV_PCM_STREAM_PLAYBACK;
++	spinlock_t *lock = play ? &prtd->dsp_lock : &prtd->dsp_ul_lock;
++	struct list_head *q[2] = { play ? &prtd->in_queue : &prtd->out_queue,
++				   play ? &prtd->free_in_queue : &prtd->free_out_queue };
++	struct list_head *ptr, *next;
++	unsigned long flags;
++	char *lo = dma_buf->area, *hi = lo + dma_buf->bytes;
++	int i;
++
++	spin_lock_irqsave(lock, flags);
++	for (i = 0; i < 2; i++)
++		list_for_each_safe(ptr, next, q[i])
++			if ((char *)ptr >= lo && (char *)ptr < hi)
++				list_del(ptr);
++	spin_unlock_irqrestore(lock, flags);
++	dma_free_coherent(substream->pcm->card->dev, dma_buf->bytes, dma_buf->area, dma_buf->addr);
++	dma_buf->area = NULL;
++	dma_buf->bytes = 0;
++}
++
+ static int msm_pcm_hw_params(struct snd_soc_component *component,
+ 		struct snd_pcm_substream *substream,
+ 				struct snd_pcm_hw_params *params)
+@@ -1314,11 +1374,20 @@
  	struct snd_dma_buffer *dma_buf = &substream->dma_buffer;
  	struct voip_buf_node *buf_node = NULL;
  	int i = 0, offset = 0;
@@ -1242,10 +1333,13 @@
 +	pr_info("%s: periods = %d\n", __func__, periods);
 +	runtime->hw.buffer_bytes_max = sizeof(struct voip_buf_node) * periods;
 +
++	if (dma_buf->area)
++		voip_drop_area(substream, dma_buf);
++
  	dma_buf->dev.type = SNDRV_DMA_TYPE_DEV;
  	dma_buf->dev.dev = substream->pcm->card->dev;
  	dma_buf->private_data = NULL;
-@@ -1336,7 +1350,7 @@
+@@ -1336,7 +1405,7 @@
  	memset(dma_buf->area, 0, runtime->hw.buffer_bytes_max);
  
  	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
@@ -1254,7 +1348,7 @@
  			buf_node = (void *)dma_buf->area + offset;
  
  			list_add_tail(&buf_node->list,
-@@ -1344,7 +1358,7 @@
+@@ -1344,7 +1413,7 @@
  			offset = offset + sizeof(struct voip_buf_node);
  		}
  	} else {
@@ -1263,7 +1357,7 @@
  			buf_node = (void *) dma_buf->area + offset;
  			list_add_tail(&buf_node->list,
  					&voip_info.free_out_queue);
-@@ -1659,6 +1673,7 @@
+@@ -1659,6 +1728,7 @@
  	.trigger		= msm_pcm_trigger,
  	.pointer		= msm_pcm_pointer,
  	.mmap			= msm_pcm_mmap,
@@ -3018,7 +3112,46 @@
  	phys_addr_t buf_phys_addr;
 --- a/dsp/q6core.c
 +++ b/dsp/q6core.c
-@@ -1057,13 +1057,20 @@
+@@ -96,6 +96,12 @@
+ 
+ /* Global payload used for AVCS_CMD_RSP_MODULES command */
+ static struct avcs_load_unload_modules_payload *rsp_payload;
++/*
++ * a52sxq: rsp_payload is filled by the APR callback and freed by the waiter after its 1 s timeout;
++ * a late response could memcpy into freed memory. Both sides now hold this lock. (The load path was
++ * unreachable before a52-avcs-load-avs-state-5.4: every load failed with -ENODEV.)
++ */
++static DEFINE_SPINLOCK(rsp_payload_lock);
+ 
+ struct generic_get_data_ {
+ 	int valid;
+@@ -499,15 +505,24 @@
+ 	case AVCS_CMD_RSP_LOAD_MODULES:
+ 		pr_debug("%s: Received AVCS_CMD_RSP_LOAD_MODULES\n",
+ 			 __func__);
+-		if (!rsp_payload)
++	{
++		unsigned long flags;
++
++		spin_lock_irqsave(&rsp_payload_lock, flags);
++		if (!rsp_payload) {
++			spin_unlock_irqrestore(&rsp_payload_lock, flags);
+ 			return -EINVAL;
++		}
+ 		if (data->payload_size != ((sizeof(struct avcs_load_unload_modules_sec_payload)
+ 			* rsp_payload->num_modules) + sizeof(uint32_t))) {
++			spin_unlock_irqrestore(&rsp_payload_lock, flags);
+ 			pr_err("%s: payload size greater than expected size %d\n",
+ 				 __func__, data->payload_size);
+ 			return -EINVAL;
+ 		}
+ 		memcpy(rsp_payload, data->payload, data->payload_size);
++		spin_unlock_irqrestore(&rsp_payload_lock, flags);
++	}
+ 		q6core_lcl.avcs_module_resp_received = 1;
+ 		wake_up(&q6core_lcl.avcs_module_load_unload_wait);
+ 		break;
+@@ -1057,13 +1072,20 @@
  			pr_err("%s: all modules might be not loaded yet on ADSP\n",
  				__func__);
  	}
@@ -3044,6 +3177,54 @@
  	mutex_lock(&(q6core_lcl.cmd_lock));
  	num_modules = payload->num_modules;
  	ocm_core_open();
+@@ -1085,15 +1107,21 @@
+ 		return -ENOMEM;
+ 	}
+ 
+-	rsp_payload = kzalloc(payload_size, GFP_KERNEL);
+-	if (!rsp_payload) {
+-		kfree(mod);
+-		mutex_unlock(&(q6core_lcl.cmd_lock));
+-		return -ENOMEM;
++	{
++		struct avcs_load_unload_modules_payload *rp = kzalloc(payload_size, GFP_KERNEL);
++		unsigned long flags;
++
++		if (!rp) {
++			kfree(mod);
++			mutex_unlock(&(q6core_lcl.cmd_lock));
++			return -ENOMEM;
++		}
++		rp->num_modules = num_modules;
++		spin_lock_irqsave(&rsp_payload_lock, flags);
++		rsp_payload = rp;
++		spin_unlock_irqrestore(&rsp_payload_lock, flags);
+ 	}
+ 
+-	rsp_payload->num_modules = num_modules;
+-
+ 	memcpy((uint8_t *)mod + sizeof(struct apr_hdr) +
+ 		sizeof(struct avcs_load_unload_modules_meminfo),
+ 		payload, payload_size);
+@@ -1147,8 +1175,16 @@
+ 	}
+ done:
+ 	kfree(mod);
+-	kfree(rsp_payload);
+-	rsp_payload = NULL;
++	{
++		struct avcs_load_unload_modules_payload *rp;
++		unsigned long flags;
++
++		spin_lock_irqsave(&rsp_payload_lock, flags);
++		rp = rsp_payload;
++		rsp_payload = NULL;
++		spin_unlock_irqrestore(&rsp_payload_lock, flags);
++		kfree(rp);
++	}
+ 	mutex_unlock(&(q6core_lcl.cmd_lock));
+ 	return ret;
+ }
 --- a/dsp/q6voice.c
 +++ b/dsp/q6voice.c
 @@ -27,6 +27,10 @@

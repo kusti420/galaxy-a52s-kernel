@@ -1,0 +1,30 @@
+a52sxq: qcom_q6v5: stop handshake for a remote that is still alive when a crash is reported by software
+
+See the comment. (2026-11-21, ADSP SSR review)
+
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -574,11 +574,22 @@
+ int qcom_q6v5_request_stop(struct qcom_q6v5 *q6v5, struct qcom_sysmon *sysmon)
+ {
+ 	int ret;
++	/*
++	 * a52sxq: q6v5->running is cleared by the remote's own watchdog / fatal-error interrupts before they
++	 * report the crash. A crash reported by software on a remote that is still alive (adsp_loader's
++	 * /sys/kernel/boot_adsp/ssr, which libssc writes to recover the sensors core; the debugfs crash file)
++	 * reaches here with rproc->state == RPROC_CRASHED but running == true, and sysmon skipped its graceful
++	 * shutdown because of that state. Without the stop handshake the following TZ pas_shutdown of a live
++	 * ADSP reset the whole SoC silently (6.12 rbich36, broken screen 2026-11-21); 5.4's PIL sends the stop
++	 * and waits for the stop ack in that case and the ADSP recovers in 0.5 s. So: handshake whenever the
++	 * remote has not crashed by itself.
++	 */
++	bool alive = q6v5->running;
+ 
+ 	q6v5->running = false;
+ 
+ 	/* Don't perform SMP2P dance if remote isn't running */
+-	if (qcom_sysmon_shutdown_acked(sysmon) || (q6v5->rproc->state != RPROC_RUNNING))
++	if (qcom_sysmon_shutdown_acked(sysmon) || (q6v5->rproc->state != RPROC_RUNNING && !alive))
+ 		return 0;
+ 
+ 	qcom_smem_state_update_bits(q6v5->state,

@@ -219,4 +219,4 @@ SPDX identifiers found in the exported files, by directory:
 | `modules` | GPL-2.0-only (10), GPL-2.0 WITH Linux-syscall-note (3), GPL-2.0-only WITH Linux-syscall-note (1), GPL-2.0 (1) |
 | `patches` | BSD-3-Clause (6), GPL-2.0-only (4), GPL-2.0-only OR BSD-2-Clause (2) |
 | `samsung612` | GPL-2.0-only (2) |
-| `tools` | GPL-2.0-only (1) |
+| `tools` | GPL-2.0-only (1), GPL-2.0 (1) |
