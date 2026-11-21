@@ -1,0 +1,187 @@
+--- a/asoc/msm-pcm-voip-v2.c	2026-11-21 13:42:33.171756958 +0200
++++ b/asoc/msm-pcm-voip-v2.c	2026-11-21 13:42:33.172391118 +0200
+@@ -28,6 +28,7 @@
+ #define DRV_NAME "msm-pcm-voip-v2"
+ 
+ #define SHARED_MEM_BUF 2
++#define VOIP_MIN_Q_LEN 2
+ #define VOIP_MAX_Q_LEN 10
+ #define VOIP_MAX_VOC_PKT_SIZE 4096
+ #define VOIP_MIN_VOC_PKT_SIZE 320
+@@ -212,10 +213,11 @@
+ 	.rate_max =             48000,
+ 	.channels_min =         1,
+ 	.channels_max =         1,
+-	.buffer_bytes_max =	sizeof(struct voip_buf_node) * VOIP_MAX_Q_LEN,
++	/* a52sxq: Samsung 5.4 queue length 2..10 (the ROM's compress_voip asks for fewer than 10 periods) */
++	.buffer_bytes_max =	sizeof(struct voip_buf_node) * VOIP_MIN_Q_LEN,
+ 	.period_bytes_min =	VOIP_MIN_VOC_PKT_SIZE,
+ 	.period_bytes_max =	VOIP_MAX_VOC_PKT_SIZE,
+-	.periods_min =		VOIP_MAX_Q_LEN,
++	.periods_min =		VOIP_MIN_Q_LEN,
+ 	.periods_max =		VOIP_MAX_Q_LEN,
+ 	.fifo_size =            0,
+ };
+@@ -814,9 +816,13 @@
+ 	return ret;
+ }
+ 
+-#if 0
++/*
++ * a52sxq: the 6.12 donor had the copy callbacks under #if 0 and no .copy in the component driver, so VoIP
++ * writes/reads went to the DMA area and never through the DSP packet queues. Ported to the 6.12
++ * iov_iter copy (returns 0 on success, as copy_user did on 5.4).
++ */
+ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
+-	unsigned long hwoff, void __user *buf, unsigned long fbytes)
++	unsigned long hwoff, struct iov_iter *buf, unsigned long fbytes)
+ {
+ 	int ret = 0;
+ 	struct voip_buf_node *buf_node = NULL;
+@@ -849,22 +855,20 @@
+ 			list_del(&buf_node->list);
+ 			spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
+ 			if (prtd->mode == MODE_PCM) {
+-				ret = copy_from_user(&buf_node->frame.voc_pkt,
+-							buf, fbytes);
+-				if (ret) {
+-					pr_err("%s: copy from user failed %d\n",
+-					       __func__, ret);
+-					return -EFAULT;
++				if (copy_from_iter(&buf_node->frame.voc_pkt,
++						   fbytes, buf) != fbytes) {
++					pr_err("%s: copy from user failed\n", __func__);
++					goto put_back;
+ 				}
++				ret = 0;
+ 				buf_node->frame.pktlen = fbytes;
+ 			} else {
+-				ret = copy_from_user(&buf_node->frame,
+-							buf, fbytes);
+-				if (ret) {
+-					pr_err("%s: copy from user failed %d\n",
+-					       __func__, ret);
+-					return -EFAULT;
++				if (copy_from_iter(&buf_node->frame,
++						   fbytes, buf) != fbytes) {
++					pr_err("%s: copy from user failed\n", __func__);
++					goto put_back;
+ 				}
++				ret = 0;
+ 				if (buf_node->frame.pktlen >= fbytes)
+ 					buf_node->frame.pktlen = fbytes -
+ 					(sizeof(buf_node->frame.frm_hdr) +
+@@ -887,9 +891,15 @@
+ 	}
+ 
+ 	return  ret;
++
++put_back:
++	spin_lock_irqsave(&prtd->dsp_lock, dsp_flags);
++	list_add_tail(&buf_node->list, &prtd->free_in_queue);
++	spin_unlock_irqrestore(&prtd->dsp_lock, dsp_flags);
++	return -EFAULT;
+ }
+ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
+-		int channel, unsigned long hwoff, void __user *buf,
++		int channel, unsigned long hwoff, struct iov_iter *buf,
+ 						unsigned long fbytes)
+ {
+ 	int ret = 0;
+@@ -924,23 +934,22 @@
+ 					struct voip_buf_node, list);
+ 			list_del(&buf_node->list);
+ 			spin_unlock_irqrestore(&prtd->dsp_ul_lock, dsp_flags);
+-			if (prtd->mode == MODE_PCM) {
+-				ret = copy_to_user(buf,
+-						   &buf_node->frame.voc_pkt,
+-						   buf_node->frame.pktlen);
+-			} else {
++			if (prtd->mode == MODE_PCM)
++				size = buf_node->frame.pktlen;
++			else
+ 				size = sizeof(buf_node->frame.frm_hdr) +
+ 				       sizeof(buf_node->frame.pktlen) +
+ 				       buf_node->frame.pktlen;
+-
+-				ret = copy_to_user(buf,
+-						   &buf_node->frame,
+-						   size);
+-			}
+-			if (ret) {
+-				pr_err("%s: Copy to user returned %d\n",
+-					__func__, ret);
++			if (size > fbytes)
++				size = fbytes;
++			if (copy_to_iter(prtd->mode == MODE_PCM ?
++					 (void *)&buf_node->frame.voc_pkt :
++					 (void *)&buf_node->frame,
++					 size, buf) != size) {
++				pr_err("%s: Copy to user failed\n", __func__);
+ 				ret = -EFAULT;
++			} else {
++				ret = 0;
+ 			}
+ 			spin_lock_irqsave(&prtd->dsp_ul_lock, dsp_flags);
+ 			list_add_tail(&buf_node->list,
+@@ -964,7 +973,7 @@
+ }
+ static int msm_pcm_copy(struct snd_soc_component *component,
+ 	struct snd_pcm_substream *substream, int a,
+-	 unsigned long hwoff, void __user *buf, unsigned long fbytes)
++	 unsigned long hwoff, struct iov_iter *buf, unsigned long fbytes)
+ {
+ 	int ret = 0;
+ 
+@@ -975,7 +984,6 @@
+ 
+ 	return ret;
+ }
+-#endif
+ 
+ static int msm_pcm_close(struct snd_soc_component *component,
+ 		struct snd_pcm_substream *substream)
+@@ -1314,11 +1322,17 @@
+ 	struct snd_dma_buffer *dma_buf = &substream->dma_buffer;
+ 	struct voip_buf_node *buf_node = NULL;
+ 	int i = 0, offset = 0;
++	int periods = VOIP_MIN_Q_LEN;
+ 
+ 	pr_debug("%s: voip\n", __func__);
+ 
+ 	mutex_lock(&voip_info.lock);
+ 
++	/* a52sxq: Samsung 5.4: use the queue length the HAL asked for */
++	periods = params_periods(params);
++	pr_info("%s: periods = %d\n", __func__, periods);
++	runtime->hw.buffer_bytes_max = sizeof(struct voip_buf_node) * periods;
++
+ 	dma_buf->dev.type = SNDRV_DMA_TYPE_DEV;
+ 	dma_buf->dev.dev = substream->pcm->card->dev;
+ 	dma_buf->private_data = NULL;
+@@ -1336,7 +1350,7 @@
+ 	memset(dma_buf->area, 0, runtime->hw.buffer_bytes_max);
+ 
+ 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+-		for (i = 0; i < VOIP_MAX_Q_LEN; i++) {
++		for (i = 0; i < periods; i++) {
+ 			buf_node = (void *)dma_buf->area + offset;
+ 
+ 			list_add_tail(&buf_node->list,
+@@ -1344,7 +1358,7 @@
+ 			offset = offset + sizeof(struct voip_buf_node);
+ 		}
+ 	} else {
+-		for (i = 0; i < VOIP_MAX_Q_LEN; i++) {
++		for (i = 0; i < periods; i++) {
+ 			buf_node = (void *) dma_buf->area + offset;
+ 			list_add_tail(&buf_node->list,
+ 					&voip_info.free_out_queue);
+@@ -1659,6 +1673,7 @@
+ 	.trigger		= msm_pcm_trigger,
+ 	.pointer		= msm_pcm_pointer,
+ 	.mmap			= msm_pcm_mmap,
++	.copy			= msm_pcm_copy,
+ };
+ 
+ static int msm_pcm_probe(struct platform_device *pdev)

@@ -1,0 +1,265 @@
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
+index b335072..edee80e 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
+@@ -339,6 +339,9 @@ struct msm_dai_q6_dai_data {
+ 	union afe_port_config port_config;
+ 	u16 vi_feed_mono;
+ 	u32 xt_logging_disable;
++	/* a52sxq (Samsung 5.4 parity): "AFE Dynamic Bitrate" / "SBM Delay" */
++	u32 dyn_bitrate;
++	struct asm_sbm_param_t sbm;
+ };
+ 
+ struct msm_dai_q6_spdif_dai_data {
+@@ -4410,6 +4413,94 @@ static int msm_dai_q6_afe_scrambler_mode_put(
+ 	return 0;
+ }
+ 
++/* a52sxq (Samsung 5.4 parity, 5.4 asoc/msm-dai-q6-v2.c): A2DP offload run-time controls of
++ * SLIMBUS_7_RX, used by the vendor liba2dpoffload.so.
++ */
++static int msm_dai_q6_afe_sbm_info(struct snd_kcontrol *kcontrol,
++				   struct snd_ctl_elem_info *uinfo)
++{
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_BYTES;
++	uinfo->count = sizeof(struct asm_sbm_param_t);
++
++	return 0;
++}
++
++static int msm_dai_q6_afe_slimbus_sbm_get(struct snd_kcontrol *kcontrol,
++					  struct snd_ctl_elem_value *ucontrol)
++{
++	struct msm_dai_q6_dai_data *dai_data = kcontrol->private_data;
++
++	if (!dai_data) {
++		pr_err("%s: Invalid dai data\n", __func__);
++		return -EINVAL;
++	}
++
++	memcpy(ucontrol->value.bytes.data, &dai_data->sbm,
++	       sizeof(struct asm_sbm_param_t));
++
++	return 0;
++}
++
++static int msm_dai_q6_afe_slimbus_sbm_put(struct snd_kcontrol *kcontrol,
++					  struct snd_ctl_elem_value *ucontrol)
++{
++	int rc;
++	struct msm_dai_q6_dai_data *dai_data = kcontrol->private_data;
++
++	if (!dai_data) {
++		pr_err("%s: Invalid dai data\n", __func__);
++		return -EINVAL;
++	}
++
++	memcpy(&dai_data->sbm, ucontrol->value.bytes.data,
++	       sizeof(struct asm_sbm_param_t));
++
++	rc = afe_q6_slimbus_update_sbm(&dai_data->sbm);
++	if (rc < 0)
++		pr_debug("%s: fail to update a2dp param\n", __func__);
++
++	return rc;
++}
++
++static int msm_dai_q6_afe_slimbus_dynamic_bitrate_get(
++			struct snd_kcontrol *kcontrol,
++			struct snd_ctl_elem_value *ucontrol)
++{
++	struct msm_dai_q6_dai_data *dai_data = kcontrol->private_data;
++
++	if (!dai_data) {
++		pr_err("%s: Invalid dai data\n", __func__);
++		return -EINVAL;
++	}
++
++	ucontrol->value.integer.value[0] = dai_data->dyn_bitrate;
++
++	return 0;
++}
++
++static int msm_dai_q6_afe_slimbus_dynamic_bitrate_put(
++			struct snd_kcontrol *kcontrol,
++			struct snd_ctl_elem_value *ucontrol)
++{
++	int rc;
++	struct msm_dai_q6_dai_data *dai_data = kcontrol->private_data;
++
++	if (!dai_data) {
++		pr_err("%s: Invalid dai data\n", __func__);
++		return -EINVAL;
++	}
++	dai_data->dyn_bitrate = ucontrol->value.integer.value[0];
++	pr_debug("%s: updating afe dynamic bitrate : %u\n",
++		 __func__, dai_data->dyn_bitrate);
++
++	rc = afe_q6_slimbus_update_dyn_bitrate(dai_data->dyn_bitrate);
++	if (rc < 0)
++		pr_debug("%s: fail to update dynamic bitrate for AFE APR\n",
++			 __func__);
++
++	return rc;
++}
++
+ static const struct snd_kcontrol_new afe_enc_config_controls[] = {
+ 	{
+ 		.access = (SNDRV_CTL_ELEM_ACCESS_READWRITE |
+@@ -4444,7 +4535,20 @@ static const struct snd_kcontrol_new afe_enc_config_controls[] = {
+ 	},
+ 	SOC_ENUM_EXT("LC3 Channel Mode", lc3_chs_mode_enum[0],
+ 			msm_dai_q6_lc3_channel_mode_get,
+-			msm_dai_q6_lc3_channel_mode_put)
++			msm_dai_q6_lc3_channel_mode_put),
++	/* [7], [8]: a52sxq, Samsung 5.4 parity (same positions as on 5.4) */
++	SOC_SINGLE_EXT("AFE Dynamic Bitrate", 0, 0, UINT_MAX, 0,
++		       msm_dai_q6_afe_slimbus_dynamic_bitrate_get,
++		       msm_dai_q6_afe_slimbus_dynamic_bitrate_put),
++	{
++		.access = (SNDRV_CTL_ELEM_ACCESS_READWRITE |
++			SNDRV_CTL_ELEM_ACCESS_INACTIVE),
++		.iface = SNDRV_CTL_ELEM_IFACE_PCM,
++		.name = "SBM Delay",
++		.info = msm_dai_q6_afe_sbm_info,
++		.get = msm_dai_q6_afe_slimbus_sbm_get,
++		.put = msm_dai_q6_afe_slimbus_sbm_put,
++	},
+ };
+ 
+ static int  msm_dai_q6_afe_dec_cfg_info(struct snd_kcontrol *kcontrol,
+@@ -4995,6 +5099,12 @@ static int msm_dai_q6_dai_probe(struct snd_soc_dai *dai)
+ 		rc = snd_ctl_add(dai->component->card->snd_card,
+ 				snd_ctl_new1(&afe_enc_config_controls[6],
+ 				dai));
++		rc = snd_ctl_add(dai->component->card->snd_card,
++				 snd_ctl_new1(&afe_enc_config_controls[7],
++				 dai_data));
++		rc = snd_ctl_add(dai->component->card->snd_card,
++				 snd_ctl_new1(&afe_enc_config_controls[8],
++				 dai_data));
+ 		rc = snd_ctl_add(dai->component->card->snd_card,
+ 				snd_ctl_new1(&avd_drift_config_controls[2],
+ 					dai));
+diff --git a/drivers612/audio/audio-kernel/dsp/q6afe.c b/drivers612/audio/audio-kernel/dsp/q6afe.c
+index ff66ea8..442e137 100644
+--- a/drivers612/audio/audio-kernel/dsp/q6afe.c
++++ b/drivers612/audio/audio-kernel/dsp/q6afe.c
+@@ -6044,6 +6044,76 @@ int afe_set_lc3_channel_mode(u32 format, u16 port_id, u32 channel_mode)
+ }
+ EXPORT_SYMBOL(afe_set_lc3_channel_mode);
+ 
++/* a52sxq (Samsung 5.4 parity, 5.4 dsp/q6afe.c afe_q6_slimbus_update_sbm /
++ * afe_q6_slimbus_update_dyn_bitrate): run-time parameters of the AFE encoder on SLIMBUS_7_RX
++ * (A2DP offload). One helper for both: pack one parameter and send it to the port.
++ */
++static int a52_afe_slim7_enc_param(u32 param_id, void *data, u32 size)
++{
++	struct param_hdr_v3 param_hdr;
++	u8 *packed_param_data;
++	u32 packed_data_size;
++	int index, ret;
++	u16 port_id;
++
++	index = q6audio_get_port_index(SLIMBUS_7_RX);
++	port_id = q6audio_get_port_id(SLIMBUS_7_RX);
++	if (index < 0 || index >= AFE_MAX_PORTS) {
++		pr_err("%s: AFE port index[%d] invalid!\n", __func__, index);
++		return -EINVAL;
++	}
++
++	memset(&param_hdr, 0, sizeof(param_hdr));
++	param_hdr.module_id = AFE_MODULE_ID_ENCODER;
++	param_hdr.instance_id = INSTANCE_ID_0;
++	param_hdr.param_id = param_id;
++	param_hdr.param_size = size;
++
++	packed_data_size = sizeof(union param_hdrs) + size;
++	packed_param_data = kzalloc(packed_data_size, GFP_KERNEL);
++	if (!packed_param_data)
++		return -ENOMEM;
++
++	ret = q6common_pack_pp_params(packed_param_data, &param_hdr, data,
++				      &packed_data_size);
++	if (ret) {
++		pr_err("%s: Failed to pack param header and data, error %d\n",
++		       __func__, ret);
++		goto done;
++	}
++
++	ret = q6afe_set_params(port_id, index, NULL, packed_param_data,
++			       packed_data_size);
++	if (ret) {
++		pr_err("%s: param 0x%x on port 0x%x failed %d\n", __func__,
++		       param_id, port_id, ret);
++		ret = -EINVAL;
++	}
++done:
++	kfree(packed_param_data);
++	return ret;
++}
++
++int afe_q6_slimbus_update_sbm(struct asm_sbm_param_t *sbm_param)
++{
++	if (!sbm_param)
++		return -EINVAL;
++	pr_info("%s: updating mode\n", __func__);
++	return a52_afe_slim7_enc_param(AVS_MEDIA_ID_SBM_ID, sbm_param,
++				       sizeof(*sbm_param));
++}
++EXPORT_SYMBOL(afe_q6_slimbus_update_sbm);
++
++int afe_q6_slimbus_update_dyn_bitrate(uint32_t bitrate)
++{
++	struct asm_bitrate_param_t dyn_bitrate = { .enc_bitrate = bitrate };
++
++	pr_info("%s: bitrate[%u]\n", __func__, bitrate);
++	return a52_afe_slim7_enc_param(AVS_ENCODER_PARAM_ID_ENC_BITRATE,
++				       &dyn_bitrate, sizeof(dyn_bitrate));
++}
++EXPORT_SYMBOL(afe_q6_slimbus_update_dyn_bitrate);
++
+ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
+ 			    u32 rate, u16 afe_in_channels, u16 afe_in_bit_width,
+ 			    union afe_enc_config_data *enc_cfg,
+diff --git a/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h b/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h
+index 0053961..ba3abb6 100644
+--- a/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h
++++ b/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h
+@@ -5103,6 +5103,22 @@ struct afe_dec_config {
+ 	union afe_dec_config_data data;
+ };
+ 
++/* a52sxq (Samsung 5.4 parity): run-time A2DP offload parameters of the AFE encoder on
++ * SLIMBUS_7_RX, set by the mixer controls "AFE Dynamic Bitrate" and "SBM Delay".
++ */
++#define AVS_ENCODER_PARAM_ID_ENC_BITRATE 0x0001322D
++#define AVS_MEDIA_ID_SBM_ID 0x00010C19
++struct asm_sbm_param_t {
++	uint32_t      target_delay;
++	uint32_t      prev_delay;
++	uint32_t      current_buffer_level;
++	uint32_t      stop_flag;
++} __packed;
++
++struct asm_bitrate_param_t {
++	u32                  enc_bitrate;
++} __packed;
++
+ struct afe_enc_cfg_blk_param_t {
+ 	uint32_t enc_cfg_blk_size;
+ 	/*
+diff --git a/drivers612/audio/audio-kernel/include/dsp/q6afe-v2.h b/drivers612/audio/audio-kernel/include/dsp/q6afe-v2.h
+index efabe01..8904bf6 100644
+--- a/drivers612/audio/audio-kernel/include/dsp/q6afe-v2.h
++++ b/drivers612/audio/audio-kernel/include/dsp/q6afe-v2.h
+@@ -507,6 +507,8 @@ int afe_port_start(u16 port_id, union afe_port_config *afe_config,
+ 	u32 rate);
+ int afe_set_tws_channel_mode(u32 foramt, u16 port_id, u32 channel_mode);
+ int afe_set_lc3_channel_mode(u32 foramt, u16 port_id, u32 channel_mode);
++int afe_q6_slimbus_update_dyn_bitrate(uint32_t bitrate);
++int afe_q6_slimbus_update_sbm(struct asm_sbm_param_t *sbm_param);
+ int afe_port_start_v2(u16 port_id, union afe_port_config *afe_config,
+ 		      u32 rate, u16 afe_in_channels, u16 afe_in_bit_width,
+ 		      struct afe_enc_config *enc_config,

@@ -1,0 +1,28 @@
+--- a/dsp/q6core.c	2026-11-21 14:11:00.517777245 +0200
++++ b/dsp/q6core.c	2026-11-21 14:11:00.518515811 +0200
+@@ -1057,13 +1057,20 @@
+ 			pr_err("%s: all modules might be not loaded yet on ADSP\n",
+ 				__func__);
+ 	}
+-	/*  Still if !adsp_ready, dont proceed further */
+-	if (preload_type == AVCS_LOAD_MODULES &&
+-		(!q6core_is_adsp_ready() ||
+-		q6core_lcl.param != ADSP_MODULES_READY_AVS_STATE)) {
+-		pr_err("%s: ADSP not ready  / ADSP MODULES AVS not ready  \n",  __func__);
++	/*
++	 * a52sxq: 5.4 only warned here and loaded anyway. This phone's ADSP image never reports
++	 * ADSP_MODULES_READY_AVS_STATE, so the r70 check below refused every AVCS module load
++	 * (A2DP offload: "encoder load for port 0x400e failed -19" after the 800 ms wait).
++	 * Only an ADSP that is not up at all stops the load now.
++	 */
++	if (preload_type == AVCS_LOAD_MODULES && !q6core_is_adsp_ready()) {
++		pr_err("%s: ADSP not ready\n",  __func__);
+ 		return -ENODEV;
+ 	}
++	if (preload_type == AVCS_LOAD_MODULES &&
++	    q6core_lcl.param != ADSP_MODULES_READY_AVS_STATE)
++		pr_info("%s: AVS state %d (not MODULES_READY), loading anyway as on 5.4\n",
++			__func__, q6core_lcl.param);
+ 	mutex_lock(&(q6core_lcl.cmd_lock));
+ 	num_modules = payload->num_modules;
+ 	ocm_core_open();

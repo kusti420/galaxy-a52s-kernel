@@ -209,7 +209,7 @@ else
 	[ "$(tail -n1 "$VR/lib/modules/modules.load")" = wlan.ko ] || fail "addon=vendor_boot: wlan.ko not last in modules.load"
 	MPS="python3 -I $HERE/tools/modprobesim.py"
 	$MPS --label first-stage --dir "$VR/lib/modules" --as /lib/modules --load-file modules.load > "$W/mps.txt" || { cat "$W/mps.txt"; fail "libmodprobe dry run: first stage"; }
-	grep -qx 'options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify+qcom,msm-audio-apr+qcom,audio-ref-clk+qcom,msm-cdc-pinctrl+qcom,q6core-audio+qcom,adsp-loader hold_late=qcom,wcd938x-codec' "$VR/lib/modules/modules.options" || fail "addon=vendor_boot: no rescan_after_adsp in modules.options"
+	grep -qE '^options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify\+qcom,msm-audio-apr\+qcom,audio-ref-clk\+qcom,msm-cdc-pinctrl\+qcom,q6core-audio\+qcom,adsp-loader hold_late=qcom,wcd938x-codec( hold_release_ms=[0-9]+)?$' "$VR/lib/modules/modules.options" || fail "addon=vendor_boot: no rescan_after_adsp in modules.options"
 	cp "$TOP/tools/tone/tone.dex" "$OV/a52/rh/tone.dex"
 fi
 FWPATH=$(sed -n 's/.*firmware_class\.path=\([^ ]*\).*/\1/p' "$RB/vendor-cmdline.txt")

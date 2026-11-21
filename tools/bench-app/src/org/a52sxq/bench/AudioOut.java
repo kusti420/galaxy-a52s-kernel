@@ -2,6 +2,7 @@ package org.a52sxq.bench;
 
 import android.content.Context;
 import android.media.AudioAttributes;
+import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioRecord;
@@ -21,6 +22,24 @@ public class AudioOut extends Test {
     public String id() { return "audio.out"; }
     public int budget(Ctx c) { return 60; }
     static final int SR = 48000, N = 32768;
+    /** Name of a connected external audio output (Bluetooth, USB, wired, HDMI), or null. A test tone must never go to
+     *  someone's headphones unannounced (2026-11-21: a "silent" run played to a paired Bluetooth DAC, whose absolute
+     *  volume `cmd media_session volume --set 0` does not touch). */
+    public static String externalOutput(AudioManager am) {
+        for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            switch (d.getType()) {
+                case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP: case AudioDeviceInfo.TYPE_BLUETOOTH_SCO: case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                case AudioDeviceInfo.TYPE_BLE_SPEAKER: case AudioDeviceInfo.TYPE_BLE_BROADCAST: case AudioDeviceInfo.TYPE_HEARING_AID:
+                case AudioDeviceInfo.TYPE_USB_HEADSET: case AudioDeviceInfo.TYPE_USB_DEVICE: case AudioDeviceInfo.TYPE_USB_ACCESSORY:
+                case AudioDeviceInfo.TYPE_WIRED_HEADSET: case AudioDeviceInfo.TYPE_WIRED_HEADPHONES: case AudioDeviceInfo.TYPE_LINE_ANALOG:
+                case AudioDeviceInfo.TYPE_LINE_DIGITAL: case AudioDeviceInfo.TYPE_HDMI: case AudioDeviceInfo.TYPE_AUX_LINE:
+                    return d.getType() + " '" + d.getProductName() + "'";
+                default:
+            }
+        }
+        return null;
+    }
+
 
     /** magnitude spectrum (N/2 bins) of N samples starting at off, Hann window */
     static double[] spectrum(short[] s, int off) {
@@ -52,6 +71,8 @@ public class AudioOut extends Test {
     }
 
     public void run(Ctx c, Result r) throws Exception {
+        { String ext = AudioOut.externalOutput((AudioManager) c.app.getSystemService(Context.AUDIO_SERVICE));
+          if (ext != null) { r.skip("external audio output connected (" + ext + "): the tone would play there"); return; } }
         AudioManager am = (AudioManager) c.app.getSystemService(Context.AUDIO_SERVICE);
         int[] streams = { AudioManager.STREAM_MUSIC, AudioManager.STREAM_VOICE_CALL }; int[] old = new int[2];
         for (int i = 0; i < 2; i++) old[i] = am.getStreamVolume(streams[i]);

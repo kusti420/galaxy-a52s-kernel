@@ -189,7 +189,9 @@ if [ "$DCVS" = 1 ]; then
 	# ADDON=vendor_boot: a52sxq_dsp_boot writes the tunables itself at the WALT boost release (~45 s after its probe)
 	if [ "${ADDON:-vendor}" = vendor_boot ]; then j=0; while ! dmesg | grep -q 'a52sxq_dsp_boot: bus DCVS tunables' && [ $j -lt 90 ]; do sleep 2; j=$((j + 2)); done
 		l=$(dmesg | grep 'a52sxq_dsp_boot: bus DCVS tunables' | sed 's/.*a52sxq_dsp_boot: //' | tail -1)
-		case "$l" in *" 56/56 "*|*" 56/56"*) pass "dcvs: kernel wrote the tunables: $l";; *) fail "dcvs: tunables: '${l:-no line after ${j}s}'";; esac; fi
+		# all N of N applied (56 = busdcvs.conf; LPM=1 adds 2 rows)
+		n=$(echo "$l" | sed -n 's/^bus DCVS tunables \([0-9]*\)\/\([0-9]*\) applied.*/\1 \2/p')
+		if [ -n "$n" ] && [ "${n% *}" = "${n#* }" ] && [ "${n% *}" -ge 56 ]; then pass "dcvs: kernel wrote the tunables: $l"; else fail "dcvs: tunables: '${l:-no line after ${j}s}'"; fi; fi
 	g=; for d in /sys/class/devfreq/*; do [ "$(cat $d/governor 2>/dev/null)" = msm-adreno-tz ] && g="$g ${d##*/}"; done
 	[ -n "$g" ] && pass "dcvs: GPU devfreq governor msm-adreno-tz on$g" || fail "dcvs: no devfreq with governor msm-adreno-tz ($(for d in /sys/class/devfreq/*; do echo "${d##*/}=$(cat $d/governor 2>/dev/null)"; done | tr '\n' ' '))"
 	B=/sys/devices/system/cpu/bus_dcvs

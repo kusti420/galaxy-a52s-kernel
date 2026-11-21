@@ -208,7 +208,7 @@ else
 	ok $([ "$(sh 'ls /sys/devices/system/cpu/a52kmsg 2>/dev/null | wc -l')" = 0 ] && echo 1 || echo 0) a52kmsg "non-DEBUG build: file absent"
 fi
 if sh dmesg | grep -q 'bus DCVS tunables'; then
-ok $(sh dmesg | grep -q 'bus DCVS tunables 56/56 applied' && echo 1 || echo 0) tunables "$(sh dmesg | grep -m1 'bus DCVS tunables' | sed 's/^\[[^]]*\]\[[^]]*\] *//' | cut -c1-120)"
+ok $(sh dmesg | grep -m1 'bus DCVS tunables' | awk '{for(i=1;i<NF;i++) if($i=="tunables"){split($(i+1),f,"/"); print (f[1]==f[2] && f[1]>=56 && $(i+2)=="applied")?1:0; exit}} END{if(!NR) print 0}') tunables "$(sh dmesg | grep -m1 'bus DCVS tunables' | sed 's/^\[[^]]*\]\[[^]]*\] *//' | cut -c1-120)"
 else
 	# the log ring wrapped (release-style builds: default log_buf_len): compare the nodes with busdcvs.conf instead
 	TB=0; TN=0; while read -r pth val; do case "$pth" in ''|\#*) continue;; esac; case "$pth" in */boost_freq) continue;; esac

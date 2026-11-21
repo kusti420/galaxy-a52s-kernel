@@ -1,0 +1,47 @@
+a52sxq: msm_adreno_tz: hand TZ the 5.4-sized power level table (17 words)
+
+The only difference in what TZ receives for GPU DCVS between 5.4 and this tree is the size of the
+init table: MSM_ADRENO_MAX_PWRLEVELS is 16 on 5.4 (68 bytes) and 32 here (132 bytes). Module
+parameter a52_tz_init_words (default 17 = 5.4; 0 = whole array = 33), read at governor start, and
+a line with the table that is sent. (2026-11-21, b5 root-cause test)
+
+--- a/drivers/devfreq/governor_msm_adreno_tz.c
++++ b/drivers/devfreq/governor_msm_adreno_tz.c
+@@ -67,6 +67,15 @@
+ module_param(a52_busy_up_pct, uint, 0644);
+ static bool a52_trace;
+ module_param(a52_trace, bool, 0644);
++/*
++ * a52sxq (2026-11-21): number of 32-bit words of the power level table handed to TZ at init
++ * (qcom_scm_dcvs_init_v2 size = words * 4). 5.4 on this phone passes 17 (MSM_ADRENO_MAX_PWRLEVELS
++ * was 16 there: count + 16 levels = 68 bytes); this tree's header says 32, i.e. 33 words = 132
++ * bytes, the only difference in what TZ receives between the two kernels. 0 = the whole array
++ * (33). Read once at governor start (module load): set it in modules.options.
++ */
++static unsigned int a52_tz_init_words = 17;
++module_param(a52_tz_init_words, uint, 0444);
+ 
+ static u64 suspend_time;
+ static u64 suspend_start;
+@@ -450,6 +459,7 @@
+ {
+ 	struct devfreq_msm_adreno_tz_data *priv;
+ 	unsigned int tz_pwrlevels[MSM_ADRENO_MAX_PWRLEVELS + 1];
++	unsigned int a52_words = ARRAY_SIZE(tz_pwrlevels);
+ 	int i, out, ret;
+ 	unsigned int version;
+ 
+@@ -478,7 +488,12 @@
+ 		return -EINVAL;
+ 	}
+ 
+-	ret = tz_init(&devfreq->dev, priv, tz_pwrlevels, sizeof(tz_pwrlevels),
++	if (a52_tz_init_words && a52_tz_init_words <= ARRAY_SIZE(tz_pwrlevels) &&
++	    tz_pwrlevels[0] < a52_tz_init_words)
++		a52_words = a52_tz_init_words;
++	pr_info(TAG "a52: tz init table %u words (%u levels: %u %u %u ...)\n", a52_words,
++		tz_pwrlevels[0], tz_pwrlevels[1], tz_pwrlevels[2], tz_pwrlevels[3]);
++	ret = tz_init(&devfreq->dev, priv, tz_pwrlevels, a52_words * sizeof(tz_pwrlevels[0]),
+ 			&version, sizeof(version));
+ 	if (ret != 0 || version > MAX_TZ_VERSION) {
+ 		pr_err(TAG "tz_init failed\n");

@@ -572,10 +572,29 @@ public class St {
     // ~1.5 s tone and back to the old index in a finally block.
     static double goertzel(short[] x, int from, int n, double f, int rate) { double w = 2 * Math.PI * f / rate, c = 2 * Math.cos(w), s0, s1 = 0, s2 = 0;
         for (int i = 0; i < n; i++) { s0 = x[from + i] + c * s1 - s2; s2 = s1; s1 = s0; } return (s1 * s1 + s2 * s2 - c * s1 * s2) / ((double) n * n); }
+    /** Name of a connected external audio output (Bluetooth, USB, wired, HDMI), or null. A test tone must never go to
+     *  someone's headphones unannounced (2026-11-21: a "silent" run played to a paired Bluetooth DAC, whose absolute
+     *  volume `cmd media_session volume --set 0` does not touch). */
+    static String externalOutput(AudioManager am) {
+        for (AudioDeviceInfo d : am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
+            switch (d.getType()) {
+                case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP: case AudioDeviceInfo.TYPE_BLUETOOTH_SCO: case AudioDeviceInfo.TYPE_BLE_HEADSET:
+                case AudioDeviceInfo.TYPE_BLE_SPEAKER: case AudioDeviceInfo.TYPE_BLE_BROADCAST: case AudioDeviceInfo.TYPE_HEARING_AID:
+                case AudioDeviceInfo.TYPE_USB_HEADSET: case AudioDeviceInfo.TYPE_USB_DEVICE: case AudioDeviceInfo.TYPE_USB_ACCESSORY:
+                case AudioDeviceInfo.TYPE_WIRED_HEADSET: case AudioDeviceInfo.TYPE_WIRED_HEADPHONES: case AudioDeviceInfo.TYPE_LINE_ANALOG:
+                case AudioDeviceInfo.TYPE_LINE_DIGITAL: case AudioDeviceInfo.TYPE_HDMI: case AudioDeviceInfo.TYPE_AUX_LINE:
+                    return d.getType() + " '" + d.getProductName() + "'";
+                default:
+            }
+        }
+        return null;
+    }
     static void loop(String mode, int freq, String src, boolean unmute) throws Exception {
         Context c = ctx(); final int rate = 48000; AudioManager am = (AudioManager) c.getSystemService(Context.AUDIO_SERVICE);
         boolean voice = mode.equals("voice"); int stream = voice ? AudioManager.STREAM_VOICE_CALL : AudioManager.STREAM_MUSIC;
         int old = am.getStreamVolume(stream);
+        String ext = externalOutput(am);
+        if (ext != null) { result("SKIP", "external audio output connected (" + ext + "): the tone would play there"); return; }
         if (old == 0 && !unmute && !voice) { result("SKIP", "needs audible output: stream volume is 0 (phone muted); pass 'unmute' to play 1.5 s at index 1"); return; }
         int source = src.equals("CAMCORDER") ? MediaRecorder.AudioSource.CAMCORDER : src.equals("UNPROCESSED") ? MediaRecorder.AudioSource.UNPROCESSED : MediaRecorder.AudioSource.MIC;
         int n = rate * 3 / 2; short[] pcm = new short[n * 2];
@@ -680,7 +699,9 @@ public class St {
 
     // ---------------------------------------------------------------- compress offload
     static void offload() throws Exception {
-        ctx();
+        Context oc = ctx();
+        { String ext = externalOutput((AudioManager) oc.getSystemService(Context.AUDIO_SERVICE));
+          if (ext != null) { result("SKIP", "external audio output connected (" + ext + "): the offload track would play there"); return; } }
         final int rate = 48000;
         AudioAttributes aa = new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build();
         int[] encs = {AudioFormat.ENCODING_MP3, AudioFormat.ENCODING_AAC_LC, AudioFormat.ENCODING_OPUS, AudioFormat.ENCODING_PCM_16BIT}; String[] nm = {"MP3", "AAC_LC", "OPUS", "PCM16"};

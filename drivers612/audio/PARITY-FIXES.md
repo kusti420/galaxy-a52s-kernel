@@ -23,7 +23,7 @@ tree byte for byte):
 | BT back ends SLIMBUS_7_RX/TX (P0-1, audio side) | machine driver done, compiled; DT + load order in `BT-SLIM-HANDOFF.md` (rb44 already has both) |
 | BT codec name | no change needed: `btfmslim_slave` is correct (the parity report's rename to `btfmslim` would break it) |
 | 10 run-time BT controls + 26 routing controls | no source change needed: they appear once the back end is in the card |
-| `AFE Dynamic Bitrate`, `SBM Delay` (Samsung, A2DP offload only) | NOT ported (section 2) |
+| `AFE Dynamic Bitrate`, `SBM Delay` (Samsung, A2DP offload only) | ported 2026-11-21, on the phone in rbich30 / ramdisk s97b (section 2) |
 | USB audio offload (P1-3) | no audio-tree change needed; load-list item (section 3) |
 | MBHC (P1-4) | button thresholds + 2 config values ported; impedance table, slow detect, moisture, sysfs NOT ported (section 4) |
 
@@ -175,14 +175,31 @@ card: phone check below.
   has always carried `qcom,wcn-bt = <1>`; honouring it would break every build that does not
   load the four BT/SLIMbus modules.
 
+### Done 2026-11-21: `AFE Dynamic Bitrate` and `SBM Delay` (ramdisk s97b)
+Samsung's two A2DP-offload run-time controls of SLIMBUS_7_RX, ported from the ROM's 5.4 kernel
+(`asoc/msm-dai-q6-v2.c:3860-3905, 4170-4210, 4362-4373`, `dsp/q6afe.c:2044-2098, 2287-2345`,
+`apr_audio-v2.h:6627`): patch `patches/audio-kernel/a52-parity-a2dp-dynbitrate-sbm.patch`
+(4 files: the two controls as `afe_enc_config_controls[7]` / `[8]` at 5.4's positions,
+`afe_q6_slimbus_update_dyn_bitrate` / `afe_q6_slimbus_update_sbm` in q6afe.c through one helper,
+`struct asm_sbm_param_t`, `struct asm_bitrate_param_t`, `AVS_MEDIA_ID_SBM_ID`,
+`AVS_ENCODER_PARAM_ID_ENC_BITRATE`). Only `q6_dlkm.ko` and `platform_dlkm.ko` change; Module.symvers
+= before + the two new exports (every existing CRC unchanged, so no dependent module is rebuilt).
+Ramdisk `drivers612/androidboot/out/s97b-rd.cpio.gz` = s97 with those two modules (rd-swap-ko).
+Phone (broken screen, IchthysOS, rbich30 = rbich29 on s97b): both controls exist, read back what
+was written (`AFE Dynamic Bitrate` 328000, `SBM Delay` 16 bytes), the puts reach
+`afe_q6_slimbus_update_*` with the same tinymix exit codes as 5.4 (0 / 2); `tools/abyss-cycle/
+mixcheck.py`: the BT / A2DP-offload control line is now identical to 5.4's, and the names of the
+ROM's `mixer_paths.xml` that do not exist are the same 24 on both kernels (stale names in the
+xml, e.g. `RX_CDC_DMA_RX_0 Audio Mixer MultiMedia10`, `MultiMedia16 Mixer SLIM_7_TX`).
+Neither abyssd (`a2dp_dsp.rs`) nor `mixer_paths.xml` uses the two controls; only
+`liba2dpoffload.so` does.
+Opening the back end without a headset (SLIMBUS_7_RX added to a running silent playback):
+`btfm_slim_hw_init: failed to get slimbus logical address: -6` on 6.12 AND on 5.4 (the ADSP's
+slimbus manager does not know the BT chip's address until the BT firmware starts an audio link),
+same -6 up the DPCM chain, no WARN. So an AFE SLIMBUS_7_RX open still needs a real headset.
+Logs: `logs/ichthys-1121/1c-slim7-open-{54,rbich30}.txt`, `logs/ichthys-1121/audio/`.
+
 ### Not done
-- `AFE Dynamic Bitrate` and `SBM Delay` (Samsung additions to `afe_enc_config_controls`,
-  5.4 `asoc/msm-dai-q6-v2.c:4170-4210, 3865-3905, 4362-4373`). They need
-  `afe_q6_slimbus_update_dyn_bitrate` / `afe_q6_slimbus_update_sbm` in `dsp/q6afe.c`
-  (5.4 :2044-2098, :2287-2345), `struct asm_sbm_param_t` and `AVS_MEDIA_ID_SBM_ID` in
-  `apr_audio-v2.h`: about 250 lines over 4 files and a new q6_dlkm export. Only
-  `liba2dpoffload.so` uses them and A2DP offload is disabled on this ROM on 5.4 too (parity
-  report 3b), so left for later (P2).
 - `AUDIO_REF_EC_UL* MUX` / `AFE_LOOPBACK_TX Port` enum values `SLIM_7_TX` etc. (parity P2).
 
 ### Phone verification (BT)

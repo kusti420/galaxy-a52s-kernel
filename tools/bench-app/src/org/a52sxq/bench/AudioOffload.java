@@ -25,6 +25,8 @@ public class AudioOffload extends Test {
     public int budget(Ctx c) { return 45; }
 
     public void run(Ctx c, Result r) throws Exception {
+        { String ext = AudioOut.externalOutput((AudioManager) c.app.getSystemService(Context.AUDIO_SERVICE));
+          if (ext != null) { r.skip("external audio output connected (" + ext + "): the tone would play there"); return; } }
         final int SR = AudioOut.SR;
         AudioAttributes aa = new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build();
         AudioFormat aac = new AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_AAC_LC).setSampleRate(SR).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build();
