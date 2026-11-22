@@ -23,6 +23,7 @@ donors/gunyah-rm	https://github.com/quic/gunyah-resource-manager	7e9344582eda391
 donors/mm-drivers	https://git.codelinaro.org/clo/la/platform/vendor/opensource/mm-drivers.git	c025ff4edcdfe2cc96adc9ae2e03bcddb31d4026	build: upstream of drivers612/display/techpack/mm-drivers
 donors/qcom-linux-6.18	https://github.com/qualcomm-linux/kernel	78fc86c796822e6668f11c7134fde7f7a19b5284	reference
 donors/redwood-6.12	https://github.com/suvojeet-sengupta/redwood-6.12	bfa629742bb3c9ab9251ba04f528c7c80208a4a0	reference
+donors/ReSukiSU	https://github.com/ReSukiSU/ReSukiSU.git	8770c7e324a22895703c4916b8a16520e0b81c79	reference
 donors/samsung-s26-6.12	https://github.com/polygraphene/SM-S942U_NA_16_Opensource	a571d15c116599dc413f009b79c940d92ca54bb4	reference
 donors/securemsm-kernel	https://git.codelinaro.org/clo/la/platform/vendor/qcom/opensource/securemsm-kernel.git	b1c5edcf3345a99866405dd5e1358ae8657c2750	build: upstream of drivers612/secure/securemsm/src
 samsung612/donors/crdroid-sm8550	https://github.com/crdroidandroid/android_kernel_samsung_sm8550	c4f523a57784d139f55b29eda6c0bc09b99481aa	reference

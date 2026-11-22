@@ -208,7 +208,7 @@ SPDX identifiers found in the exported files, by directory:
 | `drivers612/nfc` | GPL-2.0-only (3), GPL-2.0 (1) |
 | `drivers612/power` | GPL-2.0 (25) |
 | `drivers612/qfprom-sys` | GPL-2.0-only (1) |
-| `drivers612/realboot` | GPL-2.0 (12), GPL-2.0-only (8), BSD-3-Clause (1) |
+| `drivers612/realboot` | GPL-2.0 (15), GPL-2.0-only (8), BSD-3-Clause (1) |
 | `drivers612/secure` | GPL-2.0-only (17), BSD-3-Clause (4), GPL-2.0 WITH Linux-syscall-note (3), GPL-2.0-only WITH Linux-syscall-note (1) |
 | `drivers612/sensors-factory` | GPL-2.0 (1) |
 | `drivers612/suspend` | GPL-2.0-only (1) |

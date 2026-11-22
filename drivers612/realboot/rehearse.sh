@@ -135,7 +135,17 @@ say "Image: boot.img kernel of $RBNAME, sha256 $(sha256sum "$O/Image" | cut -c1-
 
 # ---- ramdisk = 1 ROM boot ramdisk | 2 harness tools (bring-up ramdisk minus its modules)
 #                | 3 vendor_boot vendor ramdisk, bytes as in the image | 4 rehearsal overlay
-decomp "$RB/work/chk-b/ramdisk" > "$W/1-boot.cpio"
+# MODLOAD builds: the boot ramdisk ends with a bootconfig trailer (work/bootconfig.bin): decompress without it, append
+# it again at the end of rd.cpio.gz (the initrd end, as on the real boot)
+BCF=; [ -f "$RB/work/bootconfig.bin" ] && grep -q ' modload=[a-z]' "$RB/BUILDINFO" && BCF=$RB/work/bootconfig.bin
+# 2026-11-22: REFUSED. The helper insmods the module prefix (up to zram) itself, sequentially, so first-stage init
+# never parallel-loads the core set here; rb100 passed this rehearsal and bootlooped for real (sec_core insmod -517 ->
+# first stage fatal). MODLOAD needs a rehearsal mode where first-stage init loads ALL modules itself first.
+[ -n "$BCF" ] && fail "MODLOAD build: this rehearsal cannot cover parallel first-stage loading (helper prefix is sequential); banned for real flashes"
+if [ -n "$BCF" ]; then n=$(( $(stat -c %s "$RB/work/chk-b/ramdisk") - $(stat -c %s "$BCF") ))
+	cmp -s <(tail -c +$((n + 1)) "$RB/work/chk-b/ramdisk") "$BCF" || fail "boot ramdisk does not end with work/bootconfig.bin"
+	head -c $n "$RB/work/chk-b/ramdisk" > "$W/boot-ramdisk-nobc"; decomp "$W/boot-ramdisk-nobc" > "$W/1-boot.cpio"
+else decomp "$RB/work/chk-b/ramdisk" > "$W/1-boot.cpio"; fi
 python3 -I "$HERE/tools/cpiox.py" "$W/1-boot.cpio" "$W/rom" > /dev/null
 python3 -I "$HERE/tools/cpiox.py" "$BRINGUP" "$W/bu" > /dev/null
 [ "$(grep -c . "$W/bu/.cpiox-nodes.txt")" = 0 ] || fail "bring-up ramdisk has device nodes (repack would drop them)"
@@ -206,7 +216,8 @@ else
 	: > "$OV/a52/rh/audio.names"
 	for m in $AUD; do f="$VR/lib/modules/$m.ko"; [ -f "$f" ] || fail "addon=vendor_boot: $m.ko not in the vendor ramdisk"; modname "$f" | tr '-' '_' >> "$OV/a52/rh/audio.names"; done
 	modname "$VR/lib/modules/wlan.ko" | tr '-' '_' > "$OV/a52/rh/wlan.name"
-	[ "$(tail -n1 "$VR/lib/modules/modules.load")" = wlan.ko ] || fail "addon=vendor_boot: wlan.ko not last in modules.load"
+	NAL=$(sed -n 's/.* async_last=\([^ ]*\).*/\1/p' "$RB/BUILDINFO" | tr '+' ' ' | wc -w)   # ASYNC_LAST modules follow wlan.ko
+	[ "$(head -n -"$NAL" "$VR/lib/modules/modules.load" | tail -n1)" = wlan.ko ] || fail "addon=vendor_boot: wlan.ko not last in modules.load (before ASYNC_LAST)"
 	MPS="python3 -I $HERE/tools/modprobesim.py"
 	$MPS --label first-stage --dir "$VR/lib/modules" --as /lib/modules --load-file modules.load > "$W/mps.txt" || { cat "$W/mps.txt"; fail "libmodprobe dry run: first stage"; }
 	grep -qE '^options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify\+qcom,msm-audio-apr\+qcom,audio-ref-clk\+qcom,msm-cdc-pinctrl\+qcom,q6core-audio\+qcom,adsp-loader hold_late=qcom,wcd938x-codec( hold_release_ms=[0-9]+)?$' "$VR/lib/modules/modules.options" || fail "addon=vendor_boot: no rescan_after_adsp in modules.options"
@@ -348,6 +359,8 @@ cat > "$O/harness-extra.sh" <<'EOF'
 B=/bin/busybox; $B mkdir -p /tmp/rh && $B tar xzf /mnt/a52kx/pack.tgz -C /tmp/rh && $B mount -o bind /tmp/rh/cmdline.txt /proc/cmdline && [ "$($B cat /proc/cmdline)" = "$($B cat /tmp/rh/cmdline.txt)" ] && echo RH_CMDLINE_OK || { echo RH_CMDLINE_BAD; : > /tmp/rh/empty; $B mount -o bind /tmp/rh/empty /mnt/a52kx/Image; }
 EOF
 [ $((DEADMAN + 90)) -lt $((KXW + 300)) ] || say "WARNING: DEADMAN $DEADMAN + LineageOS boot > KX_WAIT $KXW + 300: kx-cycle may give up before the phone is back by itself"
+[ -n "$BCF" ] && say "WARNING: NOT COVERED: the helper loads the module prefix (up to zram) itself, sequentially; this rehearsal does NOT test parallel loading of those modules (flash-rb.sh refuses MODLOAD builds)"
+[ -n "$BCF" ] && { cat "$BCF" >> "$O/rd.cpio.gz"; say "bootconfig trailer appended to rd.cpio.gz ($(tr -d '\0' < "$BCF" | head -1))"; }
 sha256sum "$O/Image" "$O/rd.cpio.gz" "$O/rh-base.dtb" "$O/pack.tgz" | sed "s#$O/##" > "$O/SHA256SUMS"
 
 D=${O#"$TOP"/}

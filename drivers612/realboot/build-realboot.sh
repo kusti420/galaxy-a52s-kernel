@@ -118,6 +118,17 @@
 #   HOLD_MS=<ms>      (default unset = the module's 4000) a52sxq_dsp_boot hold_release_ms: ms after adsp_running until the
 #                     held audio tree is released (boot time: the sound card and audioserver come up that much later)
 #   ASYNC_MODS="m ..." (default none) async_probe=1 for these first-stage modules (boot time)
+#   STRIP_BTF=1       (default 0) no .BTF in the unsigned first-stage modules (boot time; see the option)
+#   ASYNC_LAST="m ..." (default none) async_probe=1 + moved to the end of modules.load (boot time; see the option)
+#   MODLOAD=parallel  (default unset = sequential; also performance|conservative) first-stage init loads the
+#                     vendor_boot modules in parallel (bootconfig trailer on the boot ramdisk, see the option);
+#                     MODLOAD_SEQ="m ..." = load_sequential=1 for those modules
+#   UFS_POLL_MS=<ms>  (default unset = 60) UFS devfreq polling interval, set with the dsp_boot tunables at the boost release
+#   UFS_QOS=0         (default unset = 1) ufshcd core CPU latency QoS off (pm_qos_enable 0 at the boost release): upstream
+#                     6.12 votes CPU_DMA_LATENCY 0 (WFI only, every CPU) while UFS is scaled up; 5.4 has no such vote
+#   UFS_WB=always     (default unset; REF >= s99n) WriteBooster on from probe instead of only while UFS is scaled up
+#   UFS_CLKSCALE=0    (default unset = 1) UFS clock scaling off (clkscale_enable 0 at the boost release, after UFS_QOS):
+#                     HS-G4 + WriteBooster stay on (6.12 ties WB to the scaled-up state; 5.4's Samsung WB policy did not)
 #   ICE_RAW=1         (default 0; REF >= s99i) /data encryption in the ICE for standard keys (no blk-crypto-fallback)
 #   LPM=1             (default 0) cpuidle governor qcom-cpu-lpm (WALT busy hysteresis, as 5.4 lpm-levels): see the option
 #   GPU_BUSY_UP=<pct> (default unset; REF >= s97) adreno_tz governor steps up one level when >= pct busy (b5)
@@ -331,6 +342,14 @@ if [ "$ADDON" = vendor_boot ]; then
 	# LPM=1: the idle governor switch + sleep enable go into the same table (applied at the boost release, in order)
 	: > "$W/dspboot/extra.conf"
 	if [ "${LPM:-0}" = 1 ]; then printf '%s\n' 'devices/system/cpu/cpuidle/current_governor qcom-cpu-lpm' 'devices/system/cpu/qcom_lpm/parameters/sleep_disabled 0' > "$W/dspboot/extra.conf"; fi
+	# UFS_POLL_MS=<ms> (2026-11-21, default unset = the driver's 60): UFS devfreq polling interval (scale-up sooner on big writes)
+	if [ -n "${UFS_POLL_MS:-}" ]; then case "$UFS_POLL_MS" in *[!0-9]*|'') fail "UFS_POLL_MS: digits only";; esac
+		[ "$UFS_POLL_MS" -ge 5 ] && [ "$UFS_POLL_MS" -le 200 ] || fail "UFS_POLL_MS: 5..200"
+		echo "devices/platform/soc/1d84000.ufshc/devfreq/1d84000.ufshc/polling_interval $UFS_POLL_MS" >> "$W/dspboot/extra.conf"; fi
+	# UFS_QOS=0 / UFS_CLKSCALE=0 (2026-11-22, write gap): see the header; QoS first, so the scale-up of clkscale_enable 0
+	# never votes CPU_DMA_LATENCY 0
+	case "${UFS_QOS:-1}" in 0) echo "devices/platform/soc/1d84000.ufshc/pm_qos_enable 0" >> "$W/dspboot/extra.conf";; 1) ;; *) fail "UFS_QOS: 0 or 1";; esac
+	case "${UFS_CLKSCALE:-1}" in 0) echo "devices/platform/soc/1d84000.ufshc/clkscale_enable 0" >> "$W/dspboot/extra.conf";; 1) ;; *) fail "UFS_CLKSCALE: 0 or 1";; esac
 	python3 -I - "$W/dspboot/a52sxq_tunables.h" "$TOP/drivers612/busdcvs/busdcvs.conf" "$W/dspboot/extra.conf" <<'PYEOF'
 import sys
 rows = []
@@ -534,6 +553,23 @@ if [ "$MODEM" = 1 ]; then
 	grep -qE '^(rmnet|ipa|gsim|msm_sharedmem|msm_memshare|glink_pkt|dev_ril)' "$W/plan/late.load" "$W/plan/wlan.load" && fail "MODEM=1: a modem module in the vendor add-on"
 	say "MODEM=1: $NM modem/data modules are the last $NM lines of modules.load (byte-identical to the run's pack; qcom_va_minidump already in the first stage, same file)"
 fi
+# ASYNC_LAST="<module> ..." (2026-11-22, default none; boot time): async_probe=1 AND moved to the very end of modules.load.
+# Async probing alone (ASYNC_MODS, rb91) gains nothing: every later non-async module's do_init_module() runs
+# async_synchronize_full() and waits for the async probe anyway. At the end nothing in the first stage waits for it;
+# the probe finishes in the background while init mounts and switches root. Only leaf modules (nothing in the
+# first stage depends on them) that come after the rehearsal helper's sequential prefix (zram) are accepted, so the
+# rehearsal runs exactly this order.
+for m in ${ASYNC_LAST:-}; do
+	grep -qx "$m.ko" "$W/plan/first.load" || fail "ASYNC_LAST: $m.ko is not a first-stage module"
+	p=$(grep -nx "$m.ko" "$W/plan/first.load" | cut -d: -f1); z=$(grep -nx "zram.ko" "$W/plan/first.load" | cut -d: -f1)
+	[ -n "$z" ] && [ "$p" -gt "$z" ] || fail "ASYNC_LAST: $m.ko is inside the rehearsal's sequential prefix (<= zram)"
+	depmod_x=$(cd "$W/plan/first" && for k in *.ko; do modinfo -F depends "$k" 2>/dev/null | tr ',' '\n' | grep -qx "$(modinfo -F name "$m.ko")" && echo "$k"; done; true)
+	[ -z "$depmod_x" ] || fail "ASYNC_LAST: $m.ko has first-stage dependents: $depmod_x"
+	grep -vx "$m.ko" "$W/plan/first.load" > "$W/plan/first.load.t"; echo "$m.ko" >> "$W/plan/first.load.t"; mv "$W/plan/first.load.t" "$W/plan/first.load"
+	grep -q "^options $m " "$W/plan/first.params" && fail "ASYNC_LAST: $m already has an options line"
+	echo "options $m async_probe=1" >> "$W/plan/first.params"
+	say "ASYNC_LAST: $m.ko async_probe=1, moved from line $p to the end of modules.load"
+done
 for k in $(ls "$W"/plan/{first,late,wlan}/*.ko 2>/dev/null); do strings "$k" | grep -q "^vermagic=$KREL " || fail "wrong vermagic: $k"; done
 # modules.dep/alias/softdep, flat paths, symbols checked against the kernel's System.map
 depmod_dir() {   # <outdir> <dir with .ko>...
@@ -548,6 +584,26 @@ depmod_dir "$W/depall" "$W/plan/first" "$W/plan/late" "$W/plan/wlan"
 [ -s "$W/depall.unresolved" ] && { head "$W/depall.unresolved"; fail "full set: unresolved symbols"; }
 VR=$W/vr; LM=$VR/lib/modules; mkdir -p "$LM"
 cp "$W"/plan/first/*.ko "$LM/"
+# STRIP_BTF=1 (2026-11-22, default 0; boot time): drop .BTF/.BTF.base from every UNSIGNED first-stage module (the signed
+# GKI ones keep theirs: an edited signed module fails its signature check and would be refused). Boot-time kprobes in
+# rehearsals rh612p2a101k3..k5: the MODULE_STATE_COMING notifier chain costs ~4.6 ms per module, ~3.2 ms of it
+# btf_module_notify parsing the module BTF (17.8 MB over 260 modules, 21 % of the first-stage bytes). Module BTF is
+# only for BPF CO-RE/bpftool on module types (/sys/kernel/btf/<module>); Android's BPF programs do not use it and 5.4
+# had no BTF at all. Sections only; code, data, symbols, relocations and modinfo are untouched (checked below).
+if [ "${STRIP_BTF:-0}" = 1 ]; then
+	nb=0; bb=0
+	for k in "$LM"/*.ko; do
+		tail -c 28 "$k" | grep -q 'Module signature appended' && continue
+		readelf -SW "$k" | grep -qE ' \.BTF(\.base)? ' || continue
+		b0=$(stat -c %s "$k")
+		"$CLANG/llvm-objcopy" --remove-section=.BTF --remove-section=.BTF.base "$k" "$k.nobtf" || fail "STRIP_BTF: objcopy $k"
+		cmp -s <("$CLANG/llvm-objcopy" -O binary --only-section=.modinfo "$k" /dev/stdout) <("$CLANG/llvm-objcopy" -O binary --only-section=.modinfo "$k.nobtf" /dev/stdout) || fail "STRIP_BTF: modinfo changed in $k"
+		cmp -s <("$CLANG/llvm-objcopy" -O binary --only-section=.text "$k" /dev/stdout) <("$CLANG/llvm-objcopy" -O binary --only-section=.text "$k.nobtf" /dev/stdout) || fail "STRIP_BTF: .text changed in $k"
+		[ "$(readelf -sW "$k" | wc -l)" = "$(readelf -sW "$k.nobtf" | wc -l)" ] || fail "STRIP_BTF: symbol table changed in $k"
+		mv "$k.nobtf" "$k"; nb=$((nb + 1)); bb=$((bb + b0 - $(stat -c %s "$k")))
+	done
+	say "STRIP_BTF=1: .BTF removed from $nb unsigned first-stage modules ($((bb / 1048576)) MiB less)"
+fi
 for f in modules.dep modules.alias modules.softdep; do cp "$W/dep1/lib/modules/$KREL/$f" "$LM/$f"; done
 cp "$W/plan/first.load" "$LM/modules.load"
 while read -r m; do grep -q "^$m:" "$LM/modules.dep" || fail "$m of modules.load is not in modules.dep"; done < "$LM/modules.load"
@@ -579,9 +635,28 @@ fi
 if [ "${ICE_RAW:-0}" = 1 ]; then
 	strings "$W/plan/first/qcom_ice.ko" | grep -q '^parmtype=a52_no_hwkm:' || fail "ICE_RAW=1: qcom_ice of REF=$REF has no a52_no_hwkm (needs s99i+)"
 	strings "$W/plan/first/ufshcd-crypto-qti.ko" | grep -q '^parmtype=a52_raw_keys:' || fail "ICE_RAW=1: ufshcd-crypto-qti of REF=$REF has no a52_raw_keys (needs s99i+)"
-	printf '%s\n' 'options qcom_ice a52_no_hwkm=1' 'options ufshcd_crypto_qti a52_raw_keys=1' >> "$W/plan/first.params"
+	# one options line per module: libmodprobe keeps only one line per module name
+	printf '%s\n' 'options qcom_ice a52_no_hwkm=1' "options ufshcd_crypto_qti a52_raw_keys=1$([ "${ICE_KAT_FAIL:-0}" = 1 ] && echo ' a52_kat_fail=1')" >> "$W/plan/first.params"
 	say "ICE_RAW=1: modules.options qcom_ice a52_no_hwkm=1, ufshcd_crypto_qti a52_raw_keys=1"
+	# ICE_KAT_FAIL=1 (test builds only): the boot-time known-answer test is made to fail (s99k+): proves the fallback
+	if [ "${ICE_KAT_FAIL:-0}" = 1 ]; then
+		strings "$W/plan/first/ufshcd-crypto-qti.ko" | grep -q '^parmtype=a52_kat_fail:' || fail "ICE_KAT_FAIL=1 needs REF >= s99k"
+		say "ICE_KAT_FAIL=1: TEST BUILD, the ICE known-answer test fails on purpose (a52_kat_fail=1 on the ufshcd_crypto_qti line)"
+	fi
 fi
+# UFS_WB=always (2026-11-22, default unset = WB tied to clock scaling; REF >= s99n, soc-repo patch 0023): ufs_qcom
+# a52_wb_always=1 = WriteBooster on from probe, not switched by clock scaling (5.4: Samsung's load-based WB policy)
+case "${UFS_WB:-}" in '') ;; always)
+	strings "$W/plan/first/ufs-qcom.ko" | grep -q '^parmtype=a52_wb_always:' || fail "UFS_WB=always: ufs-qcom of REF=$REF has no a52_wb_always (needs s99n+)"
+	echo 'options ufs_qcom a52_wb_always=1' >> "$W/plan/first.params"
+	say "UFS_WB=always: modules.options ufs_qcom a52_wb_always=1";;
+*) fail "UFS_WB: unset or always";; esac
+# MODLOAD_SEQ="<module> ..." (2026-11-22, with MODLOAD): modules.options load_sequential=1 (libmodprobe loads them alone)
+for m in ${MODLOAD_SEQ:-}; do
+	[ -n "${MODLOAD:-}" ] || fail "MODLOAD_SEQ needs MODLOAD"
+	[ -f "$W/plan/first/$m.ko" ] || fail "MODLOAD_SEQ: $m.ko is not a first-stage module"
+	echo "options $m load_sequential=1" >> "$W/plan/first.params"
+done
 # ASYNC_MODS="<module> ..." (2026-11-21, default none): probe these first-stage modules asynchronously
 # (modules.options async_probe=1, as sec_battery): their slow synchronous probes no longer hold up first-stage init
 for m in ${ASYNC_MODS:-}; do
@@ -589,6 +664,8 @@ for m in ${ASYNC_MODS:-}; do
 	echo "options $m async_probe=1" >> "$W/plan/first.params"
 	say "ASYNC_MODS: modules.options $m async_probe=1"
 done
+dupo=$(awk '$1=="options"{print $2}' "$W/plan/first.params" | tr - _ | sort | uniq -d | tr '\n' ' ')
+[ -z "$dupo" ] || fail "modules.options: more than one options line for: $dupo(libmodprobe keeps only one)"
 cp "$W/plan/first.params" "$LM/modules.options"
 # The test loaded every module with a plain insmod in list order, so no softdep ever applied.
 # libmodprobe would honour the "pre:" ones and pull e.g. qcom_hwspinlock before smem, qcom-pdc
@@ -688,7 +765,8 @@ else
 	# ADDON=vendor_boot: no vendor add-on; the first stage holds everything (checked like the rest)
 	VA=$W/no-vendor-addon; rm -rf "$VA"; mkdir -p "$VA"
 	for m in $(cat "$W/plan/addon-late.load") wlan.ko; do grep -qx "$m" "$LM/modules.load" || fail "ADDON=vendor_boot: $m not in modules.load"; done
-	[ "$(tail -n1 "$LM/modules.load")" = wlan.ko ] || fail "ADDON=vendor_boot: wlan.ko is not the last first-stage module"
+	NAL=$(echo ${ASYNC_LAST:-} | wc -w)   # ASYNC_LAST modules follow wlan.ko
+	[ "$(head -n -"$NAL" "$LM/modules.load" | tail -n1)" = wlan.ko ] || fail "ADDON=vendor_boot: wlan.ko is not the last first-stage module (before ASYNC_LAST)"
 	grep -qx 'options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify+qcom,msm-audio-apr+qcom,audio-ref-clk+qcom,msm-cdc-pinctrl+qcom,q6core-audio+qcom,adsp-loader hold_late=qcom,wcd938x-codec'"${HOLD_MS:+ hold_release_ms=$HOLD_MS}" "$LM/modules.options" || fail "ADDON=vendor_boot: no rescan_after_adsp/hold_until_adsp options"
 	modinfo -p "$W/a52sxq_dsp_boot.ko" | grep -q '^rescan_after_adsp:' || fail "a52sxq_dsp_boot.ko has no rescan_after_adsp"
 	modinfo -p "$W/a52sxq_dsp_boot.ko" | grep -q '^tunables:' || fail "a52sxq_dsp_boot.ko has no built-in tunables"
@@ -991,6 +1069,25 @@ set -e
 say "== 6. ramdisks"
 # boot: the ROM's generic ramdisk, unchanged
 cp "$W/b/ramdisk" "$W/boot-ramdisk"
+# MODLOAD=parallel|performance|conservative (2026-11-22, default unset = sequential): the ROM's first-stage init loads
+# the vendor_boot module list in parallel when /proc/bootconfig has androidboot.load_modules_parallel = "true" (or
+# "performance"/"conservative"); this vendor_boot is header v3 (no bootconfig section), so the bootconfig goes at the
+# END of the generic (boot.img) ramdisk = the end of the initrd (v3: vendor ramdisk first, generic ramdisk right after);
+# the kernel (CONFIG_BOOT_CONFIG=y, "bootconfig" in CONFIG_CMDLINE) finds the trailer there and cuts it off the initrd
+# (init/main.c get_boot_config_from_initrd). If a bootloader ever moved it, the trailer is simply not found = sequential.
+# Modules with load_sequential=1 in modules.options are loaded alone (MODLOAD_SEQ="m ...").
+rm -f "$W/bootconfig.bin"
+case "${MODLOAD:-}" in '') ;; parallel|performance|conservative)
+	v=$MODLOAD; [ "$v" = parallel ] && v=true
+	python3 -I - "$W/bootconfig.bin" "$v" <<'PYEOF'
+import struct, sys
+data = ('androidboot.load_modules_parallel = "%s"\n' % sys.argv[2]).encode() + b'\0'
+data += b'\0' * (-len(data) % 4)
+open(sys.argv[1], 'wb').write(data + struct.pack('<II', len(data), sum(data) & 0xffffffff) + b'#BOOTCONFIG\n')
+PYEOF
+	cat "$W/bootconfig.bin" >> "$W/boot-ramdisk"
+	say "MODLOAD=$MODLOAD: bootconfig androidboot.load_modules_parallel = \"$v\" appended to the boot ramdisk ($(stat -c %s "$W/bootconfig.bin") bytes)";;
+*) fail "MODLOAD: unset, parallel, performance or conservative";; esac
 # vendor: the ROM's vendor ramdisk (first_stage_ramdisk/fstab.qcom), unchanged, + our cpio
 python3 -I "$HERE/tools/cpiox.py" "$W/vb/vendor_ramdisk" "$W/rom-vr" >> "$R"
 [ "$(cd "$W/rom-vr" && find . -type f ! -name .cpiox-nodes.txt | sort)" = "./first_stage_ramdisk/fstab.qcom" ] || fail "ROM vendor ramdisk is not just the fstab: re-check the layout"
@@ -1088,7 +1185,7 @@ cp "$W/vendor_boot.dtb" "$O/vendor_boot.dtb"; cp "$W/realboot.dtbo" "$O/realboot
 cp "$W/vendor-cmdline.txt" "$W/dt-bootargs.txt" "$O/"; cp "$LM/modules.load" "$O/first-stage.modules.load"
 [ -f "$T/vs-tested.diff" ] && cp "$T/vs-tested.diff" "$O/dtb-vs-tested.diff"
 printf 'name=%s kernel=%s krel=%s ref=%s image=%s tree=%s diag=%s modem=%s sdcard=%s wlan=%s addon=%s debug=%s btslim=%s\n' "$NAME" "$KV" "$KREL" "$REFRD" "$IMAGE" "$TREF" "$DIAG" "$MODEM" "$SDCARD" "$WLD" "$ADDON" "$DEBUG" "${BTSLIM:-0}" > "$O/BUILDINFO"
-sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} lpm=${LPM:-0} hold_ms=${HOLD_MS:-} ice_raw=${ICE_RAW:-0} async_mods=$(echo ${ASYNC_MODS:-} | tr " " "+") thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
+sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} lpm=${LPM:-0} hold_ms=${HOLD_MS:-} ice_raw=${ICE_RAW:-0} ice_kat_fail=${ICE_KAT_FAIL:-0} ufs_poll_ms=${UFS_POLL_MS:-} ufs_qos=${UFS_QOS:-1} ufs_clkscale=${UFS_CLKSCALE:-1} ufs_wb=${UFS_WB:-} modload=${MODLOAD:-} modload_seq=$(echo ${MODLOAD_SEQ:-} | tr ' ' '+') async_mods=$(echo ${ASYNC_MODS:-} | tr " " "+") async_last=$(echo ${ASYNC_LAST:-} | tr ' ' '+') strip_btf=${STRIP_BTF:-0} thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
 if [ "$DIAG_KERNEL" = 1 ]; then cp "$(dirname "$IMAGE")/BUILDINFO" "$O/diag-kernel.BUILDINFO"; fi
 say "== summary"
 sed 's/^/  /' "$O/SHA256SUMS" | tee -a "$R"

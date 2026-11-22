@@ -1,0 +1,40 @@
+a52sxq: ufs-qcom: optional WriteBooster independent of clock scaling (5.4 parity)
+
+This driver sets UFSHCD_CAP_WB_WITH_CLK_SCALING, so ufshcd switches the WriteBooster on only when
+devfreq scales up and off when it scales down. Every write burst then starts at the TLC direct-write
+speed (~110 MB/s on the A52s) until the scale-up, which itself waits for the queue to drain at that
+speed (170-230 ms). Samsung's 5.4 driver (CONFIG_SEC_UFS_WB_FEATURE) switched WB by write load,
+independent of the clock state. a52_wb_always=1 (module parameter, load time, default 0) drops the
+cap: WB on from probe (ufshcd_configure_wb), scaling unchanged. (2026-11-22, write gap)
+
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -2610,6 +2610,17 @@
+ #endif
+ }
+ 
++/*
++ * a52 (Galaxy A52s, 2026-11-22, write gap vs 5.4): this driver ties the WriteBooster to the
++ * scaled-up state (UFSHCD_CAP_WB_WITH_CLK_SCALING), so every write burst runs at the TLC
++ * direct-write speed (~110 MB/s) until devfreq has scaled up and the queue drained (~250 ms per
++ * burst). Samsung's 5.4 driver switched WB by write load, independent of the clock state.
++ * a52_wb_always=1 (load time, default 0) drops that cap: WB on from probe (ufshcd_configure_wb),
++ * clock scaling unchanged, flush during hibern8 as before.
++ */
++static bool a52_wb_always;
++module_param(a52_wb_always, bool, 0444);
++
+ static void ufs_qcom_set_caps(struct ufs_hba *hba)
+ {
+ 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
+@@ -2623,6 +2634,10 @@
+ 			UFSHCD_CAP_WB_WITH_CLK_SCALING;
+ 		if (!host->disable_wb_support)
+ 			hba->caps |= UFSHCD_CAP_WB_EN;
++		if (a52_wb_always) {
++			hba->caps &= ~UFSHCD_CAP_WB_WITH_CLK_SCALING;
++			dev_info(hba->dev, "a52: WriteBooster always on (not tied to clock scaling)\n");
++		}
+ 
+ 		if (ufs_qcom_is_genpd_supported(hba)) {
+ 			hba->caps |= UFSHCD_CAP_RPM_AUTOSUSPEND;

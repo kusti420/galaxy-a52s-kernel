@@ -79,6 +79,7 @@ public class St {
             switch (cmd) {
                 case "sensors": sensors(a.length > 1 ? Integer.parseInt(a[1]) : 4); break;
                 case "gl": gl(a.length > 1 ? Integer.parseInt(a[1]) : 5); break;
+                case "glpace": glpace(Integer.parseInt(a[1]), Integer.parseInt(a[2]), Integer.parseInt(a[3])); break;
                 case "glalloc": glalloc(a.length > 1 ? Integer.parseInt(a[1]) : 768); break;
                 case "cam": cam(a.length > 1 ? a[1] : null); break;
                 case "camrec": camrec(a.length > 1 ? a[1] : "0", a.length > 2 ? Integer.parseInt(a[2]) : 5); break;
@@ -215,6 +216,28 @@ public class St {
         boolean ok = bad == 0 && checks > 0 && glerr == 0 && ee == EGL14.EGL_SUCCESS && !software() && frames > secs * 5;
         if (software()) d += " SOFTWARE RENDERER"; if (ee != EGL14.EGL_SUCCESS) d += " egl 0x" + Integer.toHexString(ee);
         result(ok ? "PASS" : "FAIL", d);
+    }
+
+    /* glpace <secs> <fps> <passes>: the gl load paced to a frame rate (GPU DCVS tests: a steady medium load); prints
+       frames, missed deadlines and the mean GPU+CPU frame time. */
+    static void glpace(int secs, int fps, int passes) {
+        final int W = 1024; eglUp(W, W);
+        int pr = program("attribute vec2 p; varying vec2 uv; void main(){ uv = p*0.5+0.5; gl_Position = vec4(p,0.0,1.0); }",
+            "precision highp float; varying vec2 uv; uniform vec4 c; uniform float k; void main(){ float s=0.0; for(int i=0;i<24;i++){ s+=sin(uv.x*float(i)*k)*cos(uv.y*float(i)); } gl_FragColor = c + vec4(s*0.0); }");
+        GLES20.glUseProgram(pr); int ap = GLES20.glGetAttribLocation(pr, "p"), uc = GLES20.glGetUniformLocation(pr, "c"), uk = GLES20.glGetUniformLocation(pr, "k");
+        GLES20.glEnableVertexAttribArray(ap); GLES20.glViewport(0, 0, W, W);
+        FloatBuffer full = quad(-1, -1, 1, 1);
+        long period = 1000000000L / fps, t0 = System.nanoTime(), end = t0 + secs * 1000000000L, next = t0, work = 0;
+        int frames = 0, missed = 0;
+        while (System.nanoTime() < end) {
+            long f0 = System.nanoTime();
+            GLES20.glClearColor(0, 0, 0, 1); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); GLES20.glUniform1f(uk, 3.0f + frames % 5);
+            for (int pass = 0; pass < passes; pass++) { GLES20.glUniform4f(uc, pass / 8f, 0.5f, 0.2f, 1); GLES20.glVertexAttribPointer(ap, 2, GLES20.GL_FLOAT, false, 0, full); GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4); }
+            GLES20.glFinish(); long f1 = System.nanoTime(); work += f1 - f0; frames++;
+            next += period; if (f1 > next) { missed++; next = f1; } else { try { Thread.sleep((next - f1) / 1000000L, (int) ((next - f1) % 1000000L)); } catch (InterruptedException e) {} }
+        }
+        double el = (System.nanoTime() - t0) / 1e9;
+        result("PASS", "glpace fps " + Math.round(frames / el) + " target " + fps + " passes " + passes + " frames " + frames + " missed " + missed + " mean_frame_ms " + String.format("%.2f", work / 1e6 / Math.max(frames, 1)));
     }
 
     static void glalloc(int mb) {

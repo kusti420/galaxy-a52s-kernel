@@ -10,6 +10,17 @@ N=${1:?rb name}; B=drivers612/realboot/out/$N; S=PHONE2
 [ "$N" = 5.4 ] && B=testdev-PHONE2
 A() { adb -s $S "$@"; }
 SUMS=$B/SHA256SUMS
+# 2026-11-22 (rb100 bootloop, owner needed the keys): never real-flash what a rehearsal cannot cover.
+# (1) MODLOAD builds change how first-stage init loads ALL modules; the kexec helper always loads the first ~92
+#     itself, sequentially, so no rehearsal ever ran the parallel load of the core set: refused, no override.
+# (2) boot.img (ROM ramdisk + kernel) other than the proven one: refused unless NEWBOOT_OK=1 after a rehearsal that
+#     covered the changed part.
+if [ "$N" != 5.4 ]; then
+	grep -q ' modload=[a-z]' "$B/BUILDINFO" 2>/dev/null && { echo "REFUSED: $N is a MODLOAD build (parallel first-stage module loading): the rehearsal cannot cover it (rb100 bootlooped 2026-11-22)"; exit 1; }
+	PROVEN_BOOT=7a94e8b05c94a395d5b80947a726990539d7f3469a70315f5750ee45fbd4e333
+	bh=$(awk '$2=="boot.img" || $2=="*boot.img" {print $1}' "$SUMS")
+	[ "$bh" = "$PROVEN_BOOT" ] || [ "${NEWBOOT_OK:-0}" = 1 ] || { echo "REFUSED: $N boot.img ${bh:0:8} != proven ${PROVEN_BOOT:0:8} (NEWBOOT_OK=1 only after a rehearsal that covers the change)"; exit 1; }
+fi
 if [ "$N" = 5.4 ]; then SUMS=$(mktemp); ( cd "$B" && sha256sum boot.img vendor_boot.img dtbo.img ) > "$SUMS"; fi
 [ -f "$SUMS" ] || { echo "no $SUMS"; exit 1; }
 [ "$(A get-state 2>/dev/null)" = device ] || { echo "$S not in Android"; exit 1; }

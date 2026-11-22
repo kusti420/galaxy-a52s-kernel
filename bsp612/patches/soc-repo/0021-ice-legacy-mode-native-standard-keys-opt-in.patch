@@ -6,12 +6,13 @@ metadata via dm-default-key, no wrappedkey): every /data bio went through blk-cr
 qcom_ice.a52_no_hwkm=1 keeps ICE in legacy mode; ufshcd_crypto_qti.a52_raw_keys=1 then advertises
 BLK_CRYPTO_KEY_TYPE_STANDARD and programs raw keys with qcom_ice_program_key (SCM ice_set_key, the
 upstream ufs-qcom path). qcom_ice_program_key_hwkm() returns 0 for a raw key without programming it, so
-the profile must never claim standard keys on that path. Both default 0. In legacy mode the evict uses the matching qcom_scm_ice_invalidate_key. (2026-11-21)
+the profile must never claim standard keys on that path. Both default 0. In legacy mode the evict uses the matching qcom_scm_ice_invalidate_key. Safety net: standard keys are
+only used after a boot-time READ-ONLY known-answer test (8 KiB of sda through the ICE vs software
+xts(aes), DUN > 2^32) passed; on a failure the profile falls back to wrapped keys only (CPU fallback)
+and keys that already had a native profile get -EIO. a52_kat_fail=1 corrupts the reference, =2 makes every standard key program fail (tests). (2026-11-21)
 
 --- a/drivers/soc/qcom/ice.c	2026-11-21 16:07:16.060300352 +0200
-+++ b/drivers/soc/qcom/ice.c	2026-11-21 16:08:20.342647062 +0200
---- a/drivers/soc/qcom/ice.c	2026-11-21 16:07:16.060300352 +0200
-+++ b/drivers/soc/qcom/ice.c	2026-11-21 16:23:15.573315244 +0200
++++ b/drivers/soc/qcom/ice.c	2026-11-21 18:45:25.280170291 +0200
 @@ -99,6 +99,11 @@
  	};
  };
@@ -48,8 +49,195 @@ the profile must never claim standard keys on that path. Both default 0. In lega
  	if (!qcom_ice_check_supported(engine))
  		return ERR_PTR(-EOPNOTSUPP);
 --- a/drivers/ufs/host/ufshcd-crypto-qti.c	2026-11-21 16:07:16.067781663 +0200
-+++ b/drivers/ufs/host/ufshcd-crypto-qti.c	2026-11-21 16:23:15.574022111 +0200
-@@ -76,10 +76,15 @@
++++ b/drivers/ufs/host/ufshcd-crypto-qti.c	2026-11-21 18:59:28.536841597 +0200
+@@ -7,6 +7,174 @@
+ #include <ufs/ufshcd-crypto.h>
+ #include "ufs-qcom.h"
+ #include <soc/qcom/ice.h>
++#include <linux/bio.h>
++#include <linux/blkdev.h>
++#include <linux/blk-crypto.h>
++#include <linux/major.h>
++#include <linux/completion.h>
++#include <linux/delay.h>
++#include <linux/random.h>
++#include <linux/scatterlist.h>
++#include <linux/workqueue.h>
++#include <crypto/skcipher.h>
++
++/*
++ * a52 (Galaxy A52s, 2026-11-21): standard (raw) keys in the ICE are only used after a boot-time
++ * known-answer test proved that this TrustZone programs them right: a random AES-256-XTS key with a
++ * DUN above 2^32 decrypts 8 KiB of sda (READ ONLY, nothing is written) through the ICE, the kernel's
++ * software xts(aes) decrypts the same raw sectors, both must match. Until the test passed every other
++ * standard key waits (up to 30 s); on a failure the profile goes back to wrapped keys only (= the
++ * blk-crypto-fallback on the CPU, the stock 6.12 behaviour) and keys that already got a native profile
++ * fail with -EIO instead of ever writing wrongly encrypted data.
++ */
++static int a52_kat_fail;
++module_param(a52_kat_fail, int, 0444);
++MODULE_PARM_DESC(a52_kat_fail, "a52 test only: 1 = corrupt the software reference, 2 = every standard key program fails (a TZ that rejects raw keys)");
++static int a52_kat_state;		/* 0 = not run / running, 1 = pass, -1 = fail */
++module_param(a52_kat_state, int, 0444);
++static DECLARE_COMPLETION(a52_kat_done);
++static struct blk_crypto_key a52_kat_key;
++static struct ufs_hba *a52_kat_hba;
++static struct work_struct a52_kat_wk;
++
++static int a52_kat_read(struct block_device *bdev, sector_t sec, struct page **pg, int n,
++			const struct blk_crypto_key *key, u64 dun)
++{
++	u64 d[BLK_CRYPTO_DUN_ARRAY_SIZE] = { dun };
++	struct bio *bio = bio_alloc(bdev, n, REQ_OP_READ | REQ_SYNC, GFP_KERNEL);
++	int i, ret;
++
++	if (!bio)
++		return -ENOMEM;
++	bio->bi_iter.bi_sector = sec;
++	for (i = 0; i < n; i++)
++		__bio_add_page(bio, pg[i], PAGE_SIZE, 0);
++	if (key)
++		bio_crypt_set_ctx(bio, key, d, GFP_KERNEL);
++	ret = submit_bio_wait(bio);
++	bio_put(bio);
++	return ret;
++}
++
++static void a52_kat_fn(struct work_struct *w)
++{
++	const u64 dun0 = 0x123456789ULL;
++	const sector_t sec = 8192;		/* 4 MiB into sda, read only */
++	struct page *raw[2] = {}, *dec[2] = {};
++	struct crypto_skcipher *tfm = NULL;
++	struct skcipher_request *req = NULL;
++	struct file *f = NULL;
++	struct block_device *bdev;
++	u8 key[64], *ref = NULL;
++	const char *why = "no sda within 15 s";
++	int i, ret = -ENODEV;
++
++	for (i = 0; i < 150; i++) {
++		f = bdev_file_open_by_dev(MKDEV(SCSI_DISK0_MAJOR, 0), BLK_OPEN_READ, NULL, NULL);
++		if (!IS_ERR(f))
++			break;
++		f = NULL;
++		msleep(100);
++	}
++	if (!f)
++		goto out;
++	bdev = file_bdev(f);
++	why = "sda is not on this UFS host";
++	if (bdev_get_queue(bdev)->crypto_profile != &a52_kat_hba->crypto_profile)
++		goto out;
++	why = "allocation";
++	for (i = 0; i < 2; i++) {
++		raw[i] = alloc_page(GFP_KERNEL);
++		dec[i] = alloc_page(GFP_KERNEL);
++		if (!raw[i] || !dec[i])
++			goto out;
++	}
++	ref = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!ref)
++		goto out;
++	get_random_bytes(key, sizeof(key));
++	why = "blk_crypto_init_key";
++	ret = blk_crypto_init_key(&a52_kat_key, key, sizeof(key), BLK_CRYPTO_KEY_TYPE_STANDARD,
++				  BLK_ENCRYPTION_MODE_AES_256_XTS, 8, PAGE_SIZE);
++	if (ret)
++		goto out;
++	why = "standard keys not native on sda";
++	ret = -EOPNOTSUPP;
++	{	/* blk_crypto_config_supported_natively() is not exported: the same test on this host's profile */
++		struct blk_crypto_profile *pr = &a52_kat_hba->crypto_profile;
++
++		if (!(pr->key_types_supported & BLK_CRYPTO_KEY_TYPE_STANDARD) ||
++		    !(pr->modes_supported[BLK_ENCRYPTION_MODE_AES_256_XTS] & PAGE_SIZE) ||
++		    pr->max_dun_bytes_supported < 8)
++			goto out;
++	}
++	why = "raw read";
++	ret = a52_kat_read(bdev, sec, raw, 2, NULL, 0);
++	if (ret)
++		goto out;
++	why = "ICE read";
++	ret = a52_kat_read(bdev, sec, dec, 2, &a52_kat_key, dun0);
++	blk_crypto_evict_key(bdev, &a52_kat_key);
++	if (ret)
++		goto out;
++	why = "xts(aes)";
++	tfm = crypto_alloc_skcipher("xts(aes)", 0, 0);
++	if (IS_ERR(tfm)) {
++		ret = PTR_ERR(tfm);
++		tfm = NULL;
++		goto out;
++	}
++	ret = crypto_skcipher_setkey(tfm, key, sizeof(key));
++	req = ret ? NULL : skcipher_request_alloc(tfm, GFP_KERNEL);
++	if (!req) {
++		ret = ret ?: -ENOMEM;
++		goto out;
++	}
++	for (i = 0; i < 2; i++) {
++		DECLARE_CRYPTO_WAIT(wait);
++		struct scatterlist src, dst;
++		__le64 iv[2] = { cpu_to_le64(dun0 + i), 0 };
++
++		sg_init_one(&src, page_address(raw[i]), PAGE_SIZE);
++		sg_init_one(&dst, ref, PAGE_SIZE);
++		skcipher_request_set_callback(req, CRYPTO_TFM_REQ_MAY_SLEEP, crypto_req_done, &wait);
++		skcipher_request_set_crypt(req, &src, &dst, PAGE_SIZE, iv);
++		ret = crypto_wait_req(crypto_skcipher_decrypt(req), &wait);
++		if (ret)
++			goto out;
++		if (a52_kat_fail == 1)
++			ref[17] ^= 0x5a;
++		why = "ICE output differs from the AES-256-XTS reference";
++		ret = -EBADMSG;
++		if (memcmp(page_address(dec[i]), ref, PAGE_SIZE))
++			goto out;
++	}
++	ret = 0;
++out:
++	memzero_explicit(key, sizeof(key));
++	memzero_explicit(&a52_kat_key, sizeof(a52_kat_key));
++	if (ret) {
++		WRITE_ONCE(a52_kat_hba->crypto_profile.key_types_supported, BLK_CRYPTO_KEY_TYPE_HW_WRAPPED);
++		WRITE_ONCE(a52_kat_state, -1);
++		dev_err(a52_kat_hba->dev, "a52: ICE known-answer test FAILED (%s, %d): standard keys stay on the CPU fallback\n", why, ret);
++	} else {
++		WRITE_ONCE(a52_kat_state, 1);
++		dev_info(a52_kat_hba->dev, "a52: ICE known-answer test passed (8 KiB, AES-256-XTS, 64-bit DUN): standard keys in the ICE\n");
++	}
++	complete_all(&a52_kat_done);
++	skcipher_request_free(req);
++	if (tfm)
++		crypto_free_skcipher(tfm);
++	kfree(ref);
++	for (i = 0; i < 2; i++) {
++		if (raw[i])
++			__free_page(raw[i]);
++		if (dec[i])
++			__free_page(dec[i]);
++	}
++	if (f)
++		fput(f);
++}
+ 
+ /* Blk-crypto modes supported by UFS crypto */
+ static const struct ufs_crypto_alg_entry {
+@@ -36,6 +204,11 @@
+ 	int err;
+ 	u8 ice_key_size;
+ 
++	/* a52: standard keys only after the ICE known-answer test passed (the test's own key goes first) */
++	if (key->crypto_cfg.key_type == BLK_CRYPTO_KEY_TYPE_STANDARD && key != &a52_kat_key &&
++	    (!wait_for_completion_timeout(&a52_kat_done, 30 * HZ) || READ_ONCE(a52_kat_state) != 1))
++		return -EIO;
++
+ 	BUILD_BUG_ON(UFS_CRYPTO_KEY_SIZE_INVALID != 0);
+ 	for (i = 0; i < hba->crypto_capabilities.num_crypto_cap; i++) {
+ 		if (ccap_array[i].algorithm_id == alg->ufs_alg &&
+@@ -76,10 +249,17 @@
  	}
  
  	ufshcd_hold(hba);
@@ -62,6 +250,8 @@ the profile must never claim standard keys on that path. Both default 0. In lega
 +						QCOM_ICE_CRYPTO_ALG_AES_XTS,
 +						ice_key_size, key,
 +						cfg.data_unit_size, slot);
++	else if (a52_kat_fail == 2)	/* a52 test: a TrustZone that rejects raw keys */
++		err = -EINVAL;
 +	else	/* a52: raw keys through the SCM ICE call (upstream ufs-qcom path; the hwkm call ignores them) */
 +		err = qcom_ice_program_key(host->ice, QCOM_ICE_CRYPTO_ALG_AES_XTS,
 +					   QCOM_ICE_CRYPTO_KEY_SIZE_256, key->raw,
@@ -69,7 +259,7 @@ the profile must never claim standard keys on that path. Both default 0. In lega
  	if (err)
  		pr_err("%s: error programming key, err = %d, slot = %d\n",
  		       __func__, err, slot);
-@@ -162,8 +167,14 @@
+@@ -162,8 +342,14 @@
   *
   * Return: 0 if crypto was initialized or is not supported, else a -errno value.
   */
@@ -84,14 +274,17 @@ the profile must never claim standard keys on that path. Both default 0. In lega
  	int cap_idx;
  	int err = 0;
  	enum blk_crypto_mode_num blk_mode_num;
-@@ -203,6 +214,11 @@
+@@ -203,6 +389,14 @@
  	/* UFS only supports 8 bytes for any DUN */
  	hba->crypto_profile.max_dun_bytes_supported = 8;
  	hba->crypto_profile.key_types_supported = BLK_CRYPTO_KEY_TYPE_HW_WRAPPED;
 +	/* a52: standard (raw) keys natively when ICE runs in legacy mode, as on 5.4 (else blk-crypto-fallback) */
 +	if (a52_raw_keys && host->ice && !qcom_ice_hwkm_supported(host->ice)) {
 +		hba->crypto_profile.key_types_supported = BLK_CRYPTO_KEY_TYPE_STANDARD;
-+		dev_info(hba->dev, "a52: inline crypto for standard (raw) keys (ICE legacy mode)\n");
++		dev_info(hba->dev, "a52: inline crypto for standard (raw) keys (ICE legacy mode), known-answer test queued\n");
++		a52_kat_hba = hba;
++		INIT_WORK(&a52_kat_wk, a52_kat_fn);
++		queue_work(system_unbound_wq, &a52_kat_wk);
 +	}
  	hba->crypto_profile.dev = hba->dev;
  
