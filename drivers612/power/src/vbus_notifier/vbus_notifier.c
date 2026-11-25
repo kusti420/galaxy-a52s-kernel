@@ -58,6 +58,24 @@ int vbus_notifier_unregister(struct notifier_block *nb)
 }
 EXPORT_SYMBOL(vbus_notifier_unregister);
 
+/*
+ * a52sxq 6.12: GPL-exported twins for late, soft binding with symbol_get() (6.12 refuses
+ * symbol_get() of a non-GPL export). The touch driver loads a stage before this module and must
+ * not gain a hard dependency on it; it looks these up once this module is there (stm_core.c).
+ */
+int a52sxq_vbus_notifier_register(struct notifier_block *nb, notifier_fn_t notifier,
+			vbus_notifier_device_t listener)
+{
+	return vbus_notifier_register(nb, notifier, listener);
+}
+EXPORT_SYMBOL_GPL(a52sxq_vbus_notifier_register);
+
+int a52sxq_vbus_notifier_unregister(struct notifier_block *nb)
+{
+	return vbus_notifier_unregister(nb);
+}
+EXPORT_SYMBOL_GPL(a52sxq_vbus_notifier_unregister);
+
 static int vbus_notifier_notify(void)
 {
 	int ret = 0;

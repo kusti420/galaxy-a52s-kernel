@@ -1,4 +1,9 @@
-# realboot: the real boot path for LineageOS on the Qualcomm 6.12 kernel and the 6.18 port
+# realboot: the real boot path for Android on the Qualcomm 6.12 kernel and the 6.18 port
+
+The 6.12 kernel is not tied to a ROM: the kernel-only recovery zips (`twrp/mk-ak-zips.sh`) install
+over any Android ROM of the SM-A528B. It is made for Android 17 ROMs that use the stock-derived
+a52sxq vendor (tested: LineageOS 24, IchthysOS, K4_UN1CA One UI 9 port). The bring-up below was
+done on LineageOS 24, which is why the text names it.
 
 > **NOTHING HERE HAS BEEN FLASHED OR RUN ON A PHONE.** Flashing any image of this directory
 > needs an explicit OK for that flash. Targets: test phone 2, **PHONE2**

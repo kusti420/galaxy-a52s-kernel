@@ -10,6 +10,11 @@
  */
 
 #include "stm_dev.h"
+#include <linux/a52sxq_userspace.h>
+
+#if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
+static void stm_ts_vbus_bind_work(struct work_struct *work);
+#endif
 #include "stm_reg.h"
 
 struct stm_ts_data *g_ts;
@@ -1843,7 +1848,18 @@ static void stm_ts_status_event(struct stm_ts_data *ts, u8 *event_buff)
 	} else if (p_event_status->stype == STM_TS_EVENT_STATUSTYPE_VENDORINFO) {
 		if (ts->plat_data->support_ear_detect) {
 			if (p_event_status->status_id == 0x6A) {
-				if (ts->plat_data->power_state == SEC_INPUT_STATE_LPM || !ts->plat_data->touch_count) {
+				if (a52sxq_userspace_is_samsung()) {
+					/*
+					 * a52sxq.userspace=samsung (One UI): Samsung's 5.4 behaviour. The IC's raw
+					 * value on every event, also with a finger down: the stock sensor HAL and
+					 * One UI's "Ear Hover Proximity (ProToS)" do the interpretation.
+					 */
+					ts->hover_event = p_event_status->status_data_1;
+					input_report_abs(ts->plat_data->input_dev_proximity, ABS_MT_CUSTOM, p_event_status->status_data_1);
+					input_sync(ts->plat_data->input_dev_proximity);
+					input_info(true, &ts->client->dev, "%s: proximity: %d\n", __func__, p_event_status->status_data_1);
+				} else if (ts->plat_data->power_state == SEC_INPUT_STATE_LPM || !ts->plat_data->touch_count) {
+					// AOSP userspace (LineageOS/IchthysOS 5.4 behaviour):
 					// Report actual range through hover proximity and block touch proximity during screen on
 					// When panel is in LPM state use touch proximity
 					p_event_status->status_data_1 = p_event_status->status_data_1 == 5 || !p_event_status->status_data_1;
@@ -2667,6 +2683,9 @@ static int stm_ts_init(struct stm_ts_data *ts)
 	INIT_DELAYED_WORK(&ts->reset_work, stm_ts_reset_work);
 	INIT_DELAYED_WORK(&ts->work_read_info, stm_ts_read_info_work);
 	INIT_DELAYED_WORK(&ts->work_fw_recheck, stm_ts_fw_recheck_work);
+#if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
+	INIT_DELAYED_WORK(&ts->vbus_bind_work, stm_ts_vbus_bind_work);
+#endif
 	INIT_DELAYED_WORK(&ts->work_print_info, stm_ts_print_info_work);
 	INIT_DELAYED_WORK(&ts->work_read_functions, stm_ts_get_touch_function);
 	INIT_DELAYED_WORK(&ts->switching_work, stm_switching_work);
@@ -2746,6 +2765,63 @@ error_allocate_mem:
 	return ret;
 }
 
+#if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
+/*
+ * a52sxq 6.12: charger (VBUS) state to the touch IC, as on 5.4 (CONFIG_VBUS_NOTIFIER=y there:
+ * the IC switches to its charger noise mode). On 5.4 everything is built in; here the notifier
+ * lives in vbus_notifier.ko, which the ramdisks load one stage AFTER the touch driver. A direct
+ * call would make stm_ts.ko depend on it (other load order, modules.dep change), so the two
+ * functions are looked up with symbol_get() once the module is there. vbus_notifier_register()
+ * replays the current VBUS state to a new listener, so a late bind loses nothing. A ramdisk
+ * whose vbus_notifier.ko has no a52sxq_vbus_notifier_register: one line after the last try, no
+ * charger mode (as before this change).
+ */
+#define STM_TS_VBUS_BIND_MS	2000
+#define STM_TS_VBUS_BIND_TRIES	45
+
+static void stm_ts_vbus_bind_work(struct work_struct *work)
+{
+	struct stm_ts_data *ts = container_of(work, struct stm_ts_data, vbus_bind_work.work);
+	int (*reg)(struct notifier_block *nb, notifier_fn_t notifier, vbus_notifier_device_t listener);
+
+	if (ts->plat_data->shutdown_called || ts->vbus_bound)
+		return;
+
+	reg = symbol_get(a52sxq_vbus_notifier_register);
+	if (!reg) {
+		if (++ts->vbus_bind_tries < STM_TS_VBUS_BIND_TRIES)
+			schedule_delayed_work(&ts->vbus_bind_work, msecs_to_jiffies(STM_TS_VBUS_BIND_MS));
+		else
+			input_err(true, &ts->client->dev,
+					"%s: no a52sxq_vbus_notifier_register after %d tries: no charger mode\n",
+					__func__, ts->vbus_bind_tries);
+		return;
+	}
+
+	/* the reference on vbus_notifier.ko taken by symbol_get() is kept while registered */
+	ts->vbus_bound = true;
+	reg(&ts->vbus_nb, stm_ts_vbus_notification, VBUS_NOTIFY_DEV_CHARGER);
+	input_info(true, &ts->client->dev, "%s: vbus notifier registered (try %d)\n",
+			__func__, ts->vbus_bind_tries + 1);
+}
+
+static void stm_ts_vbus_unbind(struct stm_ts_data *ts)
+{
+	int (*unreg)(struct notifier_block *nb);
+
+	cancel_delayed_work_sync(&ts->vbus_bind_work);
+	if (!ts->vbus_bound)
+		return;
+	unreg = symbol_get(a52sxq_vbus_notifier_unregister);
+	if (unreg) {
+		unreg(&ts->vbus_nb);
+		symbol_put(a52sxq_vbus_notifier_unregister);
+		symbol_put(a52sxq_vbus_notifier_register);
+	}
+	ts->vbus_bound = false;
+}
+#endif
+
 void stm_ts_release(struct stm_ts_data *ts)
 {
 	input_info(true, &ts->client->dev, "%s\n", __func__);
@@ -2754,7 +2830,7 @@ void stm_ts_release(struct stm_ts_data *ts)
 	sec_input_unregister_notify(&ts->stm_input_nb);
 #endif
 #if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
-	vbus_notifier_unregister(&ts->vbus_nb);
+	stm_ts_vbus_unbind(ts);
 #endif
 #if IS_ENABLED(CONFIG_HALL_NOTIFIER)
 	if (ts->hall_ic_nb.notifier_call)
@@ -2862,8 +2938,8 @@ int stm_ts_probe(struct stm_ts_data *ts)
 	sec_input_register_notify(&ts->stm_input_nb, stm_touch_notify_call, 1);
 #endif
 #if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
-	vbus_notifier_register(&ts->vbus_nb, stm_ts_vbus_notification,
-						VBUS_NOTIFY_DEV_CHARGER);
+	/* a52sxq 6.12: vbus_notifier.ko loads after this driver; bind when it is there */
+	schedule_delayed_work(&ts->vbus_bind_work, msecs_to_jiffies(STM_TS_VBUS_BIND_MS));
 #endif
 
 	input_err(true, &ts->client->dev, "%s: done\n", __func__);

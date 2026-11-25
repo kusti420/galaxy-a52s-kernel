@@ -1,0 +1,8 @@
+# id<TAB>note. Hand-written remarks that report.py appends to a row's verdict (tool limits, re-check rules).
+camera.provider_devices	TOOL BUG in the 2026-11-22 runs (the check passed the whole multi-MB dumpsys through printf, so it counted 0 on both kernels). 5.4 raw dump of the same run: 4 devices (0-3) + legacy ids. Fixed in the script; re-check on 6.12 with the same uptime rule (start at uptime >= 120 s: the Samsung provider registers ~30 s after boot)
+storage.zram	TOOL BUG in the 2026-11-22 runs (8 GB disksize overflowed the phone shell's 32-bit arithmetic): zram is configured on both kernels (lz4, disksize 8589934592). Fixed in the script
+sec.widevine	TOOL LIMIT: the St MediaDrm probe dies on One UI in a Samsung service bind (com.samsung.drmboost, SecurityException for an app_process caller) on both kernels: no Widevine level measured yet
+bpf.netd_status	5.4: Samsung eBPF map dumps end with "getFirstKey() failed: Bad file descriptor" (maps not loaded on 5.4); clean on 6.12
+input.devices	qpnp_pon became pmic_pwrkey + pmic_resin (upstream PON driver naming); sec_touchpad absent on 6.12
+sec.ta_loaded	NOT a verdict unless both kernel logs reach back to boot (the QSEECOM 'now loaded' lines are boot-time lines; compare the dmesg start times in the run dirs)
+col.vaultkeeper_errors	history: rbou3/rbou4 looped on "There is no VK ID" (118x / 159x, vaultkeeperd exit 255); gone on rbou5d (TZ shm bridge off): 0x, 31x "runCommand Success" = the 5.4 count. The +2 lines vs 5.4 on rbou5d are one GMS lock-contention line that only mentions the word and one libc "Access denied finding property vendor.security.vaultkeeper.native" (ROM sepolicy)

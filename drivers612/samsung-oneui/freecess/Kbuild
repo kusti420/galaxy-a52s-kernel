@@ -1,0 +1,5 @@
+# Samsung Freecess (NETLINK_KFREECESS) for GKI android16-6.12 as a module: no Image patch, vendor hooks only.
+obj-m := freecess.o
+freecess-y := freecess_core.o freecess_pkg.o freecess_hooks.o freecess_refreeze.o
+# struct binder_proc/binder_thread/binder_transaction/binder_alloc (private binder headers of the same tree as the Image)
+ccflags-y += -I$(srctree)/drivers/android

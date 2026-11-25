@@ -1,0 +1,20 @@
+# A52s 6.12 TEST fstab for the OneUI 9 port (rehearse.sh, 2026-11-22; from the ROM's fstab.qcom). RAM only:
+# /data and /metadata on zram, every real partition read-only (noload), no userdata, no misc.
+system	/system	erofs	ro	wait,logical,first_stage_mount
+vendor	/vendor	erofs	ro	wait,logical,first_stage_mount
+product	/product	erofs	ro	wait,logical,first_stage_mount
+odm	/odm	erofs	ro	wait,logical,first_stage_mount
+/dev/block/zram2 /metadata ext4 noatime,nosuid,nodev,discard wait,formattable
+/dev/block/platform/soc/1d84000.ufshc/by-name/prism /prism ext4 ro,noload,barrier=1 nofail
+/dev/block/platform/soc/1d84000.ufshc/by-name/optics /optics ext4 ro,noload,barrier=1 nofail
+/dev/block/bootdevice/by-name/cache /cache ext4 ro,noload,noatime,nosuid,nodev wait
+/dev/block/bootdevice/by-name/persist /mnt/vendor/persist ext4 ro,noload,noatime,nosuid,nodev wait
+/dev/block/zram1 /data ext4 noatime,nosuid,nodev,discard latemount,wait,formattable
+/dev/block/bootdevice/by-name/apnhlos                   /vendor/firmware_mnt   vfat    ro,shortname=lower,uid=0,gid=1000,dmask=227,fmask=337,context=u:object_r:firmware_file:s0 wait
+/dev/block/bootdevice/by-name/modem                     /vendor/firmware-modem   vfat  ro,shortname=lower,uid=0,gid=1000,dmask=227,fmask=337,context=u:object_r:firmware_file:s0 wait
+/dev/block/bootdevice/by-name/efs /mnt/vendor/efs ext4 ro,noload,noatime,nosuid,nodev wait
+/dev/block/bootdevice/by-name/sec_efs /efs ext4 ro,noload,noatime,nosuid,nodev wait
+/dev/block/bootdevice/by-name/dsp /vendor/dsp ext4 ro,noload,noatime,nosuid,nodev wait
+/dev/block/bootdevice/by-name/carrier /carrier ext4 ro,noload,noatime,nosuid,nodev nofail
+/dev/block/bootdevice/by-name/spu /spu ext4 ro,noload,noatime,nosuid,nodev nofail
+/devices/platform/soc/*.ssusb/*.dwc3/xhci-hcd.*.auto*   auto    auto    defaults    voldmanaged=usb:auto

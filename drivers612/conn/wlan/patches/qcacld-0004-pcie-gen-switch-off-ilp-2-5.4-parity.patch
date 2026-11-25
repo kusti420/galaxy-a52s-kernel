@@ -1,0 +1,51 @@
+a52sxq: qcacld: PCIe link defaults as 5.4 (g_enable_pci_gen 0, g_enable_ilp 2) for WIFI-09
+
+--- a/components/fw_offload/dispatcher/inc/cfg_fwol_generic.h	2026-11-24 19:40:40.735860409 +0200
++++ b/components/fw_offload/dispatcher/inc/cfg_fwol_generic.h	2026-11-24 19:40:40.753082943 +0200
+@@ -813,11 +813,18 @@
+  * <ini>
+  */
+ 
++/*
++ * a52sxq (2026-11-24, WIFI-09 Wi-Fi drops after a WLAN suspend timeout): the ROM's 5.4 qcacld (2.0.8.33B)
++ * has default 2 here ("max power saving") and the phone's WCNSS_qcom_cfg.ini does not set g_enable_ilp,
++ * so this build sent WMI_PDEV_PARAM_PCIE_HW_ILP = 1 to a firmware that was only ever run with 2.
++ * ILP is the idle low-power block of the WPSS <-> WCN6750 PCIe link, i.e. the link the host votes on
++ * (prevent/allow L1) before every ring-pointer write. Default 2 = 5.4 behaviour; an ini value overrides.
++ */
+ #define CFG_SET_ENABLE_ILP CFG_INI_UINT( \
+ 		"g_enable_ilp", \
+ 		0, \
+ 		3, \
+-		1, \
++		2, \
+ 		CFG_VALUE_OR_DEFAULT, \
+ 		"ILP configuration")
+ 
+@@ -874,7 +881,7 @@
+ /*
+  * <ini>
+  * g_enable_pci_gen - To enable pci gen switch
+- * @Default: 1
++ * @Default: 0 (a52sxq; upstream 1)
+  *
+  * Related: None
+  *
+@@ -885,9 +892,16 @@
+  * </ini>
+  */
+ 
++/*
++ * a52sxq (2026-11-24, WIFI-09): default 0 as in the ROM's 5.4 qcacld (upstream 2.0.9: 1; not set in the
++ * phone's ini). With 1 the host sets WMI_RSRC_CFG_FLAG_PCIE_GEN_SWITCH_CAPABLITY in the init resource
++ * config, which allows the WPSS firmware to switch the speed of its PCIe link to the WCN6750
++ * ("wal_spm_pcie_gen_switch", "pcie_bw_request: Gen switch ..." in the phone's wpss image). A speed
++ * switch retrains the link; on 5.4 this firmware never did that. An ini value overrides.
++ */
+ #define CFG_ENABLE_PCI_GEN CFG_INI_BOOL( \
+ 		"g_enable_pci_gen", \
+-		1, \
++		0, \
+ 		"enable pci gen")
+ 
+ #define CFG_FWOL_GENERIC_ALL \

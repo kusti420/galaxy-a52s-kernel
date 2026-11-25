@@ -37,6 +37,9 @@ KernelSU-Next (`../kernelsu`).
   runs in the ROM's own metamod domain and reports `sys.metamod_gate=ksu` when /data/adb/ksud exists),
   `pif_cleanup`, `susfs_defaults`. They need only ksud + the ksu domain; meta-overlayfs needs ext4 loop
   images + overlayfs (GKI: built in).
+* SUSFS: see **SUSFS.md** (2026-11-22): a separate Image variant with ReSukiSU built in + SUSFS v2.3.0
+  (`build-susfs-image.sh` -> bsp612/out/susfs/Image, same release + export CRCs, QEMU-proven, never on a phone).
+  The rest of this file is the LKM route, which has no SUSFS:
 * Not available in LKM mode: SUSFS (a GKI Image patch). The ROM's `susfs_defaults` checks `ksud susfs show
   version` first and exits 0 when SUSFS is missing; its uname re-set (5.4.302-bone-machine-qgki) only runs
   behind that check. Without SUSFS: no hide_sus_mnts_for_non_su_procs and no avc log spoofing (root-hiding

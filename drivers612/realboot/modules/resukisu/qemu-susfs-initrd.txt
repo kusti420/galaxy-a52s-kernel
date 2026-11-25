@@ -1,0 +1,25 @@
+Image ./bsp612/out/susfs/Image (4931de43c117cedd), initrd of rbou8s without rdinit=/ksuinit
+[    0.000000][    T0] Linux version 6.12.81-4k-g8a69376da734 (android-build@localhost) (Android (13290119, +pgo, +bolt, +lto, +mlgo, based on r547379) clang version 20.0.0 (https://android.googlesource.com/toolchain/llvm-project b718bcaf8c198c82f3021447d943401e3ab5bd54), LLD 20.0.0 (/mnt/disks/build-disk/src/android/llvm-r547379-release/out/llvm-project/llvm b718bcaf8c198c82f3021447d943401e3ab5bd54)) #1 SMP PREEMPT Sun Nov 22 19:35:04 EET 2026
+[    0.451151][   T34] Trying to unpack rootfs image as initramfs...
+[    0.718964][    T1] KernelSU: Initialized with driver version: 35203, full_version: v4.2.0-rc3-8770c7e3@ReSukiSU, ABI: aarch64, Work mode: Built-in
+[    0.719893][   T62] KernelSU: Start checking KernelPatch...
+[    0.719984][    T1] KernelSU: feature: feature management initialized
+[    0.720368][   T62] KernelSU: pulled log size: 131072
+[    0.720418][    T1] KernelSU: feature: registered handler for sulog (id=2)
+[    0.720788][   T62] KernelSU: KernelPatch was not found
+[    0.720920][    T1] KernelSU: feature: registered handler for adb_root (id=3)
+[    0.721377][    T1] KernelSU: feature: registered handler for selinux_hide (id=4)
+[    0.721917][    T1] KernelSU: KernelSU IOCTL Commands:
+[    0.722438][    T1] KernelSU:   GRANT_ROOT         = 0x00004b01
+[    0.722644][    T1] KernelSU:   GET_INFO           = 0x80104b02
+[    0.722784][    T1] KernelSU:   GET_INFO_LEGACY    = 0x80004b02
+[    0.722921][    T1] KernelSU:   REPORT_EVENT       = 0x40004b03
+[    0.723057][    T1] KernelSU:   SET_SEPOLICY       = 0xc0004b04
+[    0.723195][    T1] KernelSU:   CHECK_SAFEMODE     = 0x80004b05
+[    0.723339][    T1] KernelSU:   GET_ALLOW_LIST     = 0xc0004b06
+[    0.723478][    T1] KernelSU:   GET_DENY_LIST      = 0xc0004b07
+[    0.723615][    T1] KernelSU:   NEW_GET_ALLOW_LIST = 0xc0044b06
+first-stage modules loaded in QEMU: 213 (the build's own Image: 213)
+module refusals (disagrees about version / Unknown symbol / vermagic / Exec format): 0
+WARN/BUG/Oops before init exits: 0
+QEMU SUSFS TEST PASS

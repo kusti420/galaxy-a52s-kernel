@@ -1,0 +1,49 @@
+--- a/drivers/firmware/qcom/qcom_tzmem.c	2026-11-22 19:12:33.024943255 +0200
++++ b/drivers/firmware/qcom/qcom_tzmem.c	2026-11-22 19:12:43.043186140 +0200
+@@ -142,11 +142,26 @@
+ 	NULL
+ };
+ 
++/*
++ * a52sxq (2026-11-22, test): leave the TZ SHM bridge off, as the 5.4 kernel did (qtee_shmbridge_enable(false)).
++ * With the bridge on, Samsung's PROCA TA cannot map HLOS memory ("IHlosRegionFinder_getRegion return error",
++ * "Can not read kernel magic") and the vaultkeeper TA refuses every client (-10032 "no VK ID").
++ */
++static bool a52_no_shm_bridge;
++module_param(a52_no_shm_bridge, bool, 0444);
++MODULE_PARM_DESC(a52_no_shm_bridge, "do not enable the TZ SHM bridge (5.4 behaviour)");
++
+ static int qcom_tzmem_init(void)
+ {
+ 	const char *const *platform;
+ 	int ret;
+ 
++	if (a52_no_shm_bridge) {
++		dev_info(qcom_tzmem_dev, "SHM Bridge left disabled (a52_no_shm_bridge)\n");
++		mutex_init(&bridge_list_head.lock);
++		INIT_LIST_HEAD(&bridge_list_head.head);
++		return 0;
++	}
+ 	for (platform = qcom_tzmem_blacklist; *platform; platform++) {
+ 		if (of_machine_is_compatible(*platform))
+ 			goto notsupp;
+@@ -498,6 +513,9 @@
+ 	const char *const *platform;
+ 	int ret;
+ 
++	if (a52_no_shm_bridge)
++		return 0;
++
+ 	for (platform = qcom_tzmem_blacklist; *platform; platform++) {
+ 		if (of_machine_is_compatible(*platform))
+ 			return 0;
+@@ -518,6 +536,9 @@
+ {
+ 	const char *const *platform;
+ 
++	if (a52_no_shm_bridge)
++		return 0;
++
+ 	for (platform = qcom_tzmem_blacklist; *platform; platform++) {
+ 		if (of_machine_is_compatible(*platform))
+ 			return 0;

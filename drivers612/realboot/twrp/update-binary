@@ -1,6 +1,8 @@
 #!/system/bin/sh
 # SPDX-License-Identifier: GPL-2.0
-# Galaxy A52s 5G (SM-A528B, a52sxq) recovery installer for the Linux 6.12 kernel (LineageOS 24).
+# Galaxy A52s 5G (SM-A528B, a52sxq) recovery installer for the Linux 6.12 kernel.
+# The kernel-only zips (MODE=ak, ADDON=none) install over any Android ROM of this phone; the zips that write a
+# /vendor add-on (MODE=install, MODE=ak with ADDON=vendor) are made for LineageOS 24 based ROMs only.
 #
 # One script for all zips. a52s-k612.conf in the zip selects the mode:
 #   MODE=ak         (2026-11-18, ROM-independent "AnyKernel" zip) read the CURRENT boot/vendor_boot/
@@ -351,7 +353,7 @@ check_rom() {
 			case $INC in ichthys*) LV=ichthys-$INC; log "IchthysOS build $INC accepted (ALLOW_ICHTHYS=1)";; esac
 		fi
 		[ -n "$LV" ] || abort "the installed ROM is not LineageOS (no ro.lineage.version): ${DISP:-unknown}" \
-			"This kernel is for LineageOS 24.0 only."
+			"This zip is made for LineageOS 24.0 only (it writes a /vendor add-on)."
 	else
 		warn "cannot read /system/build.prop (system not mapped or not mountable)."
 		VD=$(dyn_dev vendor)
@@ -375,7 +377,7 @@ check_rom() {
 			ui_print "  flash your build's own boot.img/vendor_boot.img/dtbo.img (or its ROM zip)."
 		fi;;
 	unknown) ;;
-	*) abort "LineageOS $LV is not LineageOS 24" "This kernel is for LineageOS 24.0 (Android 17).";;
+	*) abort "LineageOS $LV is not LineageOS 24" "This zip is made for LineageOS 24.0 (Android 17) only.";;
 	esac
 }
 
@@ -627,6 +629,11 @@ vendor_install() {
 }
 
 vendor_remove() {
+	# an EROFS vendor (OneUI 9 port) can never hold our add-on: nothing to do, no warning (restore zip, 2026-11-22)
+	_vd=$(dyn_dev vendor)
+	if { [ -n "$_vd" ] && [ "$(dd if="$_vd" bs=1 skip=1024 count=4 2>/dev/null | od -An -tx1 | tr -d ' \n')" = e2e1f5e0 ]; }; then
+		log "vendor is read-only EROFS (OneUI 9 port): no 6.12 add-on there, nothing to remove"; return 0
+	fi
 	ui_print "Removing the 6.12 add-on from /vendor..."
 	if ! vendor_open; then
 		warn "$V_ERR."
@@ -791,29 +798,34 @@ check_fstab_ak() {
 	[ -n "$VD" ] || abort "no vendor partition (/dev/block/mapper/vendor)" "Cannot check the ROM's encryption settings."
 	open_ro "$VD" vendor || abort "cannot mount vendor read-only to check the ROM's fstab" \
 		"Mount Vendor in the recovery (Mount menu) and flash again."
-	fs=""; set +f; for f in "$O_MP"/etc/fstab.*; do [ -f "$f" ] && fs="$fs $f"; done; set -f
+	# the fstab init really uses is fstab.<ro.boot.hardware> (a52sxq: qcom); the OneUI 9 vendor also ships an unused
+	# fstab.emmc WITH wrappedkey_v0 next to its fstab.qcom without it (2026-11-22): check only the used one if present
+	fs=""; hw=$(sysprop ro.boot.hardware)
+	if [ -n "$hw" ] && [ -f "$O_MP/etc/fstab.$hw" ]; then fs=" $O_MP/etc/fstab.$hw"
+	else set +f; for f in "$O_MP"/etc/fstab.*; do [ -f "$f" ] && fs="$fs $f"; done; set -f; fi
 	wk=0; [ -n "$fs" ] && grep -E '^[^#]*[[:space:]]/data[[:space:]]' $fs 2>/dev/null | grep -q wrappedkey && wk=1
 	[ -n "$fs" ] || log "fstab check: $O_MP/etc holds: $(ls "$O_MP/etc" 2>&1 | tr '\n' ' ')"
 	[ "$O_OWN" = 1 ] && close_ro
 	[ -n "$fs" ] || abort "no fstab in /vendor/etc" "Cannot check the ROM's encryption settings."
 	[ "$wk" = 0 ] || abort "this ROM encrypts /data with hardware-wrapped keys (wrappedkey in its fstab)" \
-		"This kernel supports the standard keys of LineageOS a52sxq only. Nothing was changed."
+		"This kernel build supports standard (not hardware-wrapped) keys only. Nothing was changed."
 	log "fstab: /data without wrappedkey ($fs)"
 }
 
-check_rom_ak() {
+# rom_props: AREL ASDK DISP INC LV LD from the installed ROM's build.prop files (system, then product/system_ext
+# for ro.lineage.*). Returns 1 with ROM_ERR=nosys|nomount|noprop when the system partition cannot be read.
+rom_props() {
+	AREL=""; ASDK=""; DISP=""; INC=""; LV=""; LD=""; ROM_ERR=""
 	SYSDEV=$(dyn_dev system)
-	[ -n "$SYSDEV" ] || abort "no system partition (/dev/block/mapper/system)" \
-		"This kernel is for Android 17 ROMs based on LineageOS 24."
-	open_ro "$SYSDEV" system || abort "cannot mount system read-only to check the ROM" \
-		"Mount System in the recovery (Mount menu) and flash again."
+	[ -n "$SYSDEV" ] || { ROM_ERR=nosys; return 1; }
+	open_ro "$SYSDEV" system || { ROM_ERR=nomount; return 1; }
 	SYSPROP=""
 	for f in "$O_MP/system/build.prop" "$O_MP/build.prop"; do
 		if [ -f "$f" ]; then SYSPROP=$f; break; fi
 	done
 	if [ -z "$SYSPROP" ]; then
 		[ "$O_OWN" = 1 ] && close_ro
-		abort "no build.prop on the system partition" "Is a ROM installed?"
+		ROM_ERR=noprop; return 1
 	fi
 	AREL=$(file_prop ro.build.version.release "$SYSPROP"); ASDK=$(file_prop ro.build.version.sdk "$SYSPROP")
 	DISP=$(file_prop ro.build.display.id "$SYSPROP"); INC=$(file_prop ro.build.version.incremental "$SYSPROP")
@@ -832,16 +844,99 @@ check_rom_ak() {
 		[ "$O_OWN" = 1 ] && close_ro
 	done
 	log "system: release=$AREL sdk=$ASDK display=$DISP incremental=$INC lineage.version=$LV lineage.device=$LD"
+	return 0
+}
+
+# The kernel-only zip (ADDON=none) installs over any Android ROM of this phone: everything it brings is in boot,
+# vendor_boot and dtbo, /vendor is never written. The zips with a /vendor add-on stay LineageOS 24 only.
+check_rom_ak() {
+	if [ "$(conf ADDON)" = vendor ]; then check_rom_ak_addon; else check_rom_ak_any; fi
+}
+
+# check_rom_ak_any: the ROM is only identified, for the printed description (and the backup's info.txt) and for
+# warnings; it never aborts. What protects the phone is checked elsewhere and for every ROM alike: the device
+# (check_device), wrapped keys (check_fstab_ak), image types and vbmeta (snapshot_parts), the first-stage fstab and
+# the OS patch level (build_images), the backup (do_backup_ak). An untested ROM or an older Android can at worst
+# fail to boot, and the restore zip brings the backed-up images back. The conf keys ALLOW_ONEUI9 / ALLOW_ICHTHYS
+# of older zips are accepted and ignored.
+check_rom_ak_any() {
+	tested=0; nwarn=0
+	if rom_props; then
+		if [ -n "$LV" ]; then
+			ROMDESC="LineageOS $LV"
+			case $LV in 24.*) tested=1;; esac
+		else
+			case "$INC $DISP" in
+			ichthys*|*[Ii]chthys*) ROMDESC="IchthysOS ${INC:-$DISP}"; tested=1;;
+			*OneUI9*) ROMDESC="One UI 9 port ${DISP%% *}"; tested=1;;
+			*) ROMDESC=${DISP:-${INC:-unknown build}};;
+			esac
+		fi
+		ui_print "ROM: $ROMDESC (Android ${AREL:-?})"
+		# Android version: the release's major number, else from the SDK level (37 = Android 17)
+		amaj=${AREL%%.*}
+		case $amaj in
+		''|*[!0-9]*) amaj=""; case $ASDK in ''|*[!0-9]*) ;; *) amaj=$((ASDK - 20));; esac;;
+		esac
+		if [ -z "$amaj" ]; then
+			warn "cannot tell this ROM's Android version: this kernel was tested with Android 17 only."; nwarn=1
+		elif [ "$amaj" -lt 17 ]; then
+			warn "Android $AREL is older than Android 17: this kernel is untested there and may not boot."; nwarn=1
+		elif [ "$amaj" -gt 17 ]; then
+			warn "Android $AREL is newer than Android 17: this kernel is untested there."; nwarn=1
+		fi
+	else
+		case $ROM_ERR in
+		nosys) why="no system partition is mapped";;
+		nomount) why="system cannot be mounted in this recovery";;
+		*) why="no build.prop on the system partition";;
+		esac
+		ROMDESC="unknown ($why)"
+		ui_print "ROM: $ROMDESC"
+		warn "the installed ROM could not be identified ($why)."; nwarn=1
+	fi
+	if [ "$tested" = 0 ]; then
+		warn "this kernel was never tested with this ROM."
+		ui_print "  Tested: LineageOS 24, IchthysOS, K4_UN1CA One UI 9 port."; nwarn=1
+	fi
+	# the vendor: only looked at, never written. The kernel expects the stock-derived a52sxq vendor.
+	VD=$(dyn_dev vendor)
+	if [ -n "$VD" ] && open_ro "$VD" vendor; then
+		vd=$(file_prop ro.product.vendor.device "$O_MP/build.prop")
+		log "vendor: device=$vd release=$(file_prop ro.vendor.build.version.release "$O_MP/build.prop") sdk=$(file_prop ro.vendor.build.version.sdk "$O_MP/build.prop")"
+		[ "$O_OWN" = 1 ] && close_ro
+		case $vd in
+		a52sxq*) ;;
+		'') log "vendor: no ro.product.vendor.device";;
+		*) warn "the vendor partition is made for '$vd', not a52sxq: this kernel needs the a52sxq vendor."; nwarn=1;;
+		esac
+	else
+		log "vendor not readable: not looked at"
+	fi
+	[ "$nwarn" = 0 ] || ui_print "  Installing anyway: if the phone does not boot, flash the restore zip (a backup is taken first)."
+}
+
+# check_rom_ak_addon: zips that install the /vendor add-on (ADDON=vendor): LineageOS 24 based ROMs only
+check_rom_ak_addon() {
+	if ! rom_props; then
+		case $ROM_ERR in
+		nosys) abort "no system partition (/dev/block/mapper/system)" \
+			"This zip installs a /vendor add-on made for LineageOS 24 based ROMs.";;
+		nomount) abort "cannot mount system read-only to check the ROM" \
+			"Mount System in the recovery (Mount menu) and flash again.";;
+		*) abort "no build.prop on the system partition" "Is a ROM installed?";;
+		esac
+	fi
 	case "$AREL:$ASDK" in
 	17:*|17.*:*|*:37) ;;
 	*) abort "the installed ROM is Android ${AREL:-?} (SDK ${ASDK:-?}), not Android 17" \
-		"This kernel is for Android 17 ROMs based on LineageOS 24.";;
+		"This zip installs a /vendor add-on made for LineageOS 24 based ROMs (Android 17).";;
 	esac
 	[ -n "$LV" ] || [ "$LD" = a52sxq ] || abort "the installed ROM is not LineageOS-based (no ro.lineage.version, no ro.lineage.device=a52sxq): ${DISP:-unknown}" \
-		"This kernel needs a LineageOS 24 based ROM with the LineageOS a52sxq vendor."
+		"This zip installs a /vendor add-on made for the LineageOS a52sxq vendor. Use the kernel-only zip for other ROMs."
 	case $LV in
 	''|24.*) ;;
-	*) abort "LineageOS $LV is not LineageOS 24" "This kernel is for LineageOS 24 (Android 17) and its derivatives.";;
+	*) abort "LineageOS $LV is not LineageOS 24" "This zip installs a /vendor add-on made for LineageOS 24 based ROMs (Android 17).";;
 	esac
 	# the vendor the add-on is made for: LineageOS's a52sxq vendor (Android 17)
 	VD=$(dyn_dev vendor)
@@ -870,14 +965,14 @@ check_rom_ak() {
 	[ "$O_OWN" = 1 ] && close_ro
 	log "vendor: a52sxq=$vdev release=$VREL sdk=$VSDK missing=$vmiss replaced=${VREPL_KB}K"
 	[ "$vdev" = 1 ] || abort "the vendor partition is not an a52sxq vendor (ro.product.vendor.device)" \
-		"This kernel needs the LineageOS a52sxq vendor."
+		"The /vendor add-on of this zip needs the LineageOS a52sxq vendor."
 	case "$VREL:$VSDK" in
 	17:*|17.*:*|*:37) ;;
 	*) abort "the vendor partition is Android ${VREL:-?} (SDK ${VSDK:-?}), not Android 17" \
-		"This kernel needs the LineageOS 24 a52sxq vendor.";;
+		"The /vendor add-on of this zip needs the LineageOS 24 a52sxq vendor.";;
 	esac
 	[ -z "$vmiss" ] || abort "the vendor partition lacks what the 6.12 add-on needs:$vmiss" \
-		"This kernel needs the LineageOS a52sxq vendor."
+		"The /vendor add-on of this zip needs the LineageOS a52sxq vendor."
 	if [ -n "$LV" ]; then ROMDESC="LineageOS $LV"; else ROMDESC="LineageOS-based ${DISP:-?} ${INC:-}"; fi
 	ui_print "ROM: $ROMDESC (Android $AREL), a52sxq vendor (Android $VREL)"
 }
@@ -907,14 +1002,14 @@ snapshot_parts() {
 	KVER=$(kv kernel_version "$W/old/boot.info")
 	CUR_A52=$(kv a52 "$W/old/boot.info")
 	ui_print "Current kernel: ${KVER:-unknown (compressed)}"
-	# boot images are changed: AVB verification must be off in vbmeta (LineageOS: flags 3)
+	# boot images are changed: AVB verification must be off in vbmeta (custom ROMs: flags 2 or 3)
 	VBM=$(find_part vbmeta)
 	[ -n "$VBM" ] || abort "no vbmeta partition"
 	ak_run "vbmeta" "$W/vbmeta.info" info "$VBM"
 	vf=$(kv flags "$W/vbmeta.info")
 	[ "$(kv type "$W/vbmeta.info")" = vbmeta ] && [ -n "$vf" ] && [ $((vf & 2)) = 2 ] ||
 		abort "AVB verification is enabled in vbmeta (flags ${vf:-?}): a changed boot image would not boot" \
-			"This kernel needs a ROM installed with verification disabled (LineageOS: flags 3)."
+			"This kernel needs a ROM installed with verification disabled in vbmeta (as custom ROMs are)."
 }
 
 build_images() {
@@ -927,6 +1022,11 @@ build_images() {
 		"$K/vendor-cmdline.txt" "$K/vendor-ramdisk-a52.cpio.lz4" "$N/vendor_boot.img"
 	ak_run "new dtbo image" "$W/mk-dtbo.out" mkdtbo "$W/old/dtbo.img" "$K/dtbo.raw" "$N/dtbo.img"
 	ak_run "bootloader load size" "$W/budget.out" budget "$N/boot.img" "$N/vendor_boot.img"
+	ak_run "the new boot image" "$W/new-boot.info" info "$N/boot.img"
+	OPL=$(kv os_patch_level "$W/old/boot.info"); NPL=$(kv os_patch_level "$W/new-boot.info")
+	[ -n "$OPL" ] && [ "$OPL" = "$NPL" ] || abort "the new boot image would change the OS patch level ($OPL -> ${NPL:-?})" \
+		"Keymaster binds keys to it: nothing was written."
+	log "boot os_patch_level kept: $OPL"
 	NKV=$(kv kernel_version "$W/mk-boot.out")
 	[ "$NKV" = "$(conf KREL)" ] || abort "the new boot image has kernel '$NKV', expected '$(conf KREL)'"
 	case $(kv rom_fstab "$W/mk-vendor_boot.out") in
@@ -1238,7 +1338,7 @@ fi
 echo $$ > "$LOCK/pid"
 : > "$LOG"
 log "a52s-k612 update-binary: api=$1 outfd=$OUTFD zip=$ZIPFILE testmode=$TESTMODE"
-ui_print "Galaxy A52s 5G (SM-A528B) - Linux 6.12 kernel for LineageOS 24"
+ui_print "Galaxy A52s 5G (SM-A528B) - Linux 6.12 kernel"
 [ -n "$ZIPFILE" ] && [ -r "$ZIPFILE" ] || abort "cannot read the zip ($ZIPFILE)"
 
 check_device
@@ -1293,8 +1393,8 @@ ak)
 	ui_print "Done. Reboot to system: the first boot takes about 25 s to the lock screen."
 	ui_print "Rollback: flash the restore zip (it writes the backup back), or your ROM's own images.";;
 akrestore)
-	ui_print "Done. Reboot to system: the ROM's own kernel images are back.";;
+	ui_print "Done. Reboot to system: your ROM's own kernel is back.";;
 *)
-	ui_print "Done. Reboot to system: the stock LineageOS 5.4 kernel is back.";;
+	ui_print "Done. Reboot to system: your ROM's own kernel is back.";;
 esac
 exit 0

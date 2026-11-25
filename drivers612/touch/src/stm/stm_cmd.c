@@ -1,4 +1,5 @@
 #include "stm_dev.h"
+#include <linux/a52sxq_userspace.h>
 #include "stm_reg.h"
 
 enum {
@@ -548,7 +549,11 @@ static ssize_t ear_detect_enable_store(struct device *dev,
 		return ret;
 
 	if (ts->plat_data->support_ear_detect) {
-		if (ts->plat_data->power_state == SEC_INPUT_STATE_LPM)
+		/*
+		 * a52sxq.userspace=samsung (One UI): the mode as written (Samsung's 5.4 behaviour).
+		 * AOSP userspace: a screen-on write becomes mode 3 (LineageOS/IchthysOS 5.4 behaviour).
+		 */
+		if (a52sxq_userspace_is_samsung() || ts->plat_data->power_state == SEC_INPUT_STATE_LPM)
 			ts->plat_data->ed_enable = value;
 		else
 			ts->plat_data->ed_enable = value != 0 ? 3 : 0;

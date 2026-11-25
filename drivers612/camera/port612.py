@@ -261,6 +261,10 @@ edit("cam_smmu/cam_smmu_api.c", [
     ("\tint32_t hupcf = 1;", "\tint32_t hupcf __maybe_unused = 1;")], must=False)
 # struct kmem_cache is opaque outside mm/ now
 edit("cam_req_mgr/cam_req_mgr_dev.c", [("g_cam_req_mgr_timer_cachep->name", "\"crm_timer\"")], must=False)
+# SOF-freeze watchdog as stock: the LineageOS 5.4 tree (our donor) has 1000 ms, the stock-derived 5.4 tree
+# (kernel_a52sxq_bone techpack/camera/drivers/cam_req_mgr/cam_req_mgr_core.h:16) has 5000 ms (SPEC/05 P1-3).
+edit("cam_req_mgr/cam_req_mgr_core.h", [("#define CAM_REQ_MGR_WATCHDOG_TIMEOUT          1000\n",
+     "#define CAM_REQ_MGR_WATCHDOG_TIMEOUT          5000\n")])
 # kstrtol() is __must_check; keep the behaviour (value untouched on error), add a log
 resub("cam_sensor_module/cam_ois/cam_ois_mcu_stm32g.c", r"^(\t+)(kstrtol\([^;]*\));",
       r'\1if (\2)\n\1\tCAM_ERR(CAM_OIS, "gyro cal: bad number in efs data");', re.M)
@@ -271,6 +275,73 @@ resub("cam_sensor_module/cam_ois/cam_ois_mcu_stm32g.c", r"^(\t+)(kstrtol\([^;]*\
 # Qualcomm's own 6.12 camera-kernel does.
 edit("cam_req_mgr/cam_mem_mgr.c", [("\tif (dmabuf_flag & ION_FLAG_CACHED) {\n\t\tswitch (cmd->mem_cache_ops) {",
      "\tif (1) { /* 6.12: see port612.py */\n\t\tswitch (cmd->mem_cache_ops) {")])
+
+# GPIO request/free balance (2026-11-24, white cable oops after ~25 camera sessions): 6.12 gpiod_free() does
+# module_put(gdev->owner) + gpio_device_put() even for a line that is not requested (5.4 only did it when the
+# line really was freed). The driver frees its whole GPIO table at power-down although a request may have
+# failed: gpio 523 (TLMM 11, CAM_VANA0 of the rear wide sensor = MCU_VANA of the OIS) is requested by both
+# devices, the second request gets -EBUSY (cam_res_mgr reads "sharedgpios", the DT has "shared-gpios": not
+# shared on 5.4 either), both free it -> every camera session leaked one pinctrl_yupik module reference and
+# one gpio_device reference; at 0 every gpio_request returned -EPROBE_DEFER and the error path oopsed.
+# Free only what this driver requested successfully.
+A52_GPIO = r"""
+/* a52sxq 6.12: free only GPIOs this driver requested successfully (see port612.py) */
+#include <linux/moduleparam.h>
+#define A52_GPIO_TRACK_MAX 96
+int cam_a52_gpio_request_one(unsigned int gpio, unsigned long flags, const char *label);
+void cam_a52_gpio_free(unsigned int gpio);
+static DEFINE_MUTEX(a52_gpio_lock);
+static unsigned int a52_gpio_req[A52_GPIO_TRACK_MAX];
+static int a52_gpio_nreq;
+static unsigned int a52_gpio_free_skipped;
+module_param_named(a52_gpio_free_skipped, a52_gpio_free_skipped, uint, 0444);
+module_param_named(a52_gpio_held, a52_gpio_nreq, int, 0444);
+
+int cam_a52_gpio_request_one(unsigned int gpio, unsigned long flags, const char *label)
+{
+	int rc = gpio_request_one(gpio, flags, label);
+
+	if (rc)
+		return rc;
+	mutex_lock(&a52_gpio_lock);
+	if (a52_gpio_nreq < A52_GPIO_TRACK_MAX)
+		a52_gpio_req[a52_gpio_nreq++] = gpio;
+	else
+		pr_warn_once("a52sxq-camera: gpio track table full, gpio %u stays requested\n", gpio);
+	mutex_unlock(&a52_gpio_lock);
+	return 0;
+}
+
+void cam_a52_gpio_free(unsigned int gpio)
+{
+	bool found = false;
+	int i;
+
+	mutex_lock(&a52_gpio_lock);
+	for (i = 0; i < a52_gpio_nreq; i++) {
+		if (a52_gpio_req[i] == gpio) {
+			a52_gpio_req[i] = a52_gpio_req[--a52_gpio_nreq];
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		a52_gpio_free_skipped++;
+	mutex_unlock(&a52_gpio_lock);
+	if (found)
+		(gpio_free)(gpio);	/* parenthesised: the edit below replaces the plain call text */
+	else
+		pr_info_once("a52sxq-camera: gpio %u not requested by the camera driver (request failed or freed twice): not freed\n", gpio);
+}
+
+"""
+edit("cam_sensor_module/cam_res_mgr/cam_res_mgr.c", [
+    ("int cam_res_mgr_gpio_request(struct device *dev, uint gpio,", A52_GPIO + "int cam_res_mgr_gpio_request(struct device *dev, uint gpio,"),
+    ("\t\trc = gpio_request_one(gpio, flags, label);", "\t\trc = cam_a52_gpio_request_one(gpio, flags, label);"),
+    ("\t\tgpio_free(gpio);", "\t\tcam_a52_gpio_free(gpio);")])
+edit("cam_utils/cam_soc_util.c", [
+    ("\t\t\trc = gpio_request_one(gpio_tbl[i].gpio,", "\t\t\textern int cam_a52_gpio_request_one(unsigned int gpio, unsigned long flags, const char *label);\n\t\t\trc = cam_a52_gpio_request_one(gpio_tbl[i].gpio,"),
+    ("\t\tgpio_free_array(gpio_tbl, size);", "\t\textern void cam_a52_gpio_free(unsigned int gpio);\n\t\tfor (i = size - 1; i >= 0; i--)\n\t\t\tcam_a52_gpio_free(gpio_tbl[i].gpio);")])
 
 open(os.path.join(root, "camera_main.c"), "a").write(
     "\nMODULE_IMPORT_NS(DMA_BUF);\n")

@@ -17,11 +17,26 @@ sec_cfg := \
 	-DCONFIG_SAMSUNG_PRODUCT_SHIP=1 \
 	-DCONFIG_QGKI=1
 
-# Optional: charger (VBUS) state to the touch IC, as on 5.4 (CONFIG_VBUS_NOTIFIER=y there).
-# Needs vbus_notifier.ko from drivers612/power: build with  VBUS=1 ./build.sh
+# Charger (VBUS) state to the touch IC, as on 5.4 (CONFIG_VBUS_NOTIFIER=y there): DEFAULT ON since
+# 2026-11-24 (SPEC/01 gap 5: no shipped stm_ts.ko had stm_ts_vbus_notification). Only stm_ts.ko is
+# built with it (its private struct; sec_common_fn's own vbus path needs the DT flag
+# support_vbus_notifier, which this phone does not set, and stays off). stm_ts.ko does NOT depend on
+# vbus_notifier.ko: it binds late with symbol_get(a52sxq_vbus_notifier_register) (stm_core.c), so the
+# load order and modules.dep stay as they were. SEC_INPUT_VBUS=0 builds the old module without it.
+SEC_INPUT_VBUS ?= 1
+SEC_INPUT_VBUS_INC ?= $(src)/../../power/include
 ifeq ($(SEC_INPUT_VBUS),1)
-sec_cfg += -DCONFIG_VBUS_NOTIFIER=1 -I$(SEC_INPUT_VBUS_INC)
+stm_vbus_cfg := -DCONFIG_VBUS_NOTIFIER=1 -I$(SEC_INPUT_VBUS_INC)
+CFLAGS_stm/stm_i2c.o += $(stm_vbus_cfg)
+CFLAGS_stm/stm_core.o += $(stm_vbus_cfg)
+CFLAGS_stm/stm_fn.o += $(stm_vbus_cfg)
+CFLAGS_stm/stm_fw.o += $(stm_vbus_cfg)
+CFLAGS_stm/stm_dump.o += $(stm_vbus_cfg)
+CFLAGS_stm/stm_cmd.o += $(stm_vbus_cfg)
 endif
+
+# a52sxq.userspace switch (soft binding, no dependency on a52sxq.ko): <linux/a52sxq_userspace.h>
+sec_cfg += -I$(src)/../../samsung-oneui/a52sxq_core/include
 
 ccflags-y += $(sec_cfg) -I$(src)/include -I$(src) -Wformat
 

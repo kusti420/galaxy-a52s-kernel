@@ -1,0 +1,20 @@
+new sec-battery.ko 685088 bytes sha256 21a918f9b34caab2 vermagic 6.12.81-4k-g8a69376da734 SMP preempt mod_unload modversions aarch64
+  shipped ./drivers612/realboot/out/rbou5d/work/vr/lib/modules/sec-battery.ko sha256 f1f2e4294cee0b08
+  export CRCs: 79 identical
+  import list differs:
+    51a52
+    > 0x6affad5a	of_chosen
+    57a59
+    > 0x719e716c	strstr
+  modinfo identical (depends=sec_pd,sb-core,usb_typec_manager,vbus_notifier,common_muic)
+new sm5714_fuelgauge.ko 148424 bytes sha256 e2b6c0df740da4f6 vermagic 6.12.81-4k-g8a69376da734 SMP preempt mod_unload modversions aarch64
+  shipped ./drivers612/realboot/out/rbou5d/work/vr/lib/modules/sm5714_fuelgauge.ko sha256 182e132c7f7ee670
+  export CRCs: 0 identical
+  import list differs:
+    23a24
+    > 0x56e198b3	of_property_read_string
+    28a30
+    > 0x6affad5a	of_chosen
+    29a32
+    > 0x719e716c	strstr
+  modinfo identical (depends=mfd_sm5714,sec-battery)

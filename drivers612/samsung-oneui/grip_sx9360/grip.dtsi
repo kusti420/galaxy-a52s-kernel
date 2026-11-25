@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * a52sxq grip (SAR proximity) sensor, Semtech SX9360 on an i2c-gpio bus, for the 6.12 board overlay.
+ *
+ * Values: verbatim from the phone's 5.4 tree (downstream-dt/a52sxq-r02.dts, /soc/i2c@17 and
+ * pinctrl grip_int_active / grip_i2c_active), on 6.12 labels (&soc, &tlmm). There are NO regulators
+ * on this sensor: VDD is switched by TLMM GPIO 104 ("sx9360,vdd_en", driven by the driver), so no
+ * voltage is set anywhere.
+ *
+ * drivers612/boarddt/a52sxq-sensors.dtsi + a52sxq-pinctrl.dtsi already carry the same node and pins
+ * (generated from the stock dtbo), and the rbich45 vendor_boot.dtb has them: merging this fragment
+ * is idempotent (fdtoverlay-checked, see README). The only additions are the real "#address-cells" /
+ * "#size-cells" next to Samsung's misspelt "address-cells" / "size-cells" (kept): child "reg" is
+ * read as one u32 by of_i2c_get_board_info() either way, the "#" pair only makes the binding valid.
+ *
+ * Needs: i2c-algo-bit.ko + i2c-gpio.ko (bus) and sx9360.ko, after adsp_factory_dlkm.ko (README).
+ */
+
+&soc {
+	i2c_17: i2c@17 {
+		status = "ok";
+		cell-index = <0x11>;
+		compatible = "i2c-gpio";
+		gpios = <&tlmm 0x8 0x0 &tlmm 0x9 0x0>;		/* SDA gpio8, SCL gpio9 */
+		i2c-gpio,delay-us = <0x2>;
+		address-cells = <0x1>;
+		size-cells = <0x0>;
+		#address-cells = <0x1>;
+		#size-cells = <0x0>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&grip_i2c_active>;
+
+		sx9360-i2c@28 {
+			compatible = "sx9360";
+			reg = <0x28>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&grip_int_active>;
+			interrupt-parent = <&tlmm>;
+			interrupts = <0x7 0x0>;
+			sx9360,nirq-gpio = <&tlmm 0x7 0x0>;
+			sx9360,vdd_en = <&tlmm 0x68 0x0>;		/* gpio104 */
+			sx9360,reggnrlctrl2_reg = <0x32>;
+			sx9360,againfreq_reg = <0x38>;
+			sx9360,refagainfreq_reg = <0x36>;
+			sx9360,gainrawfilt_reg = <0x1a>;
+			sx9360,refgainrawfilt_reg = <0x22>;
+			sx9360,proxthresh_reg = <0x22>;
+			sx9360,hyst_reg = <0x15>;
+			sx9360,regproxctrl3_reg = <0xc>;
+			sx9360,resolution_reg = <0xf>;
+			sx9360,refresolution_reg = <0xf>;
+		};
+	};
+};
+
+&tlmm {
+	grip_i2c {
+		grip_i2c_active: grip_i2c_active {
+			mux {
+				pins = "gpio8", "gpio9";
+				function = "gpio";
+			};
+
+			config {
+				pins = "gpio8", "gpio9";
+				drive-strength = <0x2>;
+				bias-disable;
+			};
+		};
+	};
+
+	grip_int_active: grip_int_active {
+		mux {
+			pins = "gpio7";
+			function = "gpio";
+		};
+
+		config {
+			pins = "gpio7";
+			drive-strength = <0x2>;
+			bias-disable;
+		};
+	};
+};

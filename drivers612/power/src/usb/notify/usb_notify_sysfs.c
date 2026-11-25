@@ -10,6 +10,7 @@
 
 #define pr_fmt(fmt) "usb_notify: " fmt
 
+#include "a52_usb_lockrestrict.h"
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
@@ -218,9 +219,9 @@ static ssize_t disable_store(
 			ret = param;
 		} else {
 			if (param != -EEXIST) {
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
+	if (a52_usb_lockrestrict()) {	/* a52sxq.userspace=samsung: stock lock-screen USB restriction */
 				udev->first_restrict = false;
-#endif
+	}
 				udev->set_disable(udev, param);
 			}
 			strncpy(udev->disable_state_cmd,
@@ -879,8 +880,7 @@ static ssize_t whitelist_for_mdm_store(
 	if (sret != 1)
 		goto error1;
 
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
-	if (!strncmp(buf, "VPID:", ALLOWLIST_PREFIX_SIZE)) {
+	if (a52_usb_lockrestrict() && !strncmp(buf, "VPID:", ALLOWLIST_PREFIX_SIZE)) {
 
 		pr_info("allowlist_for_mdm_store VID, PID buf=%s\n", disable);	
 
@@ -905,7 +905,6 @@ static ssize_t whitelist_for_mdm_store(
 
 		pr_info("%s vpid allowlist update done!\n", __func__);
 	} else {
-#endif
 		pr_info("allowlist_for_mdm_store interface buf=%s\n", disable);	
 
 		/* To active displayport, hub class must be enabled */
@@ -941,9 +940,7 @@ static ssize_t whitelist_for_mdm_store(
 			pr_err("set_mdm func is NULL\n");
 			ret = -EINVAL;
 		}
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
 	}
-#endif
 error1:
 	kfree(disable);
 error:
@@ -1065,7 +1062,6 @@ err:
 }
 EXPORT_SYMBOL_GPL(usb_notify_dev_uevent);
 
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
 static const char *lock_string(enum usb_lock_state lock_state)
 {
 	switch (lock_state) {
@@ -1081,7 +1077,6 @@ static const char *lock_string(enum usb_lock_state lock_state)
 		return "undefined";
 	}
 }
-#endif
 
 static const char *const LOCK_STATE_NAMES[] = {
     "SUNNY_WORK_MODE",     // 0: USB_NOTIFY_UNLOCK
@@ -1107,13 +1102,13 @@ static ssize_t usb_sl_show(struct device *dev,
 
 	state = LOCK_STATE_NAMES[udev->secure_lock % TOTAL_STATES];
 
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
+	if (a52_usb_lockrestrict()) {	/* a52sxq.userspace=samsung: stock lock-screen USB restriction */
     pr_info("%s %s (secure_lock = %s(%lu))\n",
              __func__, state, lock_string(udev->secure_lock), udev->secure_lock);
-#else
+	} else {	/* aosp: as before */
     pr_info("%s %s secure_lock = %lu\n",
              __func__, state, udev->secure_lock);
-#endif
+	}
 
     return snprintf(buf, PAGE_SIZE, "%s\n", state);
 }
@@ -1126,9 +1121,7 @@ static ssize_t usb_sl_store(
 	struct usb_notify_dev *udev = (struct usb_notify_dev *)
 		dev_get_drvdata(dev);
 	unsigned long secure_lock = 0;
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
 	unsigned long prev_secure_lock = 0;
-#endif
 	int sret = -EINVAL;
 	size_t ret = -ENOMEM;
 	char input_str[25];
@@ -1143,13 +1136,13 @@ static ssize_t usb_sl_store(
 		goto error;
 	}
 
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
+	if (a52_usb_lockrestrict()) {	/* a52sxq.userspace=samsung: stock lock-screen USB restriction */
 	pr_info("%s before secure_lock = %s first_restrict = %d +\n",
 		__func__, lock_string(udev->secure_lock), udev->first_restrict);
-#else
+	} else {	/* aosp: as before */
 	pr_info("%s before secure_lock = %lu +\n",
 		__func__, udev->secure_lock);
-#endif
+	}
 
 	sret = sscanf(buf, "%24s", input_str);
 	if (sret != 1) {
@@ -1164,18 +1157,22 @@ static ssize_t usb_sl_store(
 			break;
 		}
 	}
+	if (secure_lock == ~0UL && a52_usb_lockrestrict()) {
+		unsigned long val;	/* stock 5.4 (bone 5d4ab0b2b): integers of older frameworks */
+
+		if (!kstrtoul(input_str, 10, &val) && val < VALID_INPUT_CNT)
+			secure_lock = val;
+	}
 	if (secure_lock == ~0UL) {
 		pr_err("%s disallow input (%s)-\n", __func__, input_str);
 		goto error;
 	}
 
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
 	prev_secure_lock = udev->secure_lock;
-#endif
 	udev->secure_lock = secure_lock;
 	udev->set_lock_state(udev);
 
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
+	if (a52_usb_lockrestrict()) {	/* a52sxq.userspace=samsung: stock lock-screen USB restriction */
 	if (prev_secure_lock == USB_NOTIFY_INIT_STATE
 			&& secure_lock == USB_NOTIFY_LOCK_USB_RESTRICT) {
 		if (udev->set_disable) {
@@ -1193,10 +1190,10 @@ static ssize_t usb_sl_store(
 
 	pr_info("%s after secure_lock = %s -\n",
 		__func__, lock_string(udev->secure_lock));
-#else
+	} else {	/* aosp: as before */
 	pr_info("%s after secure_lock = %lu -\n",
 		__func__, udev->secure_lock);
-#endif
+	}
 	ret = size;
 
 error:
@@ -1266,9 +1263,7 @@ int usb_notify_dev_register(struct usb_notify_dev *udev)
 			return ret;
 	}
 
-#ifndef CONFIG_DISABLE_LOCKSCREEN_USB_RESTRICTION
 	mutex_init(&udev->lockscreen_enabled_lock);
-#endif
 
 	udev->index = atomic_inc_return(&usb_notify_data.device_count);
 	udev->dev = device_create(usb_notify_data.usb_notify_class, NULL,

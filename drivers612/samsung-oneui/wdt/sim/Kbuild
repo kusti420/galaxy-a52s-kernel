@@ -1,0 +1,4 @@
+# QEMU-only backend for qcom_wdt_core: models the hypervisor watchdog (armed flag, bark time, time since pet). Never shipped.
+obj-m := a52_wdt_sim.o
+A52_SOC := $(src)/../../../../bsp612/soc-repo
+LINUXINCLUDE := -I$(A52_SOC)/include -I$(A52_SOC)/include/uapi -I$(A52_SOC)/include/linux $(LINUXINCLUDE)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds the REAL boot path for a daily-driven LineageOS 24 (Android 17) on the Qualcomm 6.12
+# Builds the REAL boot path for a daily-driven Android 17 ROM (LineageOS, IchthysOS, the One UI 9 port) on the Qualcomm 6.12
 # kernel or on the 6.18 port (ACK android17-6.18 + the forward-ported BSP), for test phone 2
 # (PHONE2, LineageOS, bit-2 bootloader). BUILDS ONLY: nothing is flashed, no phone is
 # touched. README.md has the install plan, CHECKLIST.md what hardware must still prove.
@@ -114,7 +114,19 @@
 #   BTSLIM=1          (6.12 default since 2026-11-19; 0 = off) slimbus + slim-qcom-ngd-ctrl + bt_fm_slim in the first stage after stage wlanb
 #                     (Bluetooth audio over SLIMbus; modules only, see the comment at the option)
 #   WDT=1 QRNG=1 HALL=1 VOLKEY=1 BWCOMPAT=1 ADSPFAC=1 THERMAL_X="adctm secth qmi bclmap"
+#   ADSPFAC_KO=<file>  (default drivers612/sensors-factory/adsp_factory_dlkm.ko) the adsp_factory build ADSPFAC=1 installs
 #                     (2026-11-19, all default off until proven) parity items: see the comments at the options
+#   SOCSTATS=1 NTFS3=1 USBACC=1 ZRAM_LZ4=1 (2026-11-24, default off) qcom_stats / ntfs3 / USB Ethernet set in the first
+#                     stage, zram.ko with lz4 as the default compressor: see the comments at the options
+#   USERSPACE=samsung|aosp (default auto = nothing on the cmdline) a52sxq.userspace= on the vendor cmdline (a52sxq.ko)
+#   A52SXQ_FIRST=1    (default 0 = the REF's position) a52sxq.ko (userspace switch, no depends) moved to line 1 of
+#                     modules.load; nothing else changes order. The switch-order gate (tools/us-order-check.py) runs always.
+#   WALT=1            (default 0 = no change) cpufreq governor walt + the 5.4 post_boot governor tunables
+#                     (vendor-addon/a52sxq-walt.conf, SPEC/08): ADDON=vendor_boot: appended to a52sxq_dsp_boot's
+#                     built-in table (applied at the WALT boost release, probe + 45 s) + a 300 s guard that puts walt
+#                     back if the ROM's post_boot wrote schedutil after it; /proc/sys/walt stays at the WALT
+#                     defaults (not writable from init or the table; measured equal); ADDON=vendor: rc fragment
+#                     a52sxq-walt.rc.in on vendor.post_boot.parsed (switch persist.vendor.a52sxq.walt_gov)
 #   HOLD_MS=<ms>      (default unset = the module's 4000) a52sxq_dsp_boot hold_release_ms: ms after adsp_running until the
 #                     held audio tree is released (boot time: the sound card and audioserver come up that much later)
 #   ASYNC_MODS="m ..." (default none) async_probe=1 for these first-stage modules (boot time)
@@ -132,6 +144,10 @@
 #   ICE_RAW=1         (default 0; REF >= s99i) /data encryption in the ICE for standard keys (no blk-crypto-fallback)
 #   LPM=1             (default 0) cpuidle governor qcom-cpu-lpm (WALT busy hysteresis, as 5.4 lpm-levels): see the option
 #   GPU_BUSY_UP=<pct> (default unset; REF >= s97) adreno_tz governor steps up one level when >= pct busy (b5)
+#   KSU_BUILTIN=1     (default 0; SUSFS=1 is the same switch; 6.12 + DIAG=1 only) the OneUI 9 Image variant with
+#                     ReSukiSU 8770c7e3 BUILT IN + SUSFS v2.3.0 (modules/resukisu/build-susfs-image.sh ->
+#                     bsp612/out/susfs/Image, same release and export CRCs, with a52bc). IMAGE defaults to it.
+#                     Excludes KSU=1: no /ksuinit, no kernelsu.ko, no rdinit= (see modules/resukisu/SUSFS.md)
 #   KSU=1             (default 0) KernelSU-Next LKM: /ksuinit + /kernelsu.ko in the vendor ramdisk, rdinit=/ksuinit
 #                     (KSU_DIR=<dir> default modules/kernelsu/out); see the comment at the option
 #   USBAUDIO=1        (default 0) snd-usb-audio-qmi in the first stage after stage wlanb (USB audio offload)
@@ -197,6 +213,12 @@ else
 	MODEM_PACK_DEF=$TOP/drivers612/modem/out-618/pack-modem-618-txfix.tgz   # kx-m2k618 pack + 6.18 ipam with 0002
 	MODEM_DRB_DEF=$BSP/src/drivers612/conn/rild/drb/dev_ril_bridge.ko         # bsp618 port build (stripped below)
 	MODEM_TESTED_DTB2_DEF=$TOP/logs/kx-m2k618-p1-p1-194536/kexec.dtb          # the 6.18 modem run (modem up, no data call)
+fi
+KSU_BUILTIN=${KSU_BUILTIN:-${SUSFS:-0}}; case "$KSU_BUILTIN" in 0|1) ;; *) echo "KSU_BUILTIN=0|1" >&2; exit 2;; esac
+if [ "$KSU_BUILTIN" = 1 ]; then
+	[ "$KSER" = 612 ] && [ "${DIAG:-0}" = 1 ] || { echo "KSU_BUILTIN=1 needs KERNEL=612 DIAG=1 (the variant is an a52bc Image)" >&2; exit 2; }
+	[ "${KSU:-0}" = 0 ] || { echo "KSU_BUILTIN=1 excludes KSU=1 (KernelSU is in the Image: no /ksuinit, no kernelsu.ko)" >&2; exit 2; }
+	IMAGE=${IMAGE:-$BSP/out/susfs/Image}
 fi
 DIAG=${DIAG:-0}
 DEBUG=${DEBUG:-0}; case "$DEBUG" in 0|1) ;; *) echo "DEBUG=0|1" >&2; exit 2;; esac
@@ -265,9 +287,16 @@ grep -q '^vendor boot image header version: 3$' "$W/vb.info" || fail "vendor_boo
 OSV=$(sed -n 's/^os version: //p' "$W/b.info"); OSP=$(sed -n 's/^os patch level: //p' "$W/b.info")
 [ -n "$OSV" ] && [ -n "$OSP" ] || fail "no os version/patch level in boot.img"
 STOCK_VC=$(sed -n 's/^vendor command line args: //p' "$W/vb.info"); printf '%s\n' "$STOCK_VC" > "$W/stock-vendor-cmdline.txt"
-[ -z "$(sed -n 's/^command line args: //p' "$W/b.info")" ] || fail "boot.img has a cmdline (script assumes the ROM's empty one)"
+# A boot.img cmdline (OneUI 9 port: Samsung-style images carry the stock 5.4 words there too) is DROPPED (2026-11-22):
+# the ABL builds the v3 cmdline as vendor_boot cmdline + " " + boot cmdline (donors/abl-edk2 QcomModulePkg/Library/
+# BootLib/BootLinux.c CatCmdLine), so the ROM's 5.4 words would come AFTER ours and win (the one-entry firmware search
+# path, swiotlb=0, lpm_levels, video=vfb...). Our boot.img always has an empty one (mkbootimg --cmdline ''), as on every
+# LineageOS/IchthysOS boot; a52boot mkboot blanks it the same way; the OS version / patch level are kept.
+BOOT_CMDLINE=$(sed -n 's/^command line args: //p' "$W/b.info")
+if [ -n "$BOOT_CMDLINE" ]; then printf '%s\n' "$BOOT_CMDLINE" > "$W/rom-boot-cmdline.txt"
+	say "boot.img of the ROM has a cmdline ($(echo "$BOOT_CMDLINE" | wc -w) words): DROPPED in our boot.img (the ABL appends it after the vendor cmdline, it would override our words): $W/rom-boot-cmdline.txt"; fi
 VB_ARGS=$(sed -e "s/--vendor_cmdline '[^']*'//" -e 's/--dtb [^ ]*//' -e 's/--vendor_ramdisk [^ ]*//' "$W/vb.args")
-say "boot: header v3, os $OSV / $OSP, cmdline empty; vendor_boot: $VB_ARGS"
+say "boot: header v3, os $OSV / $OSP, cmdline $([ -n "$BOOT_CMDLINE" ] && echo dropped || echo empty); vendor_boot: $VB_ARGS"
 # control: the packer arguments must rebuild the ROM's own images bit for bit
 eval mkbootimg $(cat "$W/b.args") -o "$W/ctl-boot.img"
 eval mkbootimg $(cat "$W/vb.args") --vendor_boot "$W/ctl-vendor_boot.img"
@@ -279,17 +308,52 @@ avbtool info_image --image "$DUMP/vbmeta.img" > "$W/vbmeta.info" 2>/dev/null || 
 VBF=$(sed -n 's/^Flags: *//p' "$W/vbmeta.info" | head -1)
 say "vbmeta flags: ${VBF:-unknown} (3 = verification + hashtree disabled: boot/vendor_boot/dtbo digests are not checked)"
 [ "$VBF" = 3 ] || blocker "vbmeta flags are not 3: new boot/vendor_boot/dtbo would need a new vbmeta"
-footer() {   # <part> <img> <size>: unsigned hash footer with the ROM's salt and props
+# Zero padding between the image content and its AVB footer, as the ROM has it (OneUI 9 port: UN1CA leaves 16 zero
+# bytes after boot.img because this ABL refuses an image whose vbmeta follows the content directly): content size =
+# the control repack (boot, vendor_boot) or the dt_table total_size (dtbo); pad = "Original image size" - content.
+declare -A AVBPAD
+for p in boot vendor_boot dtbo; do
+	case $p in boot|vendor_boot) c=$(stat -c %s "$W/ctl-$p.img");; dtbo) c=$(od -An -tu4 --endian=big -j4 -N4 "$DUMP/dtbo.img" | tr -d ' ');; esac
+	o=$(avbtool info_image --image "$DUMP/$p.img" | sed -n 's/^Original image size: *\([0-9]*\) bytes/\1/p')
+	pad=$(( o - c )); [ "$pad" -ge 0 ] && [ "$pad" -lt 4096 ] || fail "$p: AVB original size $o vs content $c"
+	python3 -I -c 'import sys; d=open(sys.argv[1],"rb").read(int(sys.argv[2])+int(sys.argv[3])); sys.exit(0 if not any(d[int(sys.argv[2]):]) else 1)' "$DUMP/$p.img" "$c" "$pad" || fail "$p: bytes between content and footer are not zero"
+	AVBPAD[$p]=$pad; [ "$pad" = 0 ] || say "$p: the ROM image has $pad zero bytes before its AVB footer: ours get the same"
+done
+footer() {   # <part> <img> <size>: hash footer with the ROM's salt, props, padding (and key, if the ROM's is signed)
 	local p=$1 img=$2 size=$3 info salt props=()
 	info=$(avbtool info_image --image "$DUMP/$p.img")
-	echo "$info" | grep -q 'Algorithm: *NONE' || fail "$p dump footer is signed: not handled"
+	[ "${AVBPAD[$p]:-0}" = 0 ] || truncate -s +"${AVBPAD[$p]}" "$img"
+	local sign=()
+	if ! echo "$info" | grep -q 'Algorithm: *NONE'; then
+		# signed ROM footer (OneUI 9 port: UN1CA signs boot/vendor_boot/dtbo with AOSP's public testkey_rsa4096): sign
+		# ours the same way, only if the dump's public key IS that key (AVB_KEY=<pem> to name another)
+		echo "$info" | grep -q 'Algorithm: *SHA256_RSA4096' || fail "$p dump footer: unknown algorithm"
+		local key=${AVB_KEY:-$HOME/git/MonsterROM/security/avb/testkey_rsa4096.pem}
+		[ -f "$key" ] || fail "$p dump footer is signed and no AVB key: set AVB_KEY"
+		avbtool extract_public_key --key "$key" --output "$W/avbkey.pub"
+		python3 -I - "$DUMP/$p.img" "$W/avbkey.pub" <<'PYEOF' || fail "$p dump footer is not signed with $key"
+import sys, struct
+d = open(sys.argv[1], 'rb').read(); pub = open(sys.argv[2], 'rb').read()
+f = d[-64:]; assert f[:4] == b'AVBf'
+vb_off, vb_size = struct.unpack('>QQ', f[20:36]); vb = d[vb_off:vb_off + vb_size]
+auth, aux = struct.unpack('>QQ', vb[12:28]); pk_off, pk_size = struct.unpack('>QQ', vb[64:80])
+sys.exit(0 if vb[256 + auth + pk_off:256 + auth + pk_off + pk_size] == pub else 1)
+PYEOF
+		sign=(--algorithm SHA256_RSA4096 --key "$key"); fi
 	salt=$(echo "$info" | sed -n 's/^ *Salt: *//p' | head -1)
 	while IFS= read -r l; do props+=(--prop "$l"); done < <(echo "$info" | sed -n "s/^ *Prop: \(.*\) -> '\(.*\)'$/\1:\2/p")
-	avbtool add_hash_footer --image "$img" --partition_name "$p" --partition_size "$size" --salt "$salt" "${props[@]}"
+	avbtool add_hash_footer --image "$img" --partition_name "$p" --partition_size "$size" --salt "$salt" "${sign[@]}" "${props[@]}"
 }
 cp "$W/ctl-boot.img" "$W/ctl-boot-f.img"; footer boot "$W/ctl-boot-f.img" $BOOT_PART
-cmp -s "$W/ctl-boot-f.img" "$DUMP/boot.img" || fail "control AVB footer of boot.img differs from the dump"
-say "control: ROM boot.img incl. AVB footer rebuilt byte-identical (footer recipe proven)"
+if avbtool info_image --image "$DUMP/boot.img" | grep -q 'Algorithm: *NONE'; then
+	cmp -s "$W/ctl-boot-f.img" "$DUMP/boot.img" || fail "control AVB footer of boot.img differs from the dump"
+	say "control: ROM boot.img incl. AVB footer rebuilt byte-identical (footer recipe proven)"
+else
+	# signed: the signed blob carries avbtool's release string (ROM 1.3.0, ours may differ): compare everything else
+	diff <(avbtool info_image --image "$DUMP/boot.img" | grep -v 'Release String') <(avbtool info_image --image "$W/ctl-boot-f.img" | grep -v 'Release String') > "$W/ctl-footer.diff" || fail "control AVB footer of boot.img differs from the dump ($W/ctl-footer.diff)"
+	cmp -s <(head -c "$(stat -c %s "$W/ctl-boot.img")" "$W/ctl-boot-f.img") <(head -c "$(stat -c %s "$W/ctl-boot.img")" "$DUMP/boot.img") || fail "control boot content differs"
+	say "control: ROM boot.img footer rebuilt equal to the dump (digest, salt, key, props, padding; only the avbtool release string may differ)"
+fi
 
 # ---------------------------------------------------------------- 2. kernel
 say "== 2. kernel"
@@ -323,6 +387,14 @@ if [ "$DIAG_KERNEL" = 1 ]; then
 	[ "$(sha256sum < "$IMAGE" | cut -d' ' -f1)" != "$(sha256sum < "$DIST/Image" | cut -d' ' -f1)" ] || fail "DIAG Image = dist Image"
 	cmp -s <(sed -n 's/^release=//p' "$(dirname "$IMAGE")/BUILDINFO") <(echo "$KREL") || fail "DIAG kernel BUILDINFO release differs"
 	say "DIAG kernel: $IMAGE = dist release + a52bc (breadcrumbs + RAM console); $(grep '^modversion' "$(dirname "$IMAGE")/BUILDINFO")"
+	if [ "$KSU_BUILTIN" = 1 ]; then
+		BI=$(dirname "$IMAGE")/BUILDINFO
+		grep -q ' susfs_init$' "$SYSMAP" && grep -q ' ksu_handle_susfs_cmd$' "$SYSMAP" || fail "KSU_BUILTIN=1 but $IMAGE has no built-in KernelSU + SUSFS (modules/resukisu/build-susfs-image.sh)"
+		grep -q '^modversion CRCs: .* identical' "$BI" || fail "KSU_BUILTIN=1: the variant's export CRCs differ from the GKI build ($(dirname "$IMAGE")/crc-changed.txt): the first-stage modules must be rebuilt against it"
+		say "KSU_BUILTIN=1: $(grep '^variant:' "$BI"); $(grep '^ksu:' "$BI"); $(grep '^susfs:' "$BI"); no rdinit, no kernelsu.ko"
+	else
+		grep -q ' susfs_init$' "$SYSMAP" && fail "$IMAGE has built-in KernelSU + SUSFS: say KSU_BUILTIN=1 (and not KSU=1)"
+	fi
 	# boots the same Image in QEMU and checks every breadcrumb, the RAM console, the warm-reset
 	# attempt counter and the no-reservation gate (kernel-diag/qemu-test.sh, ~40 s); QEMU_TEST=0 skips
 	if [ "${QEMU_TEST:-1}" = 1 ]; then
@@ -350,6 +422,8 @@ if [ "$ADDON" = vendor_boot ]; then
 	# never votes CPU_DMA_LATENCY 0
 	case "${UFS_QOS:-1}" in 0) echo "devices/platform/soc/1d84000.ufshc/pm_qos_enable 0" >> "$W/dspboot/extra.conf";; 1) ;; *) fail "UFS_QOS: 0 or 1";; esac
 	case "${UFS_CLKSCALE:-1}" in 0) echo "devices/platform/soc/1d84000.ufshc/clkscale_enable 0" >> "$W/dspboot/extra.conf";; 1) ;; *) fail "UFS_CLKSCALE: 0 or 1";; esac
+	# WALT=1 (SPEC/08): governor walt + its tunables, last in the table (after the bus DCVS rows)
+	case "${WALT:-0}" in 1) grep -vE '^[[:space:]]*(#|$)' "$HERE/vendor-addon/a52sxq-walt.conf" >> "$W/dspboot/extra.conf";; 0) ;; *) fail "WALT: 0 or 1";; esac
 	python3 -I - "$W/dspboot/a52sxq_tunables.h" "$TOP/drivers612/busdcvs/busdcvs.conf" "$W/dspboot/extra.conf" <<'PYEOF'
 import sys
 rows = []
@@ -362,6 +436,9 @@ for l in [x for f in sys.argv[2:] for x in open(f)]:
 open(sys.argv[1], 'w').write('/* generated by build-realboot.sh from busdcvs.conf */\nstatic const struct a52_tunable a52_tunables[] = {\n' + '\n'.join(rows) + '\n};\n')
 PYEOF
 	echo 'ccflags-y += -DA52_TUNABLES' >> "$W/dspboot/Kbuild"
+	# WALT=1: + the governor guard (re-applies the cpufreq rows for walt_guard_s = 300 s if the ROM's post_boot put schedutil back)
+	if [ "${WALT:-0}" = 1 ]; then python3 -I "$HERE/modules/dspboot/mk-walt-source.py" "$W/dspboot/a52sxq_dsp_boot.c" "$HERE/modules/dspboot/a52sxq_walt_guard.inc" || fail "WALT=1: guard source"
+		say "WALT=1: $(grep -c '/cpufreq/policy' "$W/dspboot/a52sxq_tunables.h") cpufreq rows (governor walt + tunables) at the end of the table + 300 s governor guard"; fi
 	say "ADDON=vendor_boot: a52sxq_dsp_boot with $(grep -c '{ "/sys/' "$W/dspboot/a52sxq_tunables.h") built-in bus DCVS tunables"
 fi
 "${KMAKE[@]}" M="$W/dspboot" KBUILD_BUILD_USER=android-build KBUILD_BUILD_HOST=localhost modules > "$W/dspboot.log" 2>&1 \
@@ -461,6 +538,20 @@ if [ "${WDT:-0}" = 1 ]; then
 	xmod secure "$(distko qcom_wdt_core)"; xmod secure "$(distko gh_virt_wdt)"
 	say "WDT=1: qcom_wdt_core + gh_virt_wdt added to the first stage after stage secure; qcom_soc_wdt blocklisted"
 fi
+# WDT=oneui (2026-11-24, drivers612/samsung-oneui/WDT-ONEUI.md): the same two modules from drivers612/samsung-oneui/wdt
+# (same names and exports): bark 20 s / bite 23 s / pet 9.36 s, a panic is NOT turned into a watchdog bite, an already
+# armed watchdog is adopted, a watchdog that cannot be disabled refuses the suspend. gh_virt_wdt.enable=0 on the
+# kernel command line switches it off for one boot.
+case "${WDT:-0}" in 0|1|oneui|a52) ;; *) fail "WDT: 0, 1, oneui or a52 (a52 = oneui: the same variant modules, name for AOSP ROM builds)";; esac
+if [ "${WDT:-0}" = oneui ] || [ "${WDT:-0}" = a52 ]; then
+	WV=$TOP/drivers612/samsung-oneui/wdt/out
+	for m in qcom_wdt_core gh_virt_wdt; do
+		[ "$(modinfo -F vermagic "$WV/$m.ko" | cut -d' ' -f1)" = "$KREL" ] || fail "WDT=oneui: $WV/$m.ko missing or built for another kernel (samsung-oneui/build.sh wdt)"
+	done
+	modinfo -p "$WV/qcom_wdt_core.ko" | grep -q '^bite_on_panic:' && modinfo -p "$WV/gh_virt_wdt.ko" | grep -q '^enable:' || fail "WDT=oneui: not the a52 variant"
+	xmod secure "$WV/qcom_wdt_core.ko"; xmod secure "$WV/gh_virt_wdt.ko"
+	say "WDT=oneui: a52 qcom_wdt_core $(sha256sum < "$WV/qcom_wdt_core.ko" | cut -c1-8) + gh_virt_wdt $(sha256sum < "$WV/gh_virt_wdt.ko" | cut -c1-8) after stage secure; qcom_soc_wdt blocklisted"
+fi
 # QRNG=1: hardware RNG (5.4 HW_RANDOM_MSM_LEGACY): qrng_dlkm (platform driver msm-rng) + the 5.4 node properties
 if [ "${QRNG:-0}" = 1 ]; then
 	xmod secure "$TOP/drivers612/secure/securemsm/src/qrng_dlkm.ko"
@@ -499,14 +590,41 @@ if [ "${THERMAL:-0}" = 1 ]; then case " $THERMAL_X " in *" qmi "*)
 [ -n "$THERMAL_X" ] && say "THERMAL_X: $THERMAL_X"
 # ADSPFAC=1: Samsung adsp_factory (netlink 23 + /sys/class/sensors/*: factory_ssc restarted every 11 s without it)
 if [ "${ADSPFAC:-0}" = 1 ]; then
-	xmod powerpd "$TOP/drivers612/sensors-factory/adsp_factory_dlkm.ko"
-	say "ADSPFAC=1: adsp_factory_dlkm added to the first stage after stage powerpd"
+	# ADSPFAC_KO=<file>: another build of the module (default: the in-place one, as before). The P1 build
+	# drivers612/sensors-factory/out-p1/adsp_factory_dlkm.ko (vibrator -> accelerometer motor notifier, SPEC/01 gap 8)
+	# binds to sec_vibrator.ko with symbol_get from a delayed work (2 s x 90), so it needs NO load-order change, but
+	# the REF must carry the sec_vibrator.ko that exports sec_vib_notifier_register (vibrator/out-p1), checked here.
+	ADSPFAC_KO=${ADSPFAC_KO:-$TOP/drivers612/sensors-factory/adsp_factory_dlkm.ko}
+	xmod powerpd "$ADSPFAC_KO" adsp_factory_dlkm.ko
+	if grep -aq 'no sec_vib_notifier_register after' "$ADSPFAC_KO"; then
+		sv=$(find "$W/ref" -name sec_vibrator.ko | head -1)
+		[ -n "$sv" ] && grep -aq '^sec_vib_notifier_register$' <(strings "$sv") || fail "ADSPFAC_KO has the motor notifier but the REF's sec_vibrator.ko does not export sec_vib_notifier_register (swap vibrator/out-p1/sec_vibrator.ko into the REF)"
+	fi
+	say "ADSPFAC=1: adsp_factory_dlkm ($(sha256sum < "$W/xmod/adsp_factory_dlkm.ko" | cut -c1-16)) added to the first stage after stage powerpd"
 fi
 # BWCOMPAT=1: /sys/class/devfreq/soc:qcom,cpu-{cpu-llcc,llcc-ddr}-bw compat nodes for the ROM's powerhint.json
 # (11 nodes, 1870 failed Power HAL writes per boot), forwarded to bus_dcvs
 if [ "${BWCOMPAT:-0}" = 1 ]; then
 	xmod dcvs "$HERE/modules/out/a52sxq_bwcompat.ko"
 	say "BWCOMPAT=1: a52sxq_bwcompat added to the first stage after stage dcvs"
+fi
+# SOCSTATS=1 (2026-11-24, SPEC/03 G5): qcom_stats (/sys/power/soc_sleep/stats: AOSD/CXSD/DDR residency, as 5.4's
+# QCOM_SOC_SLEEP_STATS); depends qcom_aoss + smem (base stage)
+if [ "${SOCSTATS:-0}" = 1 ]; then
+	xmod powerpd "$(distko qcom_stats)"
+	say "SOCSTATS=1: qcom_stats added to the first stage after stage powerpd"
+fi
+# NTFS3=1 (SPEC/03 G12/D16): ntfs3.ko (external build of the unmodified GKI fs/ntfs3, samsung-oneui/ntfs3/mk.sh, QEMU 24/24);
+# 5.4 had read-only NTFS built in; One UI vold uses ntfs3 when the filesystem is registered. No dependencies.
+if [ "${NTFS3:-0}" = 1 ]; then
+	xmod powerpd "$TOP/drivers612/samsung-oneui/ntfs3/out/ntfs3.ko"
+	say "NTFS3=1: ntfs3 added to the first stage after stage powerpd"
+fi
+# USBACC=1 (SPEC/03 G12/U12): the USB Ethernet set 5.4 had built in (usbnet, cdc_ether, cdc_ncm, r8152, asix,
+# ax88179_178a; GKI =m, dist), in dependency order. smsc75xx/95xx and HID_SAMSUNG are not in the GKI config: not added.
+if [ "${USBACC:-0}" = 1 ]; then
+	for m in mii usbnet cdc_ether cdc_ncm r8152 asix ax88179_178a; do xmod powerpd "$(distko $m)"; done
+	say "USBACC=1: mii usbnet cdc_ether cdc_ncm r8152 asix ax88179_178a added to the first stage after stage powerpd"
 fi
 python3 -I "$HERE/tools/modplan.py" --ref "$W/ref" --first "$FIRST_STAGES" --late audio --wlan wlan \
 	--extra-after "dsp:$W/a52sxq_dsp_boot.ko" "${X_EXTRA[@]}" "${UA_EXTRA[@]}" "${BT_EXTRA[@]}" "${MODEM_EXTRA[@]}" "${SD_EXTRA[@]}" "${TH_EXTRA[@]}" --drop "seaprobe testguard hhwdt a52susp a52_modem_guard" --out "$W/plan" | tee -a "$R"
@@ -524,6 +642,18 @@ if [ "$ADDON" = vendor_boot ]; then
 	echo "options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify+qcom,msm-audio-apr+qcom,audio-ref-clk+qcom,msm-cdc-pinctrl+qcom,q6core-audio+qcom,adsp-loader hold_late=qcom,wcd938x-codec${HOLD_MS:+ hold_release_ms=$HOLD_MS}" >> "$W/plan/first.params"
 	: > "$W/plan/late.load"; : > "$W/plan/wlan.load"; : > "$W/plan/late.params"
 	say "ADDON=vendor_boot: $(wc -l < "$W/plan/addon-late.load") audio modules + wlan.ko appended to the first stage ($(wc -l < "$W/plan/first.load") modules); a52sxq_dsp_boot rescan_after_adsp=1"
+fi
+# ZRAM_LZ4=1 (SPEC/03 G13): zram.ko rebuilt from the unmodified GKI sources with default_compressor "lz4" (= CONFIG_
+# ZRAM_DEF_COMP_LZ4; samsung-oneui/zram-lz4/mk.sh, GKI out/gki config, same imports + parameters as the dist module).
+# 6.12 falls back to the default on every zram reset; One UI configures lz4.
+if [ "${ZRAM_LZ4:-0}" = 1 ]; then
+	ZL=$TOP/drivers612/samsung-oneui/zram-lz4/out/zram.ko; [ -f "$ZL" ] || fail "ZRAM_LZ4=1: no $ZL (run samsung-oneui/zram-lz4/mk.sh)"
+	[ -f "$W/plan/first/zram.ko" ] || fail "ZRAM_LZ4=1: zram.ko not in the first stage"
+	[ "$(modinfo -F vermagic "$ZL")" = "$(modinfo -F vermagic "$W/plan/first/zram.ko")" ] || fail "ZRAM_LZ4=1: vermagic differs"
+	[ "$(modinfo -F depends "$ZL")" = "$(modinfo -F depends "$W/plan/first/zram.ko")" ] || fail "ZRAM_LZ4=1: depends differs"
+	grep -aq 'lz4' "$ZL" || fail "ZRAM_LZ4=1: no lz4 in $ZL"
+	cp "$ZL" "$W/plan/first/zram.ko"
+	say "ZRAM_LZ4=1: first-stage zram.ko = zram-lz4 ($(sha256sum < "$ZL" | cut -c1-16)), default compressor lz4"
 fi
 for st in debug susp; do [ -f "$W/ref/a52/mods/$st.list" ] && say "stage $st of $REF NOT in the real boot: $(tr '\n' ' ' < "$W/ref/a52/mods/$st.list")"; done
 cat "$W/plan/first.load" "$W/plan/late.load" "$W/plan/wlan.load" | grep -qx 'a52susp.ko\|seaprobe.ko\|testguard.ko\|hhwdt.ko\|a52_modem_guard.ko' && fail "test module planned"
@@ -570,6 +700,18 @@ for m in ${ASYNC_LAST:-}; do
 	echo "options $m async_probe=1" >> "$W/plan/first.params"
 	say "ASYNC_LAST: $m.ko async_probe=1, moved from line $p to the end of modules.load"
 done
+# A52SXQ_FIRST=1 (2026-11-25, default 0): a52sxq.ko (userspace switch) to line 1 of modules.load, every other module keeps
+# its relative order. Consumers resolve the switch with symbol_get() and get the AOSP answer until it is loaded, so a
+# probe-time reader before it runs the AOSP variant (usb_notify_layer set_otg_notify from usb_notifier's probe, rbou9ds).
+# a52sxq_core_init only reads its parameter and /chosen/bootargs: no depends, no device, safe as the first module.
+case "${A52SXQ_FIRST:-0}" in 0) ;; 1)
+	p=$(grep -nx a52sxq.ko "$W/plan/first.load" | cut -d: -f1); [ -n "$p" ] || fail "A52SXQ_FIRST=1: a52sxq.ko is not a first-stage module"
+	[ -z "$(modinfo -F depends "$W/plan/first/a52sxq.ko")" ] || fail "A52SXQ_FIRST=1: a52sxq.ko has depends: $(modinfo -F depends "$W/plan/first/a52sxq.ko")"
+	{ echo a52sxq.ko; grep -vx a52sxq.ko "$W/plan/first.load"; } > "$W/plan/first.load.t"
+	[ "$(wc -l < "$W/plan/first.load.t")" = "$(wc -l < "$W/plan/first.load")" ] || fail "A52SXQ_FIRST=1: line count changed"
+	mv "$W/plan/first.load.t" "$W/plan/first.load"
+	say "A52SXQ_FIRST=1: a52sxq.ko moved from line $p to line 1 of modules.load";;
+*) fail "A52SXQ_FIRST: 0 or 1";; esac
 for k in $(ls "$W"/plan/{first,late,wlan}/*.ko 2>/dev/null); do strings "$k" | grep -q "^vermagic=$KREL " || fail "wrong vermagic: $k"; done
 # modules.dep/alias/softdep, flat paths, symbols checked against the kernel's System.map
 depmod_dir() {   # <outdir> <dir with .ko>...
@@ -607,13 +749,18 @@ fi
 for f in modules.dep modules.alias modules.softdep; do cp "$W/dep1/lib/modules/$KREL/$f" "$LM/$f"; done
 cp "$W/plan/first.load" "$LM/modules.load"
 while read -r m; do grep -q "^$m:" "$LM/modules.dep" || fail "$m of modules.load is not in modules.dep"; done < "$LM/modules.load"
+# userspace switch order (tools/us-order-check.py): no module that reads a52sxq_userspace_get (import or symbol_get
+# name) may load before a52sxq.ko; notifier/hint-only users are listed as INFO. Standalone: us-order-check.py <plan dir>
+python3 -I "$HERE/tools/us-order-check.py" --load "$LM/modules.load" --dir "$LM" ${MODLOAD:+--parallel} > "$W/us-order.txt" \
+	|| { cat "$W/us-order.txt"; fail "userspace switch: a consumer loads before a52sxq.ko (A52SXQ_FIRST=1 or move it in the REF)"; }
+tee -a "$R" < "$W/us-order.txt" > /dev/null; tail -n1 "$W/us-order.txt"
 # blocked in every test (bsp612/mkramdisk-612.sh DROP, pack-android-612.sh BLOCK); the
 # blocklist stops an alias or softdep from pulling them in
 BLOCK="qcom_edac qcom-dload-mode gh_virt_wdt qcom_wdt_core tz_log_dlkm sdhci-msm cqhci phy-msm-ssusb-qmp msm_sharedmem"
 # MODEM=1: msm_sharedmem is rmt_storage's UIO buffer: loaded, so not blocked
 [ "$MODEM" = 1 ] && BLOCK=${BLOCK% msm_sharedmem}
 [ "$SDCARD" = 1 ] && BLOCK=${BLOCK/ sdhci-msm cqhci/}
-[ "${WDT:-0}" = 1 ] && BLOCK="${BLOCK/ gh_virt_wdt qcom_wdt_core/} qcom_soc_wdt"
+[ "${WDT:-0}" != 0 ] && BLOCK="${BLOCK/ gh_virt_wdt qcom_wdt_core/} qcom_soc_wdt"
 for b in $BLOCK; do echo "blocklist $b"; done > "$LM/modules.blocklist"
 for b in $BLOCK; do grep -qx "$b.ko" "$LM/modules.load" && fail "blocked module $b in modules.load"; done
 # no SD host driver in any set (phone 1 has a microSD, mmcblk1, that nothing may touch)
@@ -643,6 +790,14 @@ if [ "${ICE_RAW:-0}" = 1 ]; then
 		strings "$W/plan/first/ufshcd-crypto-qti.ko" | grep -q '^parmtype=a52_kat_fail:' || fail "ICE_KAT_FAIL=1 needs REF >= s99k"
 		say "ICE_KAT_FAIL=1: TEST BUILD, the ICE known-answer test fails on purpose (a52_kat_fail=1 on the ufshcd_crypto_qti line)"
 	fi
+fi
+# SHM_BRIDGE_OFF=1 (2026-11-22 test; soc-repo patch 0024): qcom_scm a52_no_shm_bridge=1 = the TZ SHM bridge stays off
+# as on 5.4; with it on, Samsung's PROCA TA cannot map HLOS memory and the vaultkeeper TA refuses its clients.
+if [ "${SHM_BRIDGE_OFF:-0}" = 1 ]; then
+	strings "$W/plan/first/qcom-scm.ko" | grep -q '^parmtype=a52_no_shm_bridge:' || fail "SHM_BRIDGE_OFF=1: qcom-scm of REF=$REF has no a52_no_shm_bridge (soc-repo 0024)"
+	grep -q '^options qcom_scm ' "$W/plan/first.params" 2>/dev/null && fail "SHM_BRIDGE_OFF=1: an options line for qcom_scm exists already"
+	echo 'options qcom_scm a52_no_shm_bridge=1' >> "$W/plan/first.params"
+	say "SHM_BRIDGE_OFF=1: modules.options qcom_scm a52_no_shm_bridge=1 (TZ SHM bridge off, 5.4 behaviour)"
 fi
 # UFS_WB=always (2026-11-22, default unset = WB tied to clock scaling; REF >= s99n, soc-repo patch 0023): ufs_qcom
 # a52_wb_always=1 = WriteBooster on from probe, not switched by clock scaling (5.4: Samsung's load-based WB policy)
@@ -743,6 +898,12 @@ fi
 	NW=$(grep -c '^    write /sys/' "$VA/etc/init/a52sxq-$KT.rc")
 	[ "$NW" = "$(grep -cvE '^[[:space:]]*(#|$)' "$BUSDCVS_CONF")" ] || fail "bus DCVS rc: $NW writes for $(grep -cvE '^[[:space:]]*(#|$)' "$BUSDCVS_CONF") conf lines"
 	say "vendor rc: $NW bus-DCVS writes on sys.boot_completed (busdcvs.conf $(sha256sum < "$BUSDCVS_CONF" | cut -c1-16))"
+	if [ "${WALT:-0}" = 1 ]; then
+		sed -e "s|@KT@|$KT|g" "$HERE/vendor-addon/a52sxq-walt.rc.in" >> "$VA/etc/init/a52sxq-$KT.rc"
+		grep -q '@[A-Z_]*@' "$VA/etc/init/a52sxq-$KT.rc" && fail "unreplaced placeholder in a52sxq-$KT.rc (WALT)"
+		[ "$(grep -c '/walt/\|scaling_governor "walt"' "$VA/etc/init/a52sxq-$KT.rc")" = "$(grep -cvE '^[[:space:]]*(#|$)' "$HERE/vendor-addon/a52sxq-walt.conf")" ] || fail "WALT rc: write count differs from a52sxq-walt.conf (regenerate a52sxq-walt.rc.in)"
+		say "vendor rc: WALT governor + tunables on vendor.post_boot.parsed (persist.vendor.a52sxq.walt_gov=0 reverts)"
+	fi
 }
 say "late (vendor /vendor/lib/modules/$KV, after the ADSP): $(wc -l < "$W/plan/late.load") modules; wlan: $(cat "$W/plan/wlan.load") in /vendor/lib/modules/$WLD"
 cp "$W/plan/plan.txt" "$O/module-plan.txt"
@@ -770,6 +931,7 @@ else
 	grep -qx 'options a52sxq_dsp_boot rescan_after_adsp=1 hold_until_adsp=qcom,adsp-notify+qcom,msm-audio-apr+qcom,audio-ref-clk+qcom,msm-cdc-pinctrl+qcom,q6core-audio+qcom,adsp-loader hold_late=qcom,wcd938x-codec'"${HOLD_MS:+ hold_release_ms=$HOLD_MS}" "$LM/modules.options" || fail "ADDON=vendor_boot: no rescan_after_adsp/hold_until_adsp options"
 	modinfo -p "$W/a52sxq_dsp_boot.ko" | grep -q '^rescan_after_adsp:' || fail "a52sxq_dsp_boot.ko has no rescan_after_adsp"
 	modinfo -p "$W/a52sxq_dsp_boot.ko" | grep -q '^tunables:' || fail "a52sxq_dsp_boot.ko has no built-in tunables"
+	if [ "${WALT:-0}" = 1 ]; then modinfo -p "$W/a52sxq_dsp_boot.ko" | grep -q '^walt_guard_s:' || fail "WALT=1: a52sxq_dsp_boot.ko has no walt_guard_s"; fi
 	cp "$W/plan/plan.txt" "$O/module-plan.txt"
 	python3 -I "$HERE/tools/loadsim.py" --krel "$KREL" --symvers "$SYMVERS" --builtin "$DIST/lib/modules/$KREL/modules.builtin" \
 		"first:$LM:$LM/modules.load" > "$W/loadsim.txt" || { cat "$W/loadsim.txt"; fail "insmod simulation"; }
@@ -913,6 +1075,25 @@ if [ "${HALL:-0}" = 1 ]; then
 	fdtput -t x "$T/rb.dtb" /soc/hall_keys/hall linux,code 0
 	say "HALL=1: /soc/hall_keys okay, input 'hall', SW_LID (gpio-keys, built in; 5.4: Samsung hall_ic, SW_LID)"
 fi
+# ARGOS=1: Samsung /soc/argos (drivers612/samsung-oneui/argos/argos.dtsi; the vendor argosd exits without it, sec_argos.ko
+# reads it); applied as an overlay (labels soc/gem_noc/mc_virt from the tree's __symbols__)
+if [ "${ARGOS:-0}" = 1 ]; then
+	AD=$TOP/drivers612/samsung-oneui/argos/argos.dtsi; [ -f "$AD" ] || fail "ARGOS=1: no $AD"
+	printf '/dts-v1/;\n/plugin/;\n#include "%s"\n' "$AD" > "$T/argos-ov.dts"
+	cpp -nostdinc -undef -x assembler-with-cpp -P "$T/argos-ov.dts" | dtc -@ -q -I dts -O dtb -o "$T/argos.dtbo" - || fail "ARGOS=1: argos overlay does not compile"
+	fdtoverlay -i "$T/rb.dtb" -o "$T/rb-argos.dtb" "$T/argos.dtbo" || fail "ARGOS=1: argos overlay does not apply"
+	mv "$T/rb-argos.dtb" "$T/rb.dtb"
+	[ "$(fdtget -l "$T/rb.dtb" /soc/argos | grep -c '^boot_device@')" = 7 ] || fail "ARGOS=1: /soc/argos without 7 boot_device@ children"
+	say "ARGOS=1: /soc/argos with 7 boot_device@N (5.4 fragment@84) + interconnects gem_noc 2 -> mc_virt 512"
+fi
+# PROCA_HDR_RES=<phys>: keep the kernel's Image header page [_text, _stext) out of the page allocator (6.12 reserves only
+# from _stext, 5.4 from _text) so the PROCA TA can read the header magic at runtime; <phys> = the ABL's kernel load
+# address (rbou4: /proc/iomem "Kernel code" 0xa00d0000 - 0x10000). Plain reserved-memory, not no-map. (test, 2026-11-22)
+if [ -n "${PROCA_HDR_RES:-}" ]; then
+	N=/reserved-memory/proca_hdr@$(printf %x "$PROCA_HDR_RES")
+	fdtput -c "$T/rb.dtb" "$N" && fdtput -t x "$T/rb.dtb" "$N" reg 0 "$(printf %x "$PROCA_HDR_RES")" 0 10000 || fail "PROCA_HDR_RES: fdtput"
+	say "PROCA_HDR_RES: $N reg <0 $PROCA_HDR_RES 0 0x10000> (Image header page kept)"
+fi
 case " ${THERMAL_X:-} " in *" bclmap "*)
 	for n in 4 5 6 7; do ph=$(fdtget -t u "$T/rb.dtb" /soc/qcom,cpu-pause/cpu$n-pause phandle) || fail "THERMAL_X=bclmap: no cpu$n-pause"
 		fdtput -t u "$T/rb.dtb" /soc/thermal-zones/pm8350c-bcl-lvl0/cooling-maps/vph_cpu$n cooling-device $ph 1 1; done
@@ -1035,6 +1216,16 @@ if [ "$KSU" = 1 ]; then
 	VC="$VC rdinit=/ksuinit"
 	say "KSU=1: rdinit=/ksuinit; ksuinit $(sha256sum < "$KSUD/ksuinit" | cut -c1-16), kernelsu.ko $(sha256sum < "$KSUD/kernelsu.ko" | cut -c1-16) at the root of the vendor ramdisk fragment"
 fi
+# USERSPACE=samsung|aosp (2026-11-24, SPEC/05 section 2): a52sxq.userspace= for a52sxq.ko (first-stage init passes
+# a52sxq.* cmdline words to the module as options); default auto = nothing (the module detects it).
+case "${USERSPACE:-auto}" in
+	auto) ;;
+	samsung|aosp)
+		echo " $VC " | grep -q ' a52sxq\.userspace=' && fail "USERSPACE: the command line already has a52sxq.userspace="
+		VC="$VC a52sxq.userspace=$USERSPACE"
+		say "USERSPACE=$USERSPACE: a52sxq.userspace=$USERSPACE on the vendor cmdline";;
+	*) fail "USERSPACE: samsung, aosp or auto";;
+esac
 [ -n "${EXTRA_CMDLINE:-}" ] && VC="$VC $EXTRA_CMDLINE"
 printf '%s\n' "$VC" > "$W/vendor-cmdline.txt"
 case " $VC $QCOM_BOOTARGS " in *" a52."*|*" a52sxq-"*|*" loglevel=7 "*|*" earlycon"*|*" log_buf_len="*) fail "test-only argument in the cmdline";; esac
@@ -1090,7 +1281,15 @@ PYEOF
 *) fail "MODLOAD: unset, parallel, performance or conservative";; esac
 # vendor: the ROM's vendor ramdisk (first_stage_ramdisk/fstab.qcom), unchanged, + our cpio
 python3 -I "$HERE/tools/cpiox.py" "$W/vb/vendor_ramdisk" "$W/rom-vr" >> "$R"
-[ "$(cd "$W/rom-vr" && find . -type f ! -name .cpiox-nodes.txt | sort)" = "./first_stage_ramdisk/fstab.qcom" ] || fail "ROM vendor ramdisk is not just the fstab: re-check the layout"
+# OneUI 9 port (2026-11-22): its vendor ramdisk also carries the 5.4 vendor modules (lib/modules/*.ko + modules.{alias,
+# dep,load,softdep}) and the touch firmware (lib/firmware/...). Our cpio comes after it, so our modules.load/dep/alias/
+# softdep (and every module of the same file name) replace those; the other 5.4 .ko files stay unreferenced. Anything
+# else (a modules.blocklist / modules.options of the ROM would apply to OUR list) is refused.
+rvx=$(cd "$W/rom-vr" && find . -type f ! -name .cpiox-nodes.txt ! -path ./first_stage_ramdisk/fstab.qcom ! -path './lib/firmware/*' ! -regex '\./lib/modules/[^/]*\.ko' ! -regex '\./lib/modules/modules\.\(alias\|dep\|load\|softdep\)' | sort)
+[ -z "$rvx" ] || fail "ROM vendor ramdisk has unexpected files: $rvx"
+[ -f "$W/rom-vr/first_stage_ramdisk/fstab.qcom" ] || fail "ROM vendor ramdisk has no first_stage_ramdisk/fstab.qcom"
+NROMKO=$(find "$W/rom-vr/lib/modules" -name '*.ko' 2>/dev/null | wc -l)
+[ "$NROMKO" = 0 ] || say "ROM vendor ramdisk: $NROMKO 5.4 modules + its modules.* lists (ours replace the lists; the 5.4 .ko files stay unreferenced)$( [ -d "$W/rom-vr/lib/firmware" ] && echo "; firmware kept: $(cd "$W/rom-vr" && find lib/firmware -type f | tr '\n' ' ')")"
 grep -q 'by-name/userdata' "$W/rom-vr/first_stage_ramdisk/fstab.qcom" || fail "ROM fstab has no userdata (wrong file?)"
 # /force_debuggable: AOSP's debug-ramdisk hook (first_stage_init.cpp); with an unlocked
 # bootloader second-stage init loads /adb_debug.prop after every build.prop. Used for ONE
@@ -1121,6 +1320,14 @@ if [ "$KSU" = 1 ]; then install -m 0755 "$KSUD/ksuinit" "$VR/ksuinit"; install -
 printf '# drivers612/realboot: loaded by init after all build.prop files (unlocked bootloader only)\nro.bpf.kver_override=%s\n' "$KVER" > "$VR/adb_debug.prop"
 find "$VR" -exec touch -h -d @0 {} +   # reproducible cpio (no build-time mtimes)
 ( cd "$VR" && find . | LC_ALL=C sort | cpio -o -H newc -R 0:0 --reproducible --quiet ) | lz4 -l -12 --favor-decSpeed -q > "$W/vr-add.cpio.lz4"
+# The ABL hands the kernel vendor ramdisk + boot ramdisk as ONE blob. lz4 legacy has no end marker: the kernel's
+# unlz4 runs on into whatever follows and only stops at a zero chunk size, another lz4 magic or the end. A ROM boot
+# ramdisk that is not lz4 (OneUI: gzip) -> "rootfs image is not initramfs (Decoding failed)" -> no /init -> panic loop
+# (rbou2 real flash, 2026-11-22). So: 4 zero bytes (= chunk size 0, "end of file" in lib/decompress_unlz4.c) after our
+# fragment unless the boot ramdisk is lz4 legacy itself (LineageOS: bytes unchanged). tools/qemu-initrd-check.sh proves it.
+if [ "$(head -c 4 "$W/boot-ramdisk" | od -An -tx1 | tr -d ' \n')" != 02214c18 ]; then
+	printf '\0\0\0\0' >> "$W/vr-add.cpio.lz4"; say "boot ramdisk is not lz4 legacy: lz4 end marker (4 zero bytes) after our fragment"
+fi
 cat "$W/vb/vendor_ramdisk" "$W/vr-add.cpio.lz4" > "$W/vendor-ramdisk"
 RB=$(stat -c %s "$W/boot-ramdisk"); RV=$(stat -c %s "$W/vendor-ramdisk")
 BUDGET=$((0x5600000 - 0x482000)); NEED=$(( ISZ + ((RB + RV + 4095) / 4096) * 4096 ))
@@ -1129,7 +1336,27 @@ say "boot ramdisk $RB, vendor ramdisk $RV bytes; image_size + ramdisks = $(print
 
 # ---------------------------------------------------------------- 7. images
 say "== 7. images"
-mkbootimg --header_version 3 --os_version "$OSV" --os_patch_level "$OSP" --kernel "$IMAGE" \
+# PROCA_MAGIC=1 (OneUI): arm64 Image header res3 (offset 0x28, Samsung's _proca_conf_offset) = 0xecefecef, as on the
+# port's 5.4 kernel (UN1CA patches/proca): the PROCA TA then accepts that there is no PROCA config. With 0 there it
+# logs "Config is not initialized in SWD" and the vaultkeeper TA refuses its clients (-10032 "no VK ID", 2026-11-22).
+BOOTK=$IMAGE
+if [ "${PROCA_MAGIC:-0}" = 1 ]; then
+	[ "$(od -An -tx1 -j40 -N4 "$IMAGE" | tr -d ' \n')" = 00000000 ] || fail "PROCA_MAGIC=1: Image header 0x28 is not zero"
+	BOOTK=$W/Image-proca; cp "$IMAGE" "$BOOTK"
+	printf '\xef\xec\xef\xec' | dd of="$BOOTK" bs=1 seek=40 conv=notrunc status=none
+	[ "$(od -An -tx1 -j40 -N4 "$BOOTK" | tr -d ' \n')" = efecefec ] || fail "PROCA_MAGIC=1: header patch"
+	NCH=4
+	# PROCA_TEXTOFF=1: header text_offset 0x80000 like the 5.4 Image, so the ABL loads the kernel at base + 0x80000
+	# (KernelLoadAddr += TextOffset) where the secure world may expect the Image header (test, 2026-11-22)
+	if [ "${PROCA_TEXTOFF:-0}" = 1 ]; then
+		[ "$(od -An -tx1 -j8 -N8 "$IMAGE" | tr -d ' \n')" = 0000000000000000 ] || fail "PROCA_TEXTOFF=1: text_offset is not 0"
+		printf '\x00\x00\x08\x00' | dd of="$BOOTK" bs=1 seek=8 conv=notrunc status=none; NCH=5
+		say "PROCA_TEXTOFF=1: Image header text_offset = 0x80000 (5.4 placement)"
+	fi
+	cmp -l "$IMAGE" "$BOOTK" | wc -l | grep -qx $NCH || fail "PROCA_MAGIC=1: more header bytes changed than intended"
+	say "PROCA_MAGIC=1: Image header 0x28 = ef ec ef ec (PROCA config intentionally absent; 4 bytes differ from $IMAGE)"
+fi
+mkbootimg --header_version 3 --os_version "$OSV" --os_patch_level "$OSP" --kernel "$BOOTK" \
 	--ramdisk "$W/boot-ramdisk" --cmdline '' -o "$O/boot.img"
 eval mkbootimg $VB_ARGS --vendor_cmdline "'$VC'" --dtb "$D" --vendor_ramdisk "$W/vendor-ramdisk" --vendor_boot "$O/vendor_boot.img"
 cp "$W/dtbo-raw.img" "$O/dtbo.img"
@@ -1143,7 +1370,7 @@ done
 # read back what the bootloader will see
 unpack_bootimg --boot_img "$O/boot.img" --out "$W/chk-b" > "$W/chk-b.info"
 unpack_bootimg --boot_img "$O/vendor_boot.img" --out "$W/chk-vb" > "$W/chk-vb.info"
-cmp -s "$W/chk-b/kernel" "$IMAGE" && cmp -s "$W/chk-b/ramdisk" "$W/boot-ramdisk" || fail "boot.img read-back differs"
+cmp -s "$W/chk-b/kernel" "$BOOTK" && cmp -s "$W/chk-b/ramdisk" "$W/boot-ramdisk" || fail "boot.img read-back differs"
 cmp -s "$W/chk-vb/dtb" "$D" && cmp -s "$W/chk-vb/vendor_ramdisk" "$W/vendor-ramdisk" || fail "vendor_boot.img read-back differs"
 grep -q "^os patch level: $OSP$" "$W/chk-b.info" || fail "patch level not kept"
 python3 -I "$HERE/tools/cpiox.py" "$W/chk-vb/vendor_ramdisk" "$W/chk-vr" >> "$R"
@@ -1163,7 +1390,7 @@ fi
 # the headers must still be the ROM's (only cmdline, dtb, ramdisk, kernel changed)
 diff <(grep -v '^vendor command line args\|^vendor ramdisk total size\|^vendor ramdisk size\|^dtb size' "$W/vb.info") \
 	<(grep -v '^vendor command line args\|^vendor ramdisk total size\|^vendor ramdisk size\|^dtb size' "$W/chk-vb.info") > "$W/vb-header.diff" || fail "vendor_boot header differs from the ROM's beyond cmdline/sizes ($W/vb-header.diff)"
-diff <(grep -v '^kernel_size\|^ramdisk size' "$W/b.info") <(grep -v '^kernel_size\|^ramdisk size' "$W/chk-b.info") > "$W/b-header.diff" || fail "boot header differs from the ROM's beyond the sizes ($W/b-header.diff)"
+diff <(grep -v '^kernel_size\|^ramdisk size\|^command line args' "$W/b.info") <(grep -v '^kernel_size\|^ramdisk size\|^command line args' "$W/chk-b.info") > "$W/b-header.diff" || fail "boot header differs from the ROM's beyond the sizes ($W/b-header.diff)"
 say "read-back OK: kernel, ramdisks, dtb, cmdline, dtb bootargs, other header fields = ROM's, patch level $OSP, footers (unsigned, as the ROM's)"
 # no firmware image may ever be part of these outputs (2026-11-13 incident)
 find "$O" -path "$W" -prune -o -type f -regextype posix-extended -regex '.*\.(mdt|mbn|b[0-9][0-9])$' -print | grep -q . && fail "firmware image in the output"
@@ -1178,6 +1405,12 @@ unpack_bootimg --boot_img "$O/boot.img" --out "$W/fmt-b" --format mkbootimg > "$
 unpack_bootimg --boot_img "$O/vendor_boot.img" --out "$W/fmt-vb" --format mkbootimg > "$O/info/vendor_boot.mkbootimg-args.txt"
 rm -rf "$W/fmt-b" "$W/fmt-vb"
 
+# the initrd exactly as the ABL concatenates it must unpack in the build's own kernel (QEMU; key-free). QEMU_CHECK=0 skips.
+if [ "${QEMU_CHECK:-1}" = 1 ]; then
+	"$HERE/tools/qemu-initrd-check.sh" "$O" "$W/qemu-initrd" > "$W/qemu-initrd.log" 2>&1 || { tail -5 "$W/qemu-initrd.log"; fail "QEMU: the ABL-concatenated initrd does not unpack/start init (tools/qemu-initrd-check.sh)"; }
+	say "QEMU initrd check PASS: vendor ramdisk + boot ramdisk unpack, init started"
+fi
+
 # ---------------------------------------------------------------- 8. summary
 ( cd "$O" && sha256sum boot.img vendor_boot.img dtbo.img > SHA256SUMS
   [ "$ADDON" = vendor ] && { find vendor-addon -type f | LC_ALL=C sort | xargs sha256sum > vendor-addon.SHA256SUMS; } || true )
@@ -1186,6 +1419,11 @@ cp "$W/vendor-cmdline.txt" "$W/dt-bootargs.txt" "$O/"; cp "$LM/modules.load" "$O
 [ -f "$T/vs-tested.diff" ] && cp "$T/vs-tested.diff" "$O/dtb-vs-tested.diff"
 printf 'name=%s kernel=%s krel=%s ref=%s image=%s tree=%s diag=%s modem=%s sdcard=%s wlan=%s addon=%s debug=%s btslim=%s\n' "$NAME" "$KV" "$KREL" "$REFRD" "$IMAGE" "$TREF" "$DIAG" "$MODEM" "$SDCARD" "$WLD" "$ADDON" "$DEBUG" "${BTSLIM:-0}" > "$O/BUILDINFO"
 sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} lpm=${LPM:-0} hold_ms=${HOLD_MS:-} ice_raw=${ICE_RAW:-0} ice_kat_fail=${ICE_KAT_FAIL:-0} ufs_poll_ms=${UFS_POLL_MS:-} ufs_qos=${UFS_QOS:-1} ufs_clkscale=${UFS_CLKSCALE:-1} ufs_wb=${UFS_WB:-} modload=${MODLOAD:-} modload_seq=$(echo ${MODLOAD_SEQ:-} | tr ' ' '+') async_mods=$(echo ${ASYNC_MODS:-} | tr " " "+") async_last=$(echo ${ASYNC_LAST:-} | tr ' ' '+') strip_btf=${STRIP_BTF:-0} thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
+sed -i "s/\$/ argos=${ARGOS:-0} proca_magic=${PROCA_MAGIC:-0} shm_bridge_off=${SHM_BRIDGE_OFF:-0}/" "$O/BUILDINFO"
+sed -i "s/\$/ ksu_builtin=${KSU_BUILTIN:-0}/" "$O/BUILDINFO"
+sed -i "s/\$/ walt=${WALT:-0}/" "$O/BUILDINFO"
+sed -i "s/\$/ socstats=${SOCSTATS:-0} ntfs3=${NTFS3:-0} usbacc=${USBACC:-0} zram_lz4=${ZRAM_LZ4:-0} userspace=${USERSPACE:-auto}/" "$O/BUILDINFO"
+[ "${A52SXQ_FIRST:-0}" = 1 ] && sed -i "s/\$/ a52sxq_first=1/" "$O/BUILDINFO"   # only when set: default BUILDINFO unchanged
 if [ "$DIAG_KERNEL" = 1 ]; then cp "$(dirname "$IMAGE")/BUILDINFO" "$O/diag-kernel.BUILDINFO"; fi
 say "== summary"
 sed 's/^/  /' "$O/SHA256SUMS" | tee -a "$R"

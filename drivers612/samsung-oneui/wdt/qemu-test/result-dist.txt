@@ -1,0 +1,32 @@
+WT: core rc=0
+WT: sim rc=0
+WT: load: pet=1 en=1 dis=0 BARK=0 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=0 fail=0 ok=0 | 
+WT: idle21: pet=3 en=1 dis=0 BARK=0 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=9471 fail=0 ok=0 | 
+WT: pmtest-devices write rc=0
+WT: pmtest-devices: pet=3 en=1 dis=0 BARK=0 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=9471 fail=0 ok=1 | 
+WT: pmtest-platform5 write rc=0
+WT: pmtest-platform5: pet=5 en=2 dis=1 BARK=0 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=9471 fail=0 ok=2 | 
+WT: pmtest-platform26 write rc=0
+WT: pmtest-platform26: pet=7 en=3 dis=2 BARK=0 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=9471 fail=0 ok=3 | 
+WT: faildisable write rc=0
+WT: faildisable: pet=9 en=4 dis=2 BARK=0 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=9471 fail=0 ok=4 | 
+WT: last_failed_dev= errno=0
+WT: faildisable+12: pet=10 en=4 dis=2 BARK=0 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=9471 fail=0 ok=4 | 
+WT: faildisable-26 write rc=0
+WT: faildisable-26: pet=12 en=5 dis=2 BARK=2 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=11087 fail=0 ok=5 | 
+WT: failenable write rc=0
+WT: failenable: pet=14 en=5 dis=3 BARK=2 armed=N bark_ms=11000 bite_ms=14000 gap_ms=11087 fail=0 ok=6 | 
+WT: failenable+11: pet=15 en=5 dis=3 BARK=2 armed=N bark_ms=11000 bite_ms=14000 gap_ms=11087 fail=0 ok=6 | 
+WT: recover write rc=0
+WT: recover: pet=17 en=6 dis=4 BARK=2 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=11087 fail=0 ok=7 | 
+WT: recover+11: pet=18 en=6 dis=4 BARK=2 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=11087 fail=0 ok=7 | 
+WT: rtc=rtc0
+WT: s2idle-rtc27 write rc=0
+WT: s2idle-rtc27: pet=20 en=7 dis=5 BARK=2 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=11087 fail=0 ok=8 | 
+WT: final: pet=21 en=7 dis=5 BARK=2 armed=Y bark_ms=11000 bite_ms=14000 gap_ms=11087 fail=0 ok=8 | 
+WT: dmesg [    1.910488][  T111] a52-wdt-sim a52-wdt-sim: QCOM Apps Watchdog Initialized
+WT: dmesg [   60.289916][    T1] WDTSIM: disable refused (fail_disable)
+WT: dmesg [   77.581931][    T1] WDTSIM: disable refused (fail_disable)
+WT: dmesg [   88.610998][    C0] WDTSIM: BARK (timer): armed, 11029 ms since the last pet, bark 11000 ms
+WT: dmesg [   99.698934][    C0] WDTSIM: BARK (timer): armed, 11087 ms since the last pet, bark 11000 ms
+WT: END

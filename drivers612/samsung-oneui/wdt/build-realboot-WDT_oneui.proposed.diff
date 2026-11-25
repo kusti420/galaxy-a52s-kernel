@@ -1,0 +1,31 @@
+--- a/drivers612/realboot/build-realboot.sh
++++ b/drivers612/realboot/build-realboot.sh
+@@ -524,6 +524,19 @@
+ 	xmod secure "$(distko qcom_wdt_core)"; xmod secure "$(distko gh_virt_wdt)"
+ 	say "WDT=1: qcom_wdt_core + gh_virt_wdt added to the first stage after stage secure; qcom_soc_wdt blocklisted"
+ fi
++# WDT=oneui (2026-11-24, drivers612/samsung-oneui/WDT-ONEUI.md): the same two modules from drivers612/samsung-oneui/wdt
++# (same names and exports): bark 20 s / bite 23 s / pet 9.36 s, a panic is NOT turned into a watchdog bite, an already
++# armed watchdog is adopted, a watchdog that cannot be disabled refuses the suspend. gh_virt_wdt.enable=0 on the
++# kernel command line switches it off for one boot.
++if [ "${WDT:-0}" = oneui ]; then
++	WV=$TOP/drivers612/samsung-oneui/wdt/out
++	for m in qcom_wdt_core gh_virt_wdt; do
++		[ "$(modinfo -F vermagic "$WV/$m.ko" | cut -d' ' -f1)" = "$KREL" ] || fail "WDT=oneui: $WV/$m.ko missing or built for another kernel (samsung-oneui/build.sh wdt)"
++	done
++	modinfo -p "$WV/qcom_wdt_core.ko" | grep -q '^bite_on_panic:' && modinfo -p "$WV/gh_virt_wdt.ko" | grep -q '^enable:' || fail "WDT=oneui: not the a52 variant"
++	xmod secure "$WV/qcom_wdt_core.ko"; xmod secure "$WV/gh_virt_wdt.ko"
++	say "WDT=oneui: a52 qcom_wdt_core $(sha256sum < "$WV/qcom_wdt_core.ko" | cut -c1-8) + gh_virt_wdt $(sha256sum < "$WV/gh_virt_wdt.ko" | cut -c1-8) after stage secure; qcom_soc_wdt blocklisted"
++fi
+ # QRNG=1: hardware RNG (5.4 HW_RANDOM_MSM_LEGACY): qrng_dlkm (platform driver msm-rng) + the 5.4 node properties
+ if [ "${QRNG:-0}" = 1 ]; then
+ 	xmod secure "$TOP/drivers612/secure/securemsm/src/qrng_dlkm.ko"
+@@ -706,7 +719,7 @@
+ # MODEM=1: msm_sharedmem is rmt_storage's UIO buffer: loaded, so not blocked
+ [ "$MODEM" = 1 ] && BLOCK=${BLOCK% msm_sharedmem}
+ [ "$SDCARD" = 1 ] && BLOCK=${BLOCK/ sdhci-msm cqhci/}
+-[ "${WDT:-0}" = 1 ] && BLOCK="${BLOCK/ gh_virt_wdt qcom_wdt_core/} qcom_soc_wdt"
++[ "${WDT:-0}" != 0 ] && BLOCK="${BLOCK/ gh_virt_wdt qcom_wdt_core/} qcom_soc_wdt"
+ for b in $BLOCK; do echo "blocklist $b"; done > "$LM/modules.blocklist"
+ for b in $BLOCK; do grep -qx "$b.ko" "$LM/modules.load" && fail "blocked module $b in modules.load"; done
+ # no SD host driver in any set (phone 1 has a microSD, mmcblk1, that nothing may touch)

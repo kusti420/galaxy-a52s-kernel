@@ -1,0 +1,11 @@
+*.o
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+modules.order
+Module.symvers
+*.ko
+!*/out/*.ko
+.module-common.o
+__pycache__/

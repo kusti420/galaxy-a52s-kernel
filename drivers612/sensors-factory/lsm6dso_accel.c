@@ -673,6 +673,63 @@ void accel_factory_init_work(void)
 	}
 }
 
+#ifdef CONFIG_SEC_VIB_NOTIFIER
+/*
+ * a52sxq 6.12: vibrator on/off to the SSC (accelerometer masking while the motor runs), as 5.4
+ * (CONFIG_SEC_VIB_NOTIFIER=y, both ends built in there). Here the notifier chain lives in
+ * sec_vibrator.ko, which the ramdisks load in a LATER stage than adsp_factory_dlkm.ko. A direct
+ * call would make this module depend on sec_vibrator (load order + modules.dep change), so the
+ * two functions are looked up with symbol_get() once that module is there. A ramdisk whose
+ * sec_vibrator.ko does not export sec_vib_notifier_register: one line after the last try, no
+ * masking (as before this change). 5.4 registered before the workqueue existed; here the
+ * listener is only added after everything it uses is set up.
+ */
+#define A52_MOTOR_BIND_MS	2000
+#define A52_MOTOR_BIND_TRIES	90
+
+static void a52_motor_bind_work_fn(struct work_struct *work);
+static DECLARE_DELAYED_WORK(a52_motor_bind_work, a52_motor_bind_work_fn);
+static int a52_motor_bind_tries;
+static bool a52_motor_bound;
+
+static void a52_motor_bind_work_fn(struct work_struct *work)
+{
+	int (*reg)(struct notifier_block *nb);
+
+	if (a52_motor_bound)
+		return;
+	reg = symbol_get(sec_vib_notifier_register);
+	if (!reg) {
+		if (++a52_motor_bind_tries < A52_MOTOR_BIND_TRIES)
+			schedule_delayed_work(&a52_motor_bind_work, msecs_to_jiffies(A52_MOTOR_BIND_MS));
+		else
+			pr_err("[FACTORY] %s: no sec_vib_notifier_register after %d tries: no motor masking\n",
+				__func__, a52_motor_bind_tries);
+		return;
+	}
+	/* the reference on sec_vibrator.ko taken by symbol_get() is kept while registered */
+	a52_motor_bound = true;
+	reg(&pdata_motor->motor_nb);
+	pr_info("[FACTORY] %s: vibrator notifier registered (try %d)\n", __func__, a52_motor_bind_tries + 1);
+}
+
+static void a52_motor_unbind(void)
+{
+	int (*unreg)(struct notifier_block *nb);
+
+	cancel_delayed_work_sync(&a52_motor_bind_work);
+	if (!a52_motor_bound)
+		return;
+	unreg = symbol_get(sec_vib_notifier_unregister);
+	if (unreg) {
+		unreg(&pdata_motor->motor_nb);
+		symbol_put(sec_vib_notifier_unregister);
+		symbol_put(sec_vib_notifier_register);
+	}
+	a52_motor_bound = false;
+}
+#endif
+
 static int __init lsm6dso_accel_factory_init(void)
 {
 	adsp_factory_register(MSG_ACCEL, acc_attrs);
@@ -684,7 +741,7 @@ static int __init lsm6dso_accel_factory_init(void)
 
 	pdata_motor->motor_nb.notifier_call = ssc_motor_notify,
 	pdata_motor->motor_nb.priority = 1,
-	sec_vib_notifier_register(&pdata_motor->motor_nb);
+	/* a52sxq 6.12: registered by a52_motor_bind_work once sec_vibrator.ko is there (below) */
 
 	hrtimer_init(&pdata_motor->motor_stop_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	pdata_motor->motor_stop_timer.function = motor_stop_timer_func;
@@ -700,6 +757,7 @@ static int __init lsm6dso_accel_factory_init(void)
 	INIT_WORK(&pdata_motor->work_slpi_motor, slpi_motor_work_func);
 
 	atomic_set(&pdata_motor->motor_state, MOTOR_OFF);
+	schedule_delayed_work(&a52_motor_bind_work, msecs_to_jiffies(A52_MOTOR_BIND_MS));
 #endif
 	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
 	pdata->accel_wq = create_singlethread_workqueue("accel_wq");
@@ -716,6 +774,7 @@ static void __exit lsm6dso_accel_factory_exit(void)
 {
 	adsp_factory_unregister(MSG_ACCEL);
 #ifdef CONFIG_SEC_VIB_NOTIFIER
+	a52_motor_unbind();
 	if (atomic_read(&pdata_motor->motor_state) == MOTOR_ON)
 		hrtimer_cancel(&pdata_motor->motor_stop_timer);
 

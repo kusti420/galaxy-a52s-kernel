@@ -1,0 +1,42 @@
+diff --git a/drivers612/audio/audio-kernel/asoc/codecs/bolero/rx-macro.c b/drivers612/audio/audio-kernel/asoc/codecs/bolero/rx-macro.c
+index 7684bb5..ac23f74 100644
+--- a/drivers612/audio/audio-kernel/asoc/codecs/bolero/rx-macro.c
++++ b/drivers612/audio/audio-kernel/asoc/codecs/bolero/rx-macro.c
+@@ -3018,8 +3018,15 @@ static int rx_macro_iir_filter_info(struct snd_kcontrol *kcontrol,
+ 			(struct rx_macro_iir_filter_ctl *)kcontrol->private_value;
+ 	struct soc_bytes_ext *params = &ctl->bytes_ext;
+ 
+-	ucontrol->type = SNDRV_CTL_ELEM_TYPE_BYTES;
+-	ucontrol->count = params->max;
++	/* a52sxq (5.4 parity, 5.4 rx-macro.c:3328 SOC_SINGLE_MULTI_EXT(..., 255, 0, 5, ...)): the HAL's
++	 * mixer_paths.xml writes the five coefficients as integers (<ctl name="IIR0 Band1" id="0"
++	 * value="268435456"/>). As a BYTES control each value was cut to its low byte: all-zero
++	 * coefficients instead of unity gain, i.e. a muted sidetone filter.
++	 */
++	ucontrol->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	ucontrol->count = params->max / sizeof(u32);
++	ucontrol->value.integer.min = 0;
++	ucontrol->value.integer.max = 255;
+ 
+ 	return 0;
+ }
+@@ -3043,7 +3050,8 @@ static int rx_macro_iir_band_audio_mixer_get(struct snd_kcontrol *kcontrol,
+ 			get_iir_band_coeff(component, iir_idx, band_idx, coeff_idx);
+ 	}
+ 
+-	memcpy(ucontrol->value.bytes.data, &coeff[0], params->max);
++	for (coeff_idx = 0; coeff_idx < params->max / sizeof(u32); coeff_idx++)
++		ucontrol->value.integer.value[coeff_idx] = coeff[coeff_idx];
+ 
+ 	dev_dbg(component->dev, "%s: IIR #%d band #%d b0 = 0x%x\n"
+ 		"%s: IIR #%d band #%d b1 = 0x%x\n"
+@@ -3098,7 +3106,8 @@ static int rx_macro_iir_band_audio_mixer_put(struct snd_kcontrol *kcontrol,
+ 	if (!rx_macro_get_data(component, &rx_dev, &rx_priv, __func__))
+ 		return -EINVAL;
+ 
+-	memcpy(&coeff[0], ucontrol->value.bytes.data, params->max);
++	for (coeff_idx = 0; coeff_idx < params->max / sizeof(u32); coeff_idx++)
++		coeff[coeff_idx] = (u32)ucontrol->value.integer.value[coeff_idx];
+ 
+ 	/*
+ 	 * Mask top bit it is reserved

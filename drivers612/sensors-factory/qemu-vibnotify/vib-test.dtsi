@@ -1,0 +1,8 @@
+/* QEMU virt: the a52sxq dc_vibrator node without its enable GPIO (driver: "gpio isn't used") */
+/ {
+	dc_vibrator {
+		compatible = "samsung,dc_vibrator";
+		dc_vib,motor_type = "COINDC";
+		status = "okay";
+	};
+};

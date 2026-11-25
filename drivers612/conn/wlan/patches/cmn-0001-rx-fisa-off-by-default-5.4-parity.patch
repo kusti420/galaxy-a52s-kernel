@@ -1,0 +1,19 @@
+a52sxq: qca-wifi-host-cmn: RX FISA off by default (5.4 parity) for WIFI-09
+
+--- a/wlan_cfg/cfg_dp.h	2026-11-24 19:40:40.742691362 +0200
++++ b/wlan_cfg/cfg_dp.h	2026-11-24 19:40:40.753306239 +0200
+@@ -1088,8 +1088,13 @@
+  *
+  * </ini>
+  */
++/*
++ * a52sxq (2026-11-24, WIFI-09): default false as in the ROM's 5.4 qca-wifi-host-cmn (upstream 2.0.9: true;
++ * not set in the phone's ini). 5.4 builds FISA (CONFIG_RX_FISA=y) but never turns it on, so the phone's
++ * firmware and this RX path were never run with the flow search engine programmed. An ini value overrides.
++ */
+ #define CFG_DP_RX_FISA_ENABLE \
+-	CFG_INI_BOOL("dp_rx_fisa_enable", true, \
++	CFG_INI_BOOL("dp_rx_fisa_enable", false, \
+ 		     "Enable/Disable DP Rx FISA")
+ 
+ #define CFG_DP_RXDMA_MONITOR_RX_DROP_THRESHOLD \

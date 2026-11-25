@@ -135,5 +135,10 @@ tearcheck/VRR timing at 120 Hz, fingerprint HBM timing (vsync-based in S23, TE-G
 - `mask_brightness` store drives the finger mask again (see USERSPACE-CONTRACT.md).
 - `sde_color_processing.c`: a 5.4-size `drm_msm_sixzone` blob is zero-extended instead of
   rejected (the 5.4 struct is a prefix of r7's).
-- Not done: dynamic MIPI clock (`CONFIG_DEV_RIL_BRIDGE`): it makes msm_drm depend on
-  dev_ril_bridge.ko, which the realboot/kexec module lists must then ship before msm_drm.
+- Dynamic MIPI clock (`CONFIG_DEV_RIL_BRIDGE`), patch 0009, 2026-11-24, built, not on a phone: the
+  RF band listener is registered with `symbol_get()` from a delayed work (2 s x 90 tries), so msm_drm
+  does not depend on dev_ril_bridge.ko and the module lists stay as they are (dev_ril_bridge loads
+  after msm_drm). `msm_drm a52_dyn_mipi=` 0 off / 1 (default) nothing changes on the panel until the
+  first band report found in the DT table / 2 as 5.4; writing 0 at run time stops further switching.
+  Only One UI's `libsec-ril.so` writes /dev/drb; on LineageOS / IchthysOS the listener never fires.
+  Same patch: `temperature` reads the 5.4 table. Module: `out-p1/`, test steps: SPEC/01 section 13.

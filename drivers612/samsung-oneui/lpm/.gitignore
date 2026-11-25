@@ -1,0 +1,10 @@
+tree/
+*.o
+*.cmd
+*.mod
+*.mod.c
+.*
+!.gitignore
+modules.order
+Module.symvers
+/a52sxq_lpm_nodes.ko

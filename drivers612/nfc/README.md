@@ -35,7 +35,7 @@ because `android.hardware.nfc-service.sec` cannot open `/dev/sec-nfc`.
 | Path | What |
 |---|---|
 | `port.sh` | Regenerates `orig/` + `src/` from the phone's read-only 5.4 `drivers/nfc`, applies `patches/*.patch`, builds, fills `stage/` and `pack-nfc.tgz` |
-| `patches/0001-sec-nfc-6.12.patch` | The complete change record (5 files, +159 / -56). `mkpatch.sh` regenerates it from `diff orig src` |
+| `patches/0001-sec-nfc-6.12.patch` | The complete change record (5 files, +234 / -57). `mkpatch.sh` regenerates it from `diff orig src` |
 | `Kbuild` | Copied into `src/`; the 5.4 Makefile + the a52sxq config switches as `-D` |
 | `build.sh` | Compile check only; fails on any warning/error; log `build.log` |
 | `orig/`, `src/` | Untouched 5.4 sources (+ Kconfig/Makefile for reference) / ported sources + `nfc_sec.ko` |
@@ -44,6 +44,7 @@ because `android.hardware.nfc-service.sec` cannot open `/dev/sec-nfc`.
 | `nfctest/` | Static arm64 test tool (kernel nolibc) using `/dev/sec-nfc` the way the HAL does |
 | `nfc-test.sh` | First on-device test (busybox ramdisk) |
 | `stage/` | Module stage for `drivers612/androidboot/pack-kexec-rd.sh` (`load.list` + `00-nfc_sec.ko`) |
+| `out/nfc_sec.ko` | Copy of `src/nfc_sec.ko` with debug info and `.BTF` removed (made by hand like `drivers612/samsung-oneui/build.sh`: `llvm-strip --strip-debug`, `llvm-objcopy --remove-section=.BTF --remove-section=.BTF.base`); not written by `port.sh` |
 | `pack-nfc.tgz` | `KX_PACK` for the ramdisk test: stripped `nfc_sec.ko`, the SE9 I2C controller modules (`msm_gpi`, `i2c-msm-geni` from `bsp612/out/dist`), `nfctest`, `nfc-test.sh` |
 
 ## Build
@@ -88,6 +89,8 @@ Behaviour (bugs that bite on a module build or on 6.12):
     this module uses its own `nfc_sec.nfc_param_lpcharge=1` (default: PVDD on, = normal boot).
 11. `MODULE_DEVICE_TABLE(of, ...)` added (autoload alias); i2c id table `const`.
 
+12. `/sys/class/nfc_sec/pvdd` added for the OneUI init script (see "Userspace contract").
+
 Kept on purpose: the -ENODEV "mask" returned by `poll()` on a closed device (every bit set, so
 the HAL's `select()` wakes and its `read()` gets -ENODEV, exactly as on 5.4); IRQF_NO_SUSPEND +
 `enable_irq_wake` on the data IRQ (`DUPLICATED_IRQ_WQ_QC`); the unbalanced wake enable on
@@ -119,9 +122,20 @@ Kept unchanged:
   the IRQ (TLMM 41, rising) fired; IRQs during a mode change are skipped until the first write.
   The HAL reads a 3-byte NCI header (4 in bootloader mode), then the payload.
 - sysfs: `/sys/class/nfc_sec/nfc_support` (0444, empty read, logs), `/sys/class/nfc_test/test`
-  (0444, bootloader-version self-test). `/sys/class/nfc_sec/pvdd` does NOT exist (only with
-  `NFC_PVDD_LATE_ENABLE`, off on 5.4 too): the `write /sys/class/nfc_sec/pvdd` lines in
-  `init.nfc.samsung.rc` fail harmlessly, as on 5.4.
+  (0444, bootloader-version self-test).
+
+Added (not on the phone's 5.4 kernel):
+- `/sys/class/nfc_sec/pvdd` (0200, write-only, exists while the driver is bound). The OneUI
+  `init.nfc.samsung.rc` writes "1" (late-init), "2" (post-fs-data), "3" (boot). The 5.4 A52s
+  kernel had no such node (`# CONFIG_NFC_PVDD_LATE_ENABLE is not set`; the writes failed with
+  ENOENT) and enabled PVDD in probe. Samsung's stores (5.4 `NFC_PVDD_LATE_ENABLE` code, S26
+  `nxp_combined/common.c`) are write-only, enable PVDD on '1' only (late enable) and only log
+  other values. Here "1", "2" and "3" all mean "ensure PVDD on": no-op when probe enabled it
+  (normal), one `regulator_enable()` if probe could not; never disables, skipped in LPM
+  (`nfc_param_lpcharge=1`), other values only logged, the write always returns its length.
+  Probe and the store share `sec_nfc_pvdd_ensure_on()` (mutex + `pvdd_enabled`), so the
+  regulator reference is taken once and dropped once in remove. `/proc/nfclog` lines:
+  `pvdd val: 1, already on` / `enabled` / `regulator stays off at LPM`.
 - `/proc/nfclog` (0444, 128 KiB ring), wakeup sources `nfc_wake_lock`, `nfc_clk_wake_lock`,
   IRQ names `sec-nfc` and `sec-nfc_clk`, module name `nfc_sec` (+ param `nfc_param_lpcharge`).
 

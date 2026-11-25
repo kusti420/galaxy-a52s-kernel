@@ -1,0 +1,56 @@
+/* QEMU virt additions for the sx9360 smoke test (appended into the dumped virt dts by run.sh).
+ * pl061@9030000 (phandle 0x8007) gets interrupt-controller so the grip nIRQ can map.
+ * Bus 1: the a52sxq i2c-gpio node shape (incl. Samsung's address-cells typo) on pl061 lines 4/5,
+ *        sx9360 child with nIRQ 0 / vdd_en 1: no chip answers -> probe must fail cleanly (-ENODEV).
+ * Bus 2: sxfake (test adapter + register file) with the r02 setup values, nIRQ 6 / vdd_en 7. */
+&{/pl061@9030000} {
+	interrupt-controller;
+	#interrupt-cells = <2>;
+};
+
+/ {
+	i2c@17 {
+		status = "ok";
+		cell-index = <0x11>;
+		compatible = "i2c-gpio";
+		gpios = <0x8007 4 0 0x8007 5 0>;
+		i2c-gpio,delay-us = <0x2>;
+		address-cells = <0x1>;
+		size-cells = <0x0>;
+
+		sx9360-i2c@28 {
+			compatible = "sx9360";
+			reg = <0x28>;
+			interrupt-parent = <0x8007>;
+			interrupts = <0x0 0x0>;
+			sx9360,nirq-gpio = <0x8007 0x0 0x0>;
+			sx9360,vdd_en = <0x8007 0x1 0x0>;
+			sx9360,reggnrlctrl2_reg = <0x32>;
+		};
+	};
+
+	sxfake {
+		compatible = "a52sxq,sxfake-i2c";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sx9360-i2c@28 {
+			compatible = "sx9360";
+			reg = <0x28>;
+			interrupt-parent = <0x8007>;
+			interrupts = <0x6 0x0>;
+			sx9360,nirq-gpio = <0x8007 0x6 0x0>;
+			sx9360,reggnrlctrl2_reg = <0x32>;
+			sx9360,againfreq_reg = <0x38>;
+			sx9360,refagainfreq_reg = <0x36>;
+			sx9360,gainrawfilt_reg = <0x1a>;
+			sx9360,refgainrawfilt_reg = <0x22>;
+			sx9360,proxthresh_reg = <0x22>;
+			sx9360,hyst_reg = <0x15>;
+			sx9360,regproxctrl3_reg = <0xc>;
+			sx9360,resolution_reg = <0xf>;
+			sx9360,refresolution_reg = <0xf>;
+			sx9360,vdd_en = <0x8007 0x7 0x0>;
+		};
+	};
+};

@@ -1,0 +1,46 @@
+
+# WALT cpufreq governor (drivers612/SPEC/08-walt-governor.md; fragment a52sxq-walt.rc.in, appended by
+# build-realboot.sh WALT=1 on ADDON=vendor builds). The ROM's 5.4 post_boot script sets "schedutil" on all
+# three policies (on 5.4 that name WAS the WALT governor) and ends with `setprop vendor.post_boot.parsed 1`;
+# these actions hang on that property, so they always run after it and win. Plain init `write` lines:
+# vendor_init may write every cpufreq sysfs file, no exec domain, no policy change.
+# Switch (root): setprop persist.vendor.a52sxq.walt_gov 0 = schedutil again (now and on every boot),
+# 1 or unset = WALT. Unset is ON: the default action comes first, the =0 action is queued after it.
+# NOT here: /proc/sys/walt (sched_upmigrate ...): labelled plain proc, vendor_init may not write it.
+on property:vendor.post_boot.parsed=1 && property:ro.boot.a52sxq.@KT@=1
+    trigger a52sxq-walt-on
+
+on property:vendor.post_boot.parsed=1 && property:ro.boot.a52sxq.@KT@=1 && property:persist.vendor.a52sxq.walt_gov=1
+    trigger a52sxq-walt-on
+
+on property:vendor.post_boot.parsed=1 && property:ro.boot.a52sxq.@KT@=1 && property:persist.vendor.a52sxq.walt_gov=0
+    trigger a52sxq-walt-off
+
+on a52sxq-walt-off
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor schedutil
+    write /sys/devices/system/cpu/cpufreq/policy4/scaling_governor schedutil
+    write /sys/devices/system/cpu/cpufreq/policy7/scaling_governor schedutil
+
+on a52sxq-walt-on
+    write /sys/devices/system/cpu/cpufreq/policy0/scaling_governor "walt"
+    write /sys/devices/system/cpu/cpufreq/policy0/walt/down_rate_limit_us "0"
+    write /sys/devices/system/cpu/cpufreq/policy0/walt/up_rate_limit_us "0"
+    write /sys/devices/system/cpu/cpufreq/policy0/walt/hispeed_freq "1152000"
+    write /sys/devices/system/cpu/cpufreq/policy0/walt/pl "0"
+    write /sys/devices/system/cpu/cpufreq/policy0/walt/rtg_boost_freq "691200"
+    write /sys/devices/system/cpu/cpufreq/policy4/scaling_governor "walt"
+    write /sys/devices/system/cpu/cpufreq/policy4/walt/down_rate_limit_us "0"
+    write /sys/devices/system/cpu/cpufreq/policy4/walt/up_rate_limit_us "0"
+    write /sys/devices/system/cpu/cpufreq/policy4/walt/hispeed_freq "1228800"
+    write /sys/devices/system/cpu/cpufreq/policy4/walt/hispeed_load "85"
+    write /sys/devices/system/cpu/cpufreq/policy4/walt/rtg_boost_freq "0"
+    write /sys/devices/system/cpu/cpufreq/policy4/walt/pl "0"
+    write /sys/devices/system/cpu/cpufreq/policy4/walt/boost "-6"
+    write /sys/devices/system/cpu/cpufreq/policy7/scaling_governor "walt"
+    write /sys/devices/system/cpu/cpufreq/policy7/walt/down_rate_limit_us "0"
+    write /sys/devices/system/cpu/cpufreq/policy7/walt/up_rate_limit_us "0"
+    write /sys/devices/system/cpu/cpufreq/policy7/walt/hispeed_freq "1324800"
+    write /sys/devices/system/cpu/cpufreq/policy7/walt/hispeed_load "85"
+    write /sys/devices/system/cpu/cpufreq/policy7/walt/rtg_boost_freq "0"
+    write /sys/devices/system/cpu/cpufreq/policy7/walt/pl "0"
+    write /sys/devices/system/cpu/cpufreq/policy7/walt/boost "-6"

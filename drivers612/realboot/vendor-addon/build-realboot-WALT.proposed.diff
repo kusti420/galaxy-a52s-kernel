@@ -1,0 +1,48 @@
+APPLIED 2026-11-25 to build-realboot.sh (plus the governor guard: modules/dspboot/a52sxq_walt_guard.inc + mk-walt-source.py). Was: PROPOSED, NOT APPLIED (SPEC/08-walt-governor.md, 2026-11-24). For the kernel-line owner of build-realboot.sh:
+adds the opt-in option WALT=1; WALT unset/0 leaves every output byte as it is (no default changes).
+Apply from the repo root: patch -p1 < drivers612/realboot/vendor-addon/build-realboot-WALT.proposed.diff
+Never built with WALT=1; the rc path (ADDON=vendor) and the table path (ADDON=vendor_boot) are both untested.
+
+--- a/drivers612/realboot/build-realboot.sh	2026-11-24 19:58:11.714558015 +0200
++++ b/drivers612/realboot/build-realboot.sh	2026-11-24 19:58:11.724735736 +0200
+@@ -118,6 +118,10 @@
+ #   SOCSTATS=1 NTFS3=1 USBACC=1 ZRAM_LZ4=1 (2026-11-24, default off) qcom_stats / ntfs3 / USB Ethernet set in the first
+ #                     stage, zram.ko with lz4 as the default compressor: see the comments at the options
+ #   USERSPACE=samsung|aosp (default auto = nothing on the cmdline) a52sxq.userspace= on the vendor cmdline (a52sxq.ko)
++#   WALT=1            (default 0 = no change) cpufreq governor walt + the 5.4 post_boot governor tunables
++#                     (vendor-addon/a52sxq-walt.conf, SPEC/08): ADDON=vendor_boot: appended to a52sxq_dsp_boot's
++#                     built-in table (applied at the WALT boost release); ADDON=vendor: rc fragment
++#                     a52sxq-walt.rc.in on vendor.post_boot.parsed (switch persist.vendor.a52sxq.walt_gov)
+ #   HOLD_MS=<ms>      (default unset = the module's 4000) a52sxq_dsp_boot hold_release_ms: ms after adsp_running until the
+ #                     held audio tree is released (boot time: the sound card and audioserver come up that much later)
+ #   ASYNC_MODS="m ..." (default none) async_probe=1 for these first-stage modules (boot time)
+@@ -413,6 +417,8 @@
+ 	# never votes CPU_DMA_LATENCY 0
+ 	case "${UFS_QOS:-1}" in 0) echo "devices/platform/soc/1d84000.ufshc/pm_qos_enable 0" >> "$W/dspboot/extra.conf";; 1) ;; *) fail "UFS_QOS: 0 or 1";; esac
+ 	case "${UFS_CLKSCALE:-1}" in 0) echo "devices/platform/soc/1d84000.ufshc/clkscale_enable 0" >> "$W/dspboot/extra.conf";; 1) ;; *) fail "UFS_CLKSCALE: 0 or 1";; esac
++	# WALT=1 (SPEC/08): governor walt + its tunables, last in the table (after the bus DCVS rows)
++	case "${WALT:-0}" in 1) grep -vE '^[[:space:]]*(#|$)' "$HERE/vendor-addon/a52sxq-walt.conf" >> "$W/dspboot/extra.conf";; 0) ;; *) fail "WALT: 0 or 1";; esac
+ 	python3 -I - "$W/dspboot/a52sxq_tunables.h" "$TOP/drivers612/busdcvs/busdcvs.conf" "$W/dspboot/extra.conf" <<'PYEOF'
+ import sys
+ rows = []
+@@ -844,6 +850,12 @@
+ 	NW=$(grep -c '^    write /sys/' "$VA/etc/init/a52sxq-$KT.rc")
+ 	[ "$NW" = "$(grep -cvE '^[[:space:]]*(#|$)' "$BUSDCVS_CONF")" ] || fail "bus DCVS rc: $NW writes for $(grep -cvE '^[[:space:]]*(#|$)' "$BUSDCVS_CONF") conf lines"
+ 	say "vendor rc: $NW bus-DCVS writes on sys.boot_completed (busdcvs.conf $(sha256sum < "$BUSDCVS_CONF" | cut -c1-16))"
++	if [ "${WALT:-0}" = 1 ]; then
++		sed -e "s|@KT@|$KT|g" "$HERE/vendor-addon/a52sxq-walt.rc.in" >> "$VA/etc/init/a52sxq-$KT.rc"
++		grep -q '@[A-Z_]*@' "$VA/etc/init/a52sxq-$KT.rc" && fail "unreplaced placeholder in a52sxq-$KT.rc (WALT)"
++		[ "$(grep -c '/walt/\|scaling_governor "walt"' "$VA/etc/init/a52sxq-$KT.rc")" = "$(grep -cvE '^[[:space:]]*(#|$)' "$HERE/vendor-addon/a52sxq-walt.conf")" ] || fail "WALT rc: write count differs from a52sxq-walt.conf (regenerate a52sxq-walt.rc.in)"
++		say "vendor rc: WALT governor + tunables on vendor.post_boot.parsed (persist.vendor.a52sxq.walt_gov=0 reverts)"
++	fi
+ }
+ say "late (vendor /vendor/lib/modules/$KV, after the ADSP): $(wc -l < "$W/plan/late.load") modules; wlan: $(cat "$W/plan/wlan.load") in /vendor/lib/modules/$WLD"
+ cp "$W/plan/plan.txt" "$O/module-plan.txt"
+@@ -1360,6 +1372,7 @@
+ sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} lpm=${LPM:-0} hold_ms=${HOLD_MS:-} ice_raw=${ICE_RAW:-0} ice_kat_fail=${ICE_KAT_FAIL:-0} ufs_poll_ms=${UFS_POLL_MS:-} ufs_qos=${UFS_QOS:-1} ufs_clkscale=${UFS_CLKSCALE:-1} ufs_wb=${UFS_WB:-} modload=${MODLOAD:-} modload_seq=$(echo ${MODLOAD_SEQ:-} | tr ' ' '+') async_mods=$(echo ${ASYNC_MODS:-} | tr " " "+") async_last=$(echo ${ASYNC_LAST:-} | tr ' ' '+') strip_btf=${STRIP_BTF:-0} thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
+ sed -i "s/\$/ argos=${ARGOS:-0} proca_magic=${PROCA_MAGIC:-0} shm_bridge_off=${SHM_BRIDGE_OFF:-0}/" "$O/BUILDINFO"
+ sed -i "s/\$/ ksu_builtin=${KSU_BUILTIN:-0}/" "$O/BUILDINFO"
++sed -i "s/\$/ walt=${WALT:-0}/" "$O/BUILDINFO"
+ sed -i "s/\$/ socstats=${SOCSTATS:-0} ntfs3=${NTFS3:-0} usbacc=${USBACC:-0} zram_lz4=${ZRAM_LZ4:-0} userspace=${USERSPACE:-auto}/" "$O/BUILDINFO"
+ if [ "$DIAG_KERNEL" = 1 ]; then cp "$(dirname "$IMAGE")/BUILDINFO" "$O/diag-kernel.BUILDINFO"; fi
+ say "== summary"

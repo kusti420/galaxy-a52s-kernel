@@ -1,0 +1,4 @@
+system	/system	erofs	ro	wait,logical,first_stage_mount
+vendor	/vendor	erofs	ro	wait,logical,first_stage_mount
+product	/product	erofs	ro	wait,logical,first_stage_mount
+odm	/odm	erofs	ro	wait,logical,first_stage_mount

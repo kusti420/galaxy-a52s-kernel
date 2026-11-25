@@ -1,0 +1,223 @@
+--- orig/qcom_wdt_core.c	2026-11-24 19:31:51.470835492 +0200
++++ qcom_wdt_core.c	2026-11-24 19:32:43.689922414 +0200
+@@ -41,6 +41,33 @@
+ 
+ static struct msm_watchdog_data *wdog_data;
+ 
++/*
++ * a52sxq OneUI variant (drivers612/samsung-oneui/wdt, WDT-ONEUI.md). Differences to the soc-repo file:
++ *  - bark_ms / pet_ms module parameters (Kconfig values were compile-time only); default bark 20 s so that
++ *    one completely missed pet period (2 * 9.36 s + timer wheel slack) does not bark. The bark handler bites
++ *    at once, so "bark" is the real limit.
++ *  - bite_on_panic (default off): a panic takes the normal restart path, as on every build without the
++ *    watchdog. Stock (CONFIG_QCOM_FORCE_WDOG_BITE_ON_PANIC) turns every panic into a watchdog reset.
++ *  - times handed to the hypervisor are clamped (its SET_TIME takes u16 milliseconds).
++ *  - suspend: a watchdog that cannot be disabled aborts the suspend instead of sleeping armed and unpetted;
++ *    resume records whether enabling worked.
++ *  - a52_stats (read-only) for verification on the phone.
++ */
++#define A52_WDT_MAX_MS	60000U
++static unsigned int bark_ms = 20000;
++module_param(bark_ms, uint, 0444);
++MODULE_PARM_DESC(bark_ms, "bark time in ms (bite = bark + 3 s); the bark handler bites");
++static unsigned int pet_ms = QCOM_WATCHDOG_PET_TIME;
++module_param(pet_ms, uint, 0444);
++static bool bite_on_panic;
++module_param(bite_on_panic, bool, 0444);
++MODULE_PARM_DESC(bite_on_panic, "1 = stock: end a panic with a watchdog bite instead of the normal restart");
++
++static struct {
++	atomic_t pets, suspends, resumes, suspend_aborts, resume_enable_fails;
++	u64 max_gap_ns;
++} a52_stats;
++
+ static void qcom_wdt_dump_cpu_alive_mask(struct msm_watchdog_data *wdog_dd)
+ {
+ 	static char alive_mask_buf[MASK_SIZE];
+@@ -185,19 +212,32 @@
+ 	spin_unlock(&wdog_data->freeze_lock);
+ 	wdog_data->ops->reset_wdt(wdog_data);
+ 	del_timer_sync(&wdog_data->pet_timer);
+-	if (wdog_data->wakeup_irq_enable) {
+-		if (wdog_data->hibernate || (pm_suspend_target_state == PM_SUSPEND_MEM) ||
+-				(pm_suspend_target_state == PM_SUSPEND_TO_IDLE)) {
+-			wdog_data->ops->disable_wdt(wdog_data);
+-			wdog_data->enabled = false;
++	if (!wdog_data->wakeup_irq_enable || wdog_data->hibernate ||
++	    (pm_suspend_target_state == PM_SUSPEND_MEM) ||
++	    (pm_suspend_target_state == PM_SUSPEND_TO_IDLE)) {
++		if (wdog_data->enabled && wdog_data->ops->disable_wdt(wdog_data)) {
++			/*
++			 * a52: still armed. Sleeping now would leave it without pets, so
++			 * put the pet timer back and refuse this suspend (the PM core does
++			 * not call resume_early for the device whose suspend_late failed).
++			 */
++			spin_lock(&wdog_data->freeze_lock);
++			wdog_data->pet_timer.expires = jiffies +
++				msecs_to_jiffies(wdog_data->pet_time);
++			add_timer(&wdog_data->pet_timer);
++			wdog_data->freeze_in_progress = false;
++			spin_unlock(&wdog_data->freeze_lock);
++			if (wdog_data->user_pet_enabled)
++				mod_timer(&wdog_data->user_pet_timer, jiffies +
++					msecs_to_jiffies(wdog_data->bark_time + 3 * 1000));
++			atomic_inc(&a52_stats.suspend_aborts);
++			dev_err(dev, "watchdog could not be disabled: suspend refused\n");
++			return -EBUSY;
+ 		}
+-		wdog_data->last_pet = sched_clock();
+-		return 0;
++		wdog_data->enabled = false;
+ 	}
+-
+-	wdog_data->ops->disable_wdt(wdog_data);
+-	wdog_data->enabled = false;
+ 	wdog_data->last_pet = sched_clock();
++	atomic_inc(&a52_stats.suspends);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(qcom_wdt_pet_suspend);
+@@ -211,6 +251,19 @@
+  *  This will cause the watchdog counter to be reset and resumed.
+  *
+  */
++/* a52: "enabled" follows what the backend reports; a failed enable = no watchdog (and no bite) until the next resume */
++static void a52_wdt_reenable(u32 val, struct msm_watchdog_data *wdog_data)
++{
++	if (wdog_data->enabled)
++		return;
++	if (wdog_data->ops->enable_wdt(val, wdog_data)) {
++		atomic_inc(&a52_stats.resume_enable_fails);
++		dev_err(wdog_data->dev, "watchdog could not be enabled after resume\n");
++		return;
++	}
++	wdog_data->enabled = true;
++}
++
+ int qcom_wdt_pet_resume(struct device *dev)
+ {
+ 	uint32_t val;
+@@ -240,18 +293,18 @@
+ 			wdog_data->ops->set_bark_time(wdog_data->bark_time, wdog_data);
+ 			wdog_data->ops->set_bite_time(wdog_data->bark_time + 3 * 1000, wdog_data);
+ 			val |= BIT(UNMASKED_INT_EN);
+-			wdog_data->ops->enable_wdt(val, wdog_data);
+-			wdog_data->enabled = true;
++			a52_wdt_reenable(val, wdog_data);
+ 		}
+ 		wdog_data->ops->reset_wdt(wdog_data);
+ 		wdog_data->last_pet = sched_clock();
++		atomic_inc(&a52_stats.resumes);
+ 		return 0;
+ 	}
+ 
+-	wdog_data->ops->enable_wdt(val, wdog_data);
++	a52_wdt_reenable(val, wdog_data);
+ 	wdog_data->ops->reset_wdt(wdog_data);
+-	wdog_data->enabled = true;
+ 	wdog_data->last_pet = sched_clock();
++	atomic_inc(&a52_stats.resumes);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(qcom_wdt_pet_resume);
+@@ -260,11 +313,12 @@
+ static void qcom_wdt_reset_on_oops(struct msm_watchdog_data *wdog_dd,
+ 			int timeout)
+ {
++	/* a52: clamped, the hypervisor takes u16 ms (panic=60 would become 4.4 s) */
++	u32 ms = clamp_t(long, ((long)timeout + 10) * 1000, 1000, A52_WDT_MAX_MS);
++
+ 	wdog_dd->ops->reset_wdt(wdog_dd);
+-	wdog_dd->ops->set_bark_time((timeout + 10) * 1000,
+-					wdog_dd);
+-	wdog_dd->ops->set_bite_time((timeout + 10) * 1000,
+-					wdog_dd);
++	wdog_dd->ops->set_bark_time(ms, wdog_dd);
++	wdog_dd->ops->set_bite_time(ms, wdog_dd);
+ }
+ 
+ static int qcom_wdt_panic_handler(struct notifier_block *this,
+@@ -343,7 +397,7 @@
+ {
+ 	struct msm_watchdog_data *wdog_dd = container_of(this,
+ 				struct msm_watchdog_data, restart_blk);
+-	if (WDOG_BITE_ON_PANIC && wdog_dd->in_panic) {
++	if (bite_on_panic && wdog_dd->in_panic) {
+ 		/*
+ 		 * Trigger a watchdog bite here and if this fails,
+ 		 * device will take the usual restart path.
+@@ -505,6 +559,19 @@
+ }
+ static DEVICE_ATTR_ADMIN_RW(wakeup_enable);
+ 
++static ssize_t a52_stats_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct msm_watchdog_data *wdog_dd = dev_get_drvdata(dev);
++
++	return scnprintf(buf, PAGE_SIZE,
++		"enabled=%d bark_ms=%u bite_ms=%u pet_ms=%u bite_on_panic=%d pets=%d max_pet_gap_ms=%llu suspends=%d resumes=%d suspend_aborts=%d resume_enable_fails=%d\n",
++		wdog_dd->enabled, wdog_dd->bark_time, wdog_dd->bark_time + 3000, wdog_dd->pet_time,
++		bite_on_panic, atomic_read(&a52_stats.pets), a52_stats.max_gap_ns / NSEC_PER_MSEC,
++		atomic_read(&a52_stats.suspends), atomic_read(&a52_stats.resumes),
++		atomic_read(&a52_stats.suspend_aborts), atomic_read(&a52_stats.resume_enable_fails));
++}
++static DEVICE_ATTR_RO(a52_stats);
++
+ static void qcom_wdt_keep_alive_response(void *info)
+ {
+ 	struct msm_watchdog_data *wdog_dd = info;
+@@ -584,10 +651,16 @@
+ 		wdog_dd->timer_expired = false;
+ 		wdog_dd->user_pet_complete = !wdog_dd->user_pet_enabled;
+ 
++		/* a52: delay_time was only set while enabled (0 = busy timer after a failed enable) */
++		delay_time = msecs_to_jiffies(wdog_dd->pet_time);
+ 		if (wdog_dd->enabled) {
+-			delay_time = msecs_to_jiffies(wdog_dd->pet_time);
++			u64 now = sched_clock();
++
+ 			wdog_dd->ops->reset_wdt(wdog_dd);
+-			wdog_dd->last_pet = sched_clock();
++			if (now - wdog_dd->last_pet > a52_stats.max_gap_ns)
++				a52_stats.max_gap_ns = now - wdog_dd->last_pet;
++			atomic_inc(&a52_stats.pets);
++			wdog_dd->last_pet = now;
+ 		}
+ 		/* Check again before scheduling
+ 		 * Could have been changed on other cpu
+@@ -649,6 +722,8 @@
+ 
+ 	mutex_unlock(&wdog_dd->disable_lock);
+ 	device_remove_file(wdog_dd->dev, &dev_attr_disable);
++	device_remove_file(wdog_dd->dev, &dev_attr_wakeup_enable);
++	device_remove_file(wdog_dd->dev, &dev_attr_a52_stats);
+ 	if (wdog_dd->irq_ppi)
+ 		free_percpu((void __percpu *)wdog_dd->wdog_cpu_dd);
+ 	irq_dispose_mapping(wdog_dd->bark_irq);
+@@ -738,6 +813,7 @@
+ 
+ 	error |= device_create_file(wdog_dd->dev, &dev_attr_disable);
+ 	error |= device_create_file(wdog_dd->dev, &dev_attr_wakeup_enable);
++	error |= device_create_file(wdog_dd->dev, &dev_attr_a52_stats);
+ 	if (QCOM_WATCHDOG_USERSPACE_PET) {
+ 		error |= device_create_file(wdog_dd->dev, &dev_attr_pet_time);
+ 		error |= device_create_file(wdog_dd->dev,
+@@ -865,8 +941,9 @@
+ {
+ 	pdata->bark_irq = platform_get_irq(pdev, 0);
+ 	pdata->irq_ppi = irq_is_percpu(pdata->bark_irq);
+-	pdata->bark_time = QCOM_WATCHDOG_BARK_TIME;
+-	pdata->pet_time = QCOM_WATCHDOG_PET_TIME;
++	/* a52: parameters, kept inside what the hypervisor takes and with bark > pet */
++	pdata->pet_time = clamp(pet_ms, 1000U, 30000U);
++	pdata->bark_time = clamp(bark_ms, pdata->pet_time + 1000, A52_WDT_MAX_MS - 3000);
+ 	pdata->do_ipi_ping = QCOM_WATCHDOG_IPI_PING;
+ 	pdata->wakeup_irq_enable = QCOM_WATCHDOG_WAKEUP_ENABLE;
+ 	qcom_wdt_dump_pdata(pdata);
+@@ -926,5 +1003,5 @@
+ }
+ EXPORT_SYMBOL(qcom_wdt_register);
+ 
+-MODULE_DESCRIPTION("QCOM Watchdog Driver Core");
++MODULE_DESCRIPTION("QCOM Watchdog Driver Core (a52sxq OneUI variant)");
+ MODULE_LICENSE("GPL");

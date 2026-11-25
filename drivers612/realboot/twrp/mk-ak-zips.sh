@@ -16,6 +16,8 @@
 #   vendor-addon/                      the /vendor add-on (ADDON=vendor builds; none for ADDON=vendor_boot)
 # Self-check: the host build of a52boot must rebuild <src>'s three images byte for byte from the
 # ROM images they were built from (DUMP=<dir>, default: REPORT.txt's dump= or the pkg's stock tar).
+# The kernel-only zip (no vendor-addon/) is ROM-generic: update-binary accepts any Android ROM of the SM-A528B and
+# only warns on ROMs it was not tested with; a zip with vendor-addon/ stays LineageOS 24 only.
 # Env: NAME (default: <src>'s name), TITLE, DUMP, CHECK_DUMPS (more "<dir>" ROM image dirs that
 # must give valid images too: AVB footer verifies, ROM ramdisk kept), LEAK_EXTRA (privacy grep).
 # Output: a52s-k612-<name>-twrp.zip, a52s-k612-restore-twrp.zip, README-TWRP.txt, SHA256SUMS.
@@ -88,9 +90,19 @@ if [ -n "${DUMP:-}" ]; then
 	"$AKH" mkvendor "$DUMP/vendor_boot.img" "$K/vendor_boot.dtb" "$K/vendor-cmdline.txt" "$K/vendor-ramdisk-a52.cpio.lz4" "$ST/c-vendor_boot.img" > /dev/null
 	"$AKH" mkdtbo "$DUMP/dtbo.img" "$K/dtbo.raw" "$ST/c-dtbo.img" > /dev/null
 	for i in boot vendor_boot dtbo; do
-		cmp -s "$ST/c-$i.img" "$IMG/$i.img" || die "self-check: $i.img made from $DUMP differs from $IMG/$i.img"
+		if cmp -s "$ST/c-$i.img" "$IMG/$i.img"; then continue; fi
+		# OneUI 9 port: the build signs with the ROM's key (UN1CA testkey), a52boot (on the phone) writes the same
+		# vbmeta unsigned: then everything but the signature must match: content incl. the AVB padding, digest, salt
+		avbtool info_image --image "$IMG/$i.img" | grep -q 'Algorithm: *NONE' && die "self-check: $i.img made from $DUMP differs from $IMG/$i.img"
+		o=$(avbtool info_image --image "$IMG/$i.img" | sed -n 's/^Original image size: *\([0-9]*\) bytes/\1/p')
+		cmp -s <(head -c "$o" "$ST/c-$i.img") <(head -c "$o" "$IMG/$i.img") || die "self-check: $i.img content made from $DUMP differs from $IMG/$i.img"
+		diff <(avbtool info_image --image "$IMG/$i.img" | grep -E 'Original image size|Image Size|Digest|Salt|Partition Name|Prop') \
+			<(avbtool info_image --image "$ST/c-$i.img" | grep -E 'Original image size|Image Size|Digest|Salt|Partition Name|Prop') >/dev/null \
+			|| die "self-check: $i.img footer (digest/salt/props) made from $DUMP differs from $IMG/$i.img"
+		"$AKH" info "$ST/c-$i.img" | grep -qx avb_hash_ok=1 || die "self-check: AVB hash of $i.img made from $DUMP does not verify"
+		echo "  $i: equal to the build except the signature (build: signed with the ROM's key; zip: unsigned on the phone)"
 	done
-	echo "  boot, vendor_boot, dtbo: byte-identical to the build"
+	echo "  boot, vendor_boot, dtbo: match the build"
 	rm -f "$ST"/c-*.img
 else
 	echo "WARNING: no DUMP (ROM images of the build): byte-identical self-check skipped"
@@ -123,6 +135,8 @@ stage_meta() { # <dir> <mode> <title> <need tmp kb>
 		echo "NEED_TMP_KB=$4"
 		# ICE_RAW=1 builds (ICE legacy mode, standard keys only): the installer refuses ROMs with wrappedkey in fstab
 		echo "ICE_RAW=$ICE_RAW"
+		# no ROM keys: a kernel-only zip (ADDON=none) installs over any ROM, an add-on zip over LineageOS 24 based
+		# ROMs only. ALLOW_ONEUI9 / ALLOW_ICHTHYS of older zips are still accepted by update-binary and ignored.
 	} > "$d/a52s-k612.conf"
 }
 sums() { # <dir>: SHA256SUMS of the payload (everything but META-INF)
@@ -144,7 +158,9 @@ if [ "$ADDON" = vendor ]; then
 fi
 chmod 0644 "$K"/*
 kb=$(du -sk --apparent-size "$Z1" | cut -f1)
-stage_meta "$Z1" ak "${TITLE:-Linux 6.12 kernel $NAME ($KREL), any LineageOS 24 based ROM}" $((kb * 2 + PARTS_KB * 2 + 80000 + 16384))
+if [ "$ADDON" = none ]; then DEF_TITLE="Linux 6.12 kernel $NAME ($KREL) for the Galaxy A52s 5G, any ROM"
+else DEF_TITLE="Linux 6.12 kernel $NAME ($KREL) for the Galaxy A52s 5G, LineageOS 24 based ROMs (with /vendor add-on)"; fi
+stage_meta "$Z1" ak "${TITLE:-$DEF_TITLE}" $((kb * 2 + PARTS_KB * 2 + 80000 + 16384))
 sums "$Z1"
 
 Z2=$ST/z2

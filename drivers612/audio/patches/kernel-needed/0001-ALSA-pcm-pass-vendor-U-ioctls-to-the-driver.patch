@@ -1,0 +1,71 @@
+ALSA: pcm: pass vendor (magic 'U') ioctls to the driver
+
+NOT APPLIED. For bsp612/kernel (GKI 6.12.81), needed by drivers612/audio for the phone's closed
+5.4-era audio HALs: the sound trigger HAL drives the ADSP listen sessions with SNDRV_LSM_* ioctls
+and the voice HAL can issue SNDRV_VOICE_IOCTL_LCH, all with magic 'U', on the PCM fd. Samsung's 5.4
+kernel passed them to the driver under CONFIG_AUDIO_QGKI (sound/core/pcm_native.c snd_user_ioctl,
+pcm_compat.c snd_compressed_ioctl32 + snd_pcm_ops.compat_ioctl). GKI answers -ENOTTY, so voice wake-up
+("Hi Bixby", "Hey Google") cannot work on 6.12 (drivers612/SPEC/02 rows AUD-50, AUD-35).
+
+Native and compat callers both reach substream->ops->ioctl; the audio HAL process is 32-bit, the
+techpack side (drivers612/audio/patches/audio-kernel/a52-lsm-compat-ioctl-gki.patch) tells them apart
+with in_compat_syscall(). No exported symbol or structure changes: Module.symvers stays as it is.
+Compile-checked out of tree (the patched pcm_native.c + pcm_compat.c built as a module object against
+bsp612/out/lahaina). Never run. The kernel tree must keep its release string: mark both files
+`git update-index --assume-unchanged` as done for the COMMAND_LINE_SIZE patch.
+
+--- a/sound/core/pcm_native.c
++++ b/sound/core/pcm_native.c
+@@ -3451,6 +3451,28 @@
+ 	return -ENOTTY;
+ }
+ 
++/*
++ * a52sxq: ioctls with magic 'U' are the vendor commands of the 5.4-era Qualcomm audio HALs
++ * (sound trigger SNDRV_LSM_*, voice SNDRV_VOICE_IOCTL_LCH). The 5.4 QGKI kernel handed them to
++ * the driver (CONFIG_AUDIO_QGKI, snd_user_ioctl); the closed HALs still issue them on the PCM
++ * fd. Native and compat callers both land in substream->ops->ioctl; a driver that has 32-bit
++ * layouts tells them apart with in_compat_syscall().
++ */
++static int snd_pcm_vendor_ioctl(struct snd_pcm_substream *substream,
++				unsigned int cmd, void __user *arg)
++{
++	int res;
++
++	if (PCM_RUNTIME_CHECK(substream))
++		return -ENXIO;
++	if (!substream->ops || !substream->ops->ioctl)
++		return -ENOTTY;
++	res = snd_power_wait(substream->pcm->card);
++	if (res < 0)
++		return res;
++	return substream->ops->ioctl(substream, cmd, arg);
++}
++
+ static long snd_pcm_ioctl(struct file *file, unsigned int cmd,
+ 			  unsigned long arg)
+ {
+@@ -3458,6 +3480,10 @@
+ 
+ 	pcm_file = file->private_data;
+ 
++	if (((cmd >> 8) & 0xff) == 'U')
++		return snd_pcm_vendor_ioctl(pcm_file->substream, cmd,
++					    (void __user *)arg);
++
+ 	if (((cmd >> 8) & 0xff) != 'A')
+ 		return -ENOTTY;
+ 
+--- a/sound/core/pcm_compat.c
++++ b/sound/core/pcm_compat.c
+@@ -580,6 +580,10 @@
+ 	 */
+ 	pcm_file->no_compat_mmap = 1;
+ 
++	/* a52sxq: vendor ioctls, see snd_pcm_vendor_ioctl() in pcm_native.c */
++	if (_IOC_TYPE(cmd) == 'U')
++		return snd_pcm_vendor_ioctl(substream, cmd, argp);
++
+ 	switch (cmd) {
+ 	case SNDRV_PCM_IOCTL_PVERSION:
+ 	case SNDRV_PCM_IOCTL_INFO:

@@ -1,0 +1,33 @@
+WT: core rc=0
+WT: sim rc=0
+WT: load: pet=1 en=1 dis=0 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=0 fail=0 ok=0 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=0 max_pet_gap_ms=0 suspends=0 resumes=0 suspend_aborts=0 resume_enable_fails=0
+WT: idle21: pet=3 en=1 dis=0 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=0 ok=0 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=2 max_pet_gap_ms=9473 suspends=0 resumes=0 suspend_aborts=0 resume_enable_fails=0
+WT: pmtest-devices write rc=0
+WT: pmtest-devices: pet=3 en=1 dis=0 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=0 ok=1 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=2 max_pet_gap_ms=9473 suspends=0 resumes=0 suspend_aborts=0 resume_enable_fails=0
+WT: pmtest-platform5 write rc=0
+WT: pmtest-platform5: pet=5 en=2 dis=1 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=0 ok=2 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=2 max_pet_gap_ms=9473 suspends=1 resumes=1 suspend_aborts=0 resume_enable_fails=0
+WT: pmtest-platform26 write rc=0
+WT: pmtest-platform26: pet=7 en=3 dis=2 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=0 ok=3 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=2 max_pet_gap_ms=9473 suspends=2 resumes=2 suspend_aborts=0 resume_enable_fails=0
+WT: faildisable write rc=1
+WT: faildisable: pet=8 en=3 dis=2 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=1 ok=3 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=2 max_pet_gap_ms=9473 suspends=2 resumes=2 suspend_aborts=1 resume_enable_fails=0
+WT: last_failed_dev=a52-wdt-sim errno=-16
+WT: faildisable+12: pet=9 en=3 dis=2 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=1 ok=3 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=3 max_pet_gap_ms=9526 suspends=2 resumes=2 suspend_aborts=1 resume_enable_fails=0
+WT: faildisable-26 write rc=1
+WT: faildisable-26: pet=10 en=3 dis=2 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=2 ok=3 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=3 max_pet_gap_ms=9526 suspends=2 resumes=2 suspend_aborts=2 resume_enable_fails=0
+WT: failenable write rc=0
+WT: failenable: pet=12 en=3 dis=3 BARK=0 armed=N bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=2 ok=4 | enabled=0 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=3 max_pet_gap_ms=9526 suspends=3 resumes=3 suspend_aborts=2 resume_enable_fails=1
+WT: failenable+11: pet=12 en=3 dis=3 BARK=0 armed=N bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=2 ok=4 | enabled=0 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=3 max_pet_gap_ms=9526 suspends=3 resumes=3 suspend_aborts=2 resume_enable_fails=1
+WT: recover write rc=0
+WT: recover: pet=14 en=4 dis=3 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9473 fail=2 ok=5 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=3 max_pet_gap_ms=9526 suspends=4 resumes=4 suspend_aborts=2 resume_enable_fails=1
+WT: recover+11: pet=15 en=4 dis=3 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9563 fail=2 ok=5 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=4 max_pet_gap_ms=9563 suspends=4 resumes=4 suspend_aborts=2 resume_enable_fails=1
+WT: rtc=rtc0
+WT: s2idle-rtc27 write rc=0
+WT: s2idle-rtc27: pet=17 en=5 dis=4 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9563 fail=2 ok=6 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=4 max_pet_gap_ms=9563 suspends=5 resumes=5 suspend_aborts=2 resume_enable_fails=1
+WT: final: pet=18 en=5 dis=4 BARK=0 armed=Y bark_ms=20000 bite_ms=23000 gap_ms=9571 fail=2 ok=6 | enabled=1 bark_ms=20000 bite_ms=23000 pet_ms=9360 bite_on_panic=0 pets=5 max_pet_gap_ms=9571 suspends=5 resumes=5 suspend_aborts=2 resume_enable_fails=1
+WT: dmesg [    1.926432][  T112] a52-wdt-sim a52-wdt-sim: QCOM Apps Watchdog Initialized
+WT: dmesg [   60.284475][    T1] WDTSIM: disable refused (fail_disable)
+WT: dmesg [   60.284710][    T1] a52-wdt-sim a52-wdt-sim: watchdog could not be disabled: suspend refused
+WT: dmesg [   72.449497][    T1] WDTSIM: disable refused (fail_disable)
+WT: dmesg [   72.450001][    T1] a52-wdt-sim a52-wdt-sim: watchdog could not be disabled: suspend refused
+WT: dmesg [   77.654725][    T1] a52-wdt-sim a52-wdt-sim: watchdog could not be enabled after resume
+WT: END

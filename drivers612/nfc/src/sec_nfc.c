@@ -430,6 +430,31 @@ done:
 	return rc;
 }
 
+/*
+ * a52sxq 6.12: the only place that takes the driver's PVDD reference. Probe and the
+ * /sys/class/nfc_sec/pvdd store both come here, so the regulator is enabled at most once
+ * (info->pvdd_enabled, under sec_nfc_pvdd_lock) and __sec_nfc_remove() drops exactly that
+ * one reference. Returns 1 if this call enabled it, 0 if it was already on, < 0 on error.
+ */
+static DEFINE_MUTEX(sec_nfc_pvdd_lock);
+
+static int sec_nfc_pvdd_ensure_on(struct sec_nfc_info *info)
+{
+	int ret = 0;
+
+	mutex_lock(&sec_nfc_pvdd_lock);
+	if (!info->pvdd_enabled) {
+		ret = sec_nfc_regulator_onoff(info->pdata, NFC_I2C_LDO_ON);
+		if (ret >= 0) {
+			info->pvdd_enabled = true;
+			ret = 1;
+		}
+	}
+	mutex_unlock(&sec_nfc_pvdd_lock);
+
+	return ret;
+}
+
 static void __maybe_unused sec_nfc_i2c_irq_clear(struct sec_nfc_info *info)
 {
 	/* clear interrupt. Interrupt will be occurred at power off */
@@ -493,11 +518,9 @@ static int sec_nfc_i2c_probe(struct i2c_client *client)
 			 */
 			if (nfc_param_lpcharge != LPM_TRUE) {
 #endif
-				ret = sec_nfc_regulator_onoff(pdata, NFC_I2C_LDO_ON);
+				ret = sec_nfc_pvdd_ensure_on(info);
 				if (ret < 0)
 					NFC_LOG_ERR("regulator on failed: %d\n", ret);
-				else
-					info->pvdd_enabled = true;
 
 				if (of_find_property(dev->of_node, "sec-nfc,sw-gpio", NULL)) {
 					if (gpio_is_valid(pdata->i2c_switch)) {
@@ -1324,6 +1347,57 @@ static ssize_t pvdd_store(const struct class *class,
 	return size;
 }
 static CLASS_ATTR_WO(pvdd);
+#else
+/*
+ * a52sxq 6.12: /sys/class/nfc_sec/pvdd for the OneUI init.nfc.samsung.rc, which writes "1"
+ * (late-init), "2" (post-fs-data) and "3" (boot). The phone's 5.4 kernel had no such node
+ * (NFC_PVDD_LATE_ENABLE off: the writes failed with ENOENT) and enabled PVDD in probe, as
+ * this port does. Samsung's own stores (5.4 LATE_ENABLE code above, S26 nxp_combined) are
+ * write-only, act on '1' only (late PVDD enable) and just log every other value.
+ * Here every one of "1", "2", "3" means "make sure PVDD is on": a no-op when probe already
+ * enabled it (the normal case), one regulator_enable() if probe could not. Never disables,
+ * never enables in LPM (nfc_param_lpcharge=1), never fails the write.
+ */
+static ssize_t pvdd_store(const struct class *class,
+	const struct class_attribute *attr, const char *buf, size_t size)
+{
+	struct sec_nfc_info *info = g_nfc_info;
+	char val = size ? buf[0] : '?';
+	int ret;
+
+	if (!info || !info->pdata) {
+		NFC_LOG_ERR("%s nfc drv is NULL!\n", __func__);
+		return size;
+	}
+
+	if (val < '1' || val > '3') {
+		NFC_LOG_INFO("pvdd val: 0x%02x ignored\n", val);
+		return size;
+	}
+
+	if (!info->pdata->nfc_pvdd) {
+		NFC_LOG_INFO("pvdd val: %c, no regulator (PVDD set in probe)\n", val);
+		return size;
+	}
+
+	if (nfc_param_lpcharge == LPM_TRUE) {
+		NFC_LOG_INFO("pvdd val: %c, regulator stays off at LPM\n", val);
+		return size;
+	}
+
+	ret = sec_nfc_pvdd_ensure_on(info);
+	if (ret < 0) {
+		NFC_LOG_ERR("pvdd val: %c, regulator on failed: %d\n", val, ret);
+	} else if (ret > 0) {
+		usleep_range(1000, 1100);
+		NFC_LOG_INFO("pvdd val: %c, enabled\n", val);
+	} else {
+		NFC_LOG_INFO("pvdd val: %c, already on\n", val);
+	}
+
+	return size;
+}
+static CLASS_ATTR_WO(pvdd);
 #endif
 
 static ssize_t nfc_support_show(const struct class *class,
@@ -1495,6 +1569,11 @@ static int __sec_nfc_probe(struct device *dev)
 			if (ret)
 				NFC_LOG_ERR("NFC: failed to create attr_pvdd\n");
 		}
+#else
+		/* a52sxq 6.12: always there for init.nfc.samsung.rc, see pvdd_store() */
+		ret = class_create_file(nfc_class, &class_attr_pvdd);
+		if (ret)
+			NFC_LOG_ERR("NFC: failed to create attr_pvdd\n");
 #endif
 	}
 
@@ -1570,8 +1649,13 @@ static void __sec_nfc_remove(struct device *dev, bool i2c_ready)
 	gpio_free(pdata->coldreset);
 #endif
 	if (pdata->nfc_pvdd) {
-		if (info->pvdd_enabled)
+		/* the class (pvdd store) is gone by now; the lock is for the flag only */
+		mutex_lock(&sec_nfc_pvdd_lock);
+		if (info->pvdd_enabled) {
 			sec_nfc_regulator_onoff(pdata, NFC_I2C_LDO_OFF);
+			info->pvdd_enabled = false;
+		}
+		mutex_unlock(&sec_nfc_pvdd_lock);
 		regulator_put(pdata->nfc_pvdd);
 		pdata->nfc_pvdd = NULL;
 	}

@@ -1,0 +1,1 @@
+obj-m := input_booster.o

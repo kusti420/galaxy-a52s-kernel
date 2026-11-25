@@ -1,0 +1,186 @@
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-lsm-client.c b/drivers612/audio/audio-kernel/asoc/msm-lsm-client.c
+index c4f675e..5bc7908 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-lsm-client.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-lsm-client.c
+@@ -31,6 +31,144 @@
+ #include <linux/cdev.h>
+ #include <linux/file.h>
+ 
++/*
++ * a52sxq: vendor (magic 'U') ioctls on the PCM fd without a kernel image change.
++ * The GKI PCM core (sound/core/pcm_native.c snd_pcm_ioctl, pcm_compat.c snd_pcm_ioctl_compat)
++ * answers -ENOTTY for every ioctl whose magic is not 'A' and has no vendor hook there; the 5.4
++ * QGKI kernel handed magic 'U' (SNDRV_LSM_*, SNDRV_VOICE_IOCTL_LCH) to the driver, and the
++ * phone's closed sound trigger / voice HALs still issue them on the PCM fd.
++ * So the driver gives ITS OWN PCM files a copy of the core's file_operations whose two ioctl
++ * entries hand 'U' commands to substream->ops->ioctl (as 5.4 did) and everything else to the
++ * core's handler. The struct file is found from a driver callback that runs inside the
++ * caller's ioctl syscall (hw_params / prepare): the fd of current->files that is this PCM
++ * device node and whose snd_pcm_file points at this substream. Only files of PCMs whose driver calls
++ * a52_pcm_vendor_ioctl_enable() are touched. Modules of this line are never unloaded.
++ */
++#include <linux/fdtable.h>
++#include <linux/sched.h>
++
++#define A52_VFOPS_MAX 4
++static struct a52_vfops {
++	const struct file_operations *orig;
++	struct file_operations fops;
++} a52_vfops[A52_VFOPS_MAX];
++static DEFINE_SPINLOCK(a52_vfops_lock);
++
++static struct a52_vfops *a52_vfops_of(struct file *file)
++{
++	const struct file_operations *f = file->f_op;
++	int i;
++
++	for (i = 0; i < A52_VFOPS_MAX; i++)
++		if (f == &a52_vfops[i].fops)
++			return &a52_vfops[i];
++	return NULL;
++}
++
++static long a52_pcm_vendor_call(struct file *file, unsigned int cmd, void __user *arg)
++{
++	struct snd_pcm_file *pcm_file = file->private_data;
++	struct snd_pcm_substream *substream = pcm_file ? pcm_file->substream : NULL;
++	int res;
++
++	if (!substream || !substream->runtime)
++		return -ENXIO;
++	if (!substream->ops || !substream->ops->ioctl)
++		return -ENOTTY;
++	res = snd_power_wait(substream->pcm->card);
++	if (res < 0)
++		return res;
++	return substream->ops->ioctl(substream, cmd, arg);
++}
++
++static long a52_pcm_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	struct a52_vfops *v = a52_vfops_of(file);
++
++	if (_IOC_TYPE(cmd) == 'U')
++		return a52_pcm_vendor_call(file, cmd, (void __user *)arg);
++	if (!v || !v->orig->unlocked_ioctl)
++		return -ENOTTY;
++	return v->orig->unlocked_ioctl(file, cmd, arg);
++}
++
++#ifdef CONFIG_COMPAT
++static long a52_pcm_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
++{
++	struct a52_vfops *v = a52_vfops_of(file);
++
++	if (_IOC_TYPE(cmd) == 'U')
++		return a52_pcm_vendor_call(file, cmd, compat_ptr(arg));
++	if (!v || !v->orig->compat_ioctl)
++		return -ENOIOCTLCMD;
++	return v->orig->compat_ioctl(file, cmd, arg);
++}
++#endif
++
++/* called by iterate_fd() under files->file_lock: no sleeping */
++static int a52_pcm_vendor_fd(const void *want, struct file *file, unsigned int fd)
++{
++	const struct file_operations *orig = file->f_op;
++	struct a52_vfops *v = NULL;
++	unsigned long flags;
++	int i;
++
++	const struct snd_pcm_substream *substream = want;
++	struct inode *inode = file_inode(file);
++	struct snd_pcm_file *pcm_file;
++
++	/* a PCM file of this very device node: only then is private_data a snd_pcm_file */
++	if (!inode || !S_ISCHR(inode->i_mode) || inode->i_rdev != substream->pstr->dev->devt)
++		return 0;
++	pcm_file = file->private_data;
++	if (!pcm_file || pcm_file->substream != substream)
++		return 0;
++	if (a52_vfops_of(file))
++		return fd + 1;		/* already ours */
++	if (!orig || !orig->unlocked_ioctl)
++		return -1;
++	spin_lock_irqsave(&a52_vfops_lock, flags);
++	for (i = 0; i < A52_VFOPS_MAX; i++) {
++		if (a52_vfops[i].orig == orig) {
++			v = &a52_vfops[i];
++			break;
++		}
++		if (!a52_vfops[i].orig) {
++			v = &a52_vfops[i];
++			v->fops = *orig;
++			v->fops.unlocked_ioctl = a52_pcm_unlocked_ioctl;
++#ifdef CONFIG_COMPAT
++			v->fops.compat_ioctl = a52_pcm_compat_ioctl;
++#endif
++			/* published last: a52_vfops_of() readers match on &fops only after f_op is set */
++			smp_store_release(&v->orig, orig);
++			break;
++		}
++	}
++	spin_unlock_irqrestore(&a52_vfops_lock, flags);
++	if (!v)
++		return -1;
++	file->f_op = &v->fops;
++	return -(int)(fd + 2);		/* swapped now */
++}
++
++void a52_pcm_vendor_ioctl_enable(struct snd_pcm_substream *substream)
++{
++	int r;
++
++	if (!substream || !substream->pstr || !substream->pstr->dev || !current->files ||
++	    (current->flags & PF_KTHREAD))
++		return;
++	r = iterate_fd(current->files, 0, a52_pcm_vendor_fd, substream);
++	if (r < -1)
++		pr_info("a52sxq: vendor 'U' ioctls enabled on PCM %s (fd %d of %s[%d])\n",
++			substream->pcm ? substream->pcm->id : "?", -r - 2, current->comm,
++			task_tgid_nr(current));
++	else if (r == -1)
++		pr_warn_once("a52sxq: vendor 'U' ioctl enable failed on PCM %s\n",
++			     substream->pcm ? substream->pcm->id : "?");
++}
++
+ /*Defines number of minor numbers supported*/
+ #define MINOR_NUMBER_COUNT  1
+ 
+@@ -3291,6 +3429,8 @@ static int msm_lsm_prepare(struct snd_soc_component *component, struct snd_pcm_s
+ 	struct snd_soc_pcm_runtime *rtd;
+ 	int ret = 0;
+ 
++	a52_pcm_vendor_ioctl_enable(substream);
++
+ 	if (!substream->private_data) {
+ 		pr_err("%s: Invalid private_data", __func__);
+ 		return -EINVAL;
+@@ -3511,6 +3651,8 @@ static int msm_lsm_hw_params(struct snd_soc_component *component,
+ 	struct snd_soc_pcm_runtime *rtd;
+ 	struct lsm_char_dev *lsm_dev = NULL;
+ 
++	a52_pcm_vendor_ioctl_enable(substream);
++
+ 	if (!substream->private_data) {
+ 		pr_err("%s: Invalid private_data", __func__);
+ 		return -EINVAL;
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-pcm-voice-v2.c b/drivers612/audio/audio-kernel/asoc/msm-pcm-voice-v2.c
+index 5209277..027dde7 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-pcm-voice-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-pcm-voice-v2.c
+@@ -416,10 +416,14 @@ static int msm_pcm_prepare(struct snd_soc_component *component, struct snd_pcm_s
+ 	return ret;
+ }
+ 
++void a52_pcm_vendor_ioctl_enable(struct snd_pcm_substream *substream);
++
+ static int msm_pcm_hw_params(struct snd_soc_component *component,
+ 				struct snd_pcm_substream *substream,
+ 				struct snd_pcm_hw_params *params)
+ {
++	/* a52sxq: SNDRV_VOICE_IOCTL_LCH (magic 'U') on the voice PCM fd, see msm-lsm-client.c */
++	a52_pcm_vendor_ioctl_enable(substream);
+ 
+ 	pr_debug("%s: Voice\n", __func__);
+ 

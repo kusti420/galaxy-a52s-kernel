@@ -407,7 +407,10 @@ fn check_fragment(f: &[u8]) -> R<()> {
     if v.iter().any(|s| !is_a52_cpio(&s.2)) {
         return Err("fragment: not an a52sxq first-stage ramdisk (no marker)".into());
     }
-    if v.last().map(|s| s.1) != Some(f.len()) {
+    // allowed after the last stream: the lz4 end marker (4 zero bytes = chunk size 0) that build-realboot.sh adds when
+    // the ROM's boot ramdisk is not lz4 (OneUI: gzip), else the kernel's unlz4 runs on into it ("Decoding failed")
+    let end = v.last().map(|s| s.1).unwrap_or(0);
+    if !(end == f.len() || (f.len() - end == 4 && f[end..].iter().all(|&b| b == 0))) {
         return Err("fragment: trailing bytes".into());
     }
     Ok(())
@@ -426,6 +429,7 @@ struct Avb {
     digest: Vec<u8>,
     part: String,
     hash_img_size: usize,
+    was_signed: bool,
 }
 
 fn parse_avb(img: &[u8]) -> R<Option<Avb>> {
@@ -439,15 +443,31 @@ fn parse_avb(img: &[u8]) -> R<Option<Avb>> {
     if off.checked_add(size).is_none_or(|e| e > img.len() - AVB_FOOTER) || size < 256 || orig > off {
         return Err("AVB footer: bad offsets".into());
     }
-    let vb = img[off..off + size].to_vec();
+    let mut vb = img[off..off + size].to_vec();
     if &vb[0..4] != b"AVB0" {
         return Err("AVB footer: no vbmeta".into());
     }
-    let auth = be64(&vb, 12) as usize;
+    let mut auth = be64(&vb, 12) as usize;
     let aux = be64(&vb, 20) as usize;
     let alg = be32(&vb, 28);
+    let mut was_signed = false;
     if alg != 0 || auth != 0 {
-        return Err(format!("AVB footer is signed (algorithm {}): not supported", alg));
+        // signed footer (OneUI 9 port: UN1CA signs boot/vendor_boot/dtbo with AOSP's testkey; its vbmeta has
+        // verification disabled, as LineageOS/IchthysOS): we cannot re-sign on the phone, so the template becomes
+        // the same vbmeta UNSIGNED (algorithm NONE, no authentication block, no public key); descriptors, salt,
+        // props, rollback index and flags are kept. The restore zip writes the backed-up signed image back.
+        if 256 + auth + aux > vb.len() {
+            return Err("AVB vbmeta: bad sizes".into());
+        }
+        let mut h = vb[0..256].to_vec();
+        for o in [12usize, 32, 40, 48, 56, 64, 72, 80, 88] {
+            h[o..o + 8].copy_from_slice(&0u64.to_be_bytes());
+        }
+        h[28..32].copy_from_slice(&0u32.to_be_bytes());
+        h.extend_from_slice(&vb[256 + auth..256 + auth + aux]);
+        vb = h;
+        auth = 0;
+        was_signed = true;
     }
     let doff = be64(&vb, 96) as usize;
     let dsize = be64(&vb, 104) as usize;
@@ -496,6 +516,7 @@ fn parse_avb(img: &[u8]) -> R<Option<Avb>> {
         digest,
         part,
         hash_img_size: isz,
+        was_signed,
     }))
 }
 
@@ -546,6 +567,9 @@ fn avb_lines(img: &[u8], content_len: usize) -> R<Vec<String>> {
         None => v.push("avb=none".into()),
         Some(a) => {
             v.push("avb=unsigned".into());
+            if a.was_signed {
+                v.push("avb_signed_on_input=1".into());
+            }
             v.push(format!("avb_partition={}", a.part));
             v.push(format!("avb_salt={}", hex(&a.salt)));
             v.push(format!("avb_image_size={}", a.hash_img_size));
@@ -600,10 +624,18 @@ fn os_fields(v: u32) -> (String, String) {
     )
 }
 
+/// v3/v4 boot header cmdline field (BOOT_ARGS_SIZE + BOOT_EXTRA_ARGS_SIZE)
+const BOOT_CMDLINE: (usize, usize) = (44, 1536);
+
 fn boot_content(cur: &[u8], kernel: &[u8]) -> R<Vec<u8>> {
     let b = parse_boot(cur)?;
     let mut hdr = cur[0..PAGE].to_vec();
     wr32(&mut hdr, 8, kernel.len() as u32);
+    // the ABL appends the boot cmdline AFTER the vendor_boot one (Qualcomm CatCmdLine), so a ROM's boot cmdline
+    // (OneUI 9 port: the stock 5.4 words) would override ours: blank it, as every LineageOS/IchthysOS boot.img has it
+    for x in &mut hdr[BOOT_CMDLINE.0..BOOT_CMDLINE.0 + BOOT_CMDLINE.1] {
+        *x = 0;
+    }
     if b.hv == 4 {
         wr32(&mut hdr, 1580, 0);
     }
@@ -809,6 +841,17 @@ fn dtbo_content(img: &[u8]) -> R<Vec<u8>> {
     let n = check_dtbo(img)?;
     let len = match parse_avb(img)? {
         Some(a) if a.hash_img_size >= n && a.hash_img_size <= align(n, PAGE) => a.hash_img_size,
+        // build-realboot.sh (since 2026-11-22) repeats the ROM's "zero bytes before the AVB footer" count after
+        // the page-padded table (LineageOS / IchthysOS images: 3005). Those zero bytes are part of what the build
+        // tested, so they stay in dtbo.raw and mkdtbo writes them as they are.
+        Some(a)
+            if a.hash_img_size > align(n, PAGE)
+                && a.hash_img_size - align(n, PAGE) < PAGE
+                && a.hash_img_size <= img.len()
+                && img[align(n, PAGE)..a.hash_img_size].iter().all(|&x| x == 0) =>
+        {
+            a.hash_img_size
+        }
         Some(_) => return Err("dtbo: AVB image size does not match the DTBO table".into()),
         None => n,
     };
@@ -899,6 +942,9 @@ fn boot_keep_fields(d: &[u8]) -> R<Vec<u8>> {
     let b = parse_boot(d)?;
     let mut h = d[0..PAGE].to_vec();
     wr32(&mut h, 8, 0);
+    for x in &mut h[BOOT_CMDLINE.0..BOOT_CMDLINE.0 + BOOT_CMDLINE.1] {
+        *x = 0;
+    }
     if b.hv == 4 {
         wr32(&mut h, 1580, 0);
     }
@@ -926,7 +972,17 @@ fn cmd_mkboot(cur_p: &str, k_p: &str, out_p: &str) -> R<Vec<String>> {
     let k = read(k_p)?;
     check_kernel(&k)?;
     let tmpl = parse_avb(&cur)?;
-    let content = boot_content(&cur, &k)?;
+    let mut content = boot_content(&cur, &k)?;
+    // zero bytes between the ROM's content and its vbmeta (OneUI 9 port: 16, "vbmeta directly after the image" is
+    // refused by this ABL in some layouts): keep the same number
+    let mut pad = 0;
+    if let Some(a) = &tmpl {
+        let e = parse_boot(&cur)?.end;
+        if a.orig_size > e && a.orig_size - e < 4096 && cur[e..a.orig_size].iter().all(|&x| x == 0) {
+            pad = a.orig_size - e;
+            content.resize(content.len() + pad, 0);
+        }
+    }
     let out = finish_image(&content, &tmpl, cur.len(), "boot")?;
     // read back what the bootloader sees
     let nb = parse_boot(&out)?;
@@ -951,6 +1007,9 @@ fn cmd_mkboot(cur_p: &str, k_p: &str, out_p: &str) -> R<Vec<String>> {
         format!("ramdisk_kept={}", ob.ramdisk.1),
         format!("dropped_signature={}", ob.sig.1),
         format!("content_size={}", content.len()),
+        format!("avb_pad={}", pad),
+        format!("cmdline_blanked={}", cur[BOOT_CMDLINE.0..BOOT_CMDLINE.0 + BOOT_CMDLINE.1].iter().any(|&x| x != 0) as u8),
+        format!("avb_signed_on_input={}", tmpl.as_ref().is_some_and(|a| a.was_signed) as u8),
     ])
 }
 
@@ -1007,7 +1066,8 @@ fn cmd_mkdtbo(cur_p: &str, raw_p: &str, out_p: &str) -> R<Vec<String>> {
     let cur = read(cur_p)?;
     let raw = read(raw_p)?;
     let n = check_dtbo(&raw)?;
-    if raw.len() > align(n, PAGE) || raw[n..].iter().any(|&b| b != 0) {
+    // the page-padded table, plus less than one page of zero bytes (see dtbo_content)
+    if raw.len() >= align(n, PAGE) + PAGE || raw[n..].iter().any(|&b| b != 0) {
         return Err("dtbo: file is longer than its table (pass the raw dtbo, not a partition image)".into());
     }
     let n = raw.len();

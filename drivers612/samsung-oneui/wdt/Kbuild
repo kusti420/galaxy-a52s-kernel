@@ -1,0 +1,5 @@
+# a52sxq OneUI watchdog variant: soc-repo qcom_wdt_core.c + gh_virt_wdt.c (orig/) with a52-wdt-*.diff. See ../WDT-ONEUI.md.
+# Same module names and exports as the dist modules (drop-in; qcom_soc_wdt stays blocklisted).
+obj-m := qcom_wdt_core.o gh_virt_wdt.o
+A52_SOC := $(src)/../../../bsp612/soc-repo
+LINUXINCLUDE := -I$(A52_SOC)/include -I$(A52_SOC)/include/uapi -I$(A52_SOC)/include/linux $(LINUXINCLUDE)

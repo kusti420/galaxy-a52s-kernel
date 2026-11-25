@@ -1,0 +1,15 @@
+<!-- Template of the GitHub release notes of a kernel-only alpha (mk-ak-zips.sh zips). Copy to
+     out/<name>/notes.md, replace @NAME@ / @KREL@ / @PREV@, fill the two lists, delete this comment.
+     Keep the ROM wording as it is here: the zip is ROM-generic. -->
+⚠️🚧 **EXPERIMENTAL – NOT STABLE** 🚧⚠️
+
+Linux **6.12** kernel (Qualcomm 6.12 BSP, GKI @KREL@) for the **Galaxy A52s 5G (SM-A528B)**, any ROM: made for Android 17 ROMs for the SM-A528B that use the stock-derived a52sxq vendor (tested: LineageOS 24, IchthysOS, K4_UN1CA One UI 9 port).
+
+**Install:** flash `a52s-k612-@NAME@.zip` in TWRP (or recovery sideload). **Roll back:** `a52s-k612-restore.zip`: your ROM's own kernel is back. The zip keeps your ROM's own ramdisks and patch level, replaces only the kernel, first-stage modules, device tree and dtbo, backs up the current images first and never writes /vendor. On a ROM it was not tested with, or on Android older than 17, the installer prints a warning and installs anyway (untested: it may not boot; the restore zip brings your ROM's kernel back).
+
+**Changed since @PREV@**
+- ...
+
+**Known issues:** ...
+
+🛑 Never flash firmware with a higher bootloader bit than yours. 🛑 Never load firmware from another phone.

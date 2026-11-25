@@ -1,0 +1,7 @@
+# ntfs3 as an external module (GKI has CONFIG_NTFS3_FS unset). Options as Kconfig would set them:
+# LZX/XPRESS on (Windows "compact" files readable), POSIX ACL off, 64-bit clusters off (Windows-compatible).
+ccflags-y += -DCONFIG_NTFS3_LZX_XPRESS=1
+obj-m := ntfs3.o
+ntfs3-y := attrib.o attrlist.o bitfunc.o bitmap.o dir.o fsntfs.o frecord.o file.o fslog.o inode.o index.o \
+	lznt.o namei.o record.o run.o super.o upcase.o xattr.o \
+	lib/decompress_common.o lib/lzx_decompress.o lib/xpress_decompress.o

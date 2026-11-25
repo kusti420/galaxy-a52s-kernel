@@ -12,6 +12,13 @@
 #include "stm_dev.h"
 #include "stm_reg.h"
 
+#if IS_ENABLED(CONFIG_SAMSUNG_PRODUCT_SHIP)
+/* See stm_ts_set_custom_library(). /sys/module/stm_ts/parameters/lp_dump_inf, used at the next LPM entry. */
+static bool stm_ts_lp_dump_inf;
+module_param_named(lp_dump_inf, stm_ts_lp_dump_inf, bool, 0644);
+MODULE_PARM_DESC(lp_dump_inf, "1: keep the firmware's infinite LP dump (DUMPFLUSH wake IRQs, stock One UI); 0 (default): legacy ring, no flush IRQs (IchthysOS 5.4)");
+#endif
+
 int stm_ts_set_custom_library(struct stm_ts_data *ts)
 {
 	u8 data[3] = { 0 };
@@ -48,6 +55,36 @@ int stm_ts_set_custom_library(struct stm_ts_data *ts)
 	ret = ts->stm_ts_write_sponge(ts, data, 3);
 	if (ret < 0)
 		input_err(true, &ts->client->dev, "%s: Failed to write sponge\n", __func__);
+#else
+	/*
+	 * a52sxq 6.12 (SPEC/06, SPEC/01 gap 24), from the IchthysOS 5.4 tree: the firmware defaults to
+	 * the infinite LP dump (sponge mode 0xC7, bit 1; boot log "sponge_inf_dump:1"). In that mode
+	 * the IC raises a DUMPFLUSH IRQ every time one of its two 37-event areas fills, and the
+	 * driver resumes the AP (500 ms "tsp" wakeup source) only to copy the events into the sec_tsp
+	 * debug log: ~30% of all screen-off touch wakeups on a52sxq (1123 of 3812, 5.4, 11-11..11-13).
+	 * stm_ts.lp_dump_inf=0 (default) falls back to the legacy single-area ring: get_lp_dump still
+	 * works, no flush IRQs. Written on every LPM entry because an IC reset restores the firmware
+	 * default. lp_dump_inf=1 leaves the firmware default alone (stock One UI 5.4 ship behaviour).
+	 */
+	if (!stm_ts_lp_dump_inf) {
+		data[0] = STM_TS_CMD_SPONGE_OFFSET_MODE_01;
+		data[1] = 0;
+		data[2] = ts->plat_data->sponge_mode &=
+				~(SEC_TS_MODE_SPONGE_INF_DUMP | SEC_TS_MODE_SPONGE_INF_DUMP_CLEAR);
+
+		ret = ts->stm_ts_write_sponge(ts, data, 3);
+		if (ret < 0)
+			input_err(true, &ts->client->dev, "%s: Failed to write sponge mode\n", __func__);
+	} else if (!(ts->plat_data->sponge_mode & SEC_TS_MODE_SPONGE_INF_DUMP)) {
+		/* switched back to 1 at runtime after this driver cleared the bit: set it again */
+		data[0] = STM_TS_CMD_SPONGE_OFFSET_MODE_01;
+		data[1] = 0;
+		data[2] = ts->plat_data->sponge_mode |= SEC_TS_MODE_SPONGE_INF_DUMP;
+
+		ret = ts->stm_ts_write_sponge(ts, data, 3);
+		if (ret < 0)
+			input_err(true, &ts->client->dev, "%s: Failed to write sponge mode\n", __func__);
+	}
 #endif
 		/* read dump info */
 	data[0] = STM_TS_CMD_SPONGE_LP_DUMP;

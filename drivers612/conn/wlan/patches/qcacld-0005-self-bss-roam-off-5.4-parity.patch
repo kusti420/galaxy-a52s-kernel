@@ -1,0 +1,30 @@
+a52sxq: qcacld: no roam to the connected BSS by default (5.4 parity) for WIFI-09
+
+--- a/components/mlme/dispatcher/inc/cfg_mlme_lfr.h	2026-11-24 19:40:40.739325788 +0200
++++ b/components/mlme/dispatcher/inc/cfg_mlme_lfr.h	2026-11-24 19:40:40.753234496 +0200
+@@ -2286,7 +2286,7 @@
+  * enable_self_bss_roam - enable/disable roaming to self bss
+  * @Min: 0
+  * @Max: 1
+- * @Default: 1
++ * @Default: 0 (a52sxq; upstream 1)
+  *
+  * This INI is used to enable/disable roaming to already connected BSSID
+  *
+@@ -2298,9 +2298,15 @@
+  *
+  * </ini>
+  */
++/*
++ * a52sxq (2026-11-24, WIFI-09): default 0 as in the ROM's 5.4 qcacld (upstream 2.0.9: 1; not set in the
++ * phone's ini). Most WLAN suspend timeouts on the daily phone came right after a WoW NACK with reason 7
++ * (firmware roam module busy); roaming to the connected BSS is extra roam work 5.4 never asked for.
++ * An ini value overrides.
++ */
+ #define CFG_LFR3_ENABLE_SELF_BSS_ROAM CFG_INI_BOOL( \
+ 	"enable_self_bss_roam", \
+-	1, \
++	0, \
+ 	"enable self bss roam")
+ 
+ /*

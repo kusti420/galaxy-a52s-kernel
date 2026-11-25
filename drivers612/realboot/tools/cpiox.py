@@ -9,12 +9,19 @@ Only regular files, directories and symlinks are created (device nodes are liste
 import gzip, io, os, stat, subprocess, sys
 
 def raw(path):
-    head = open(path, 'rb').read(4)
-    if head[:2] == b'\x1f\x8b':
-        return gzip.open(path).read()
-    if head in (b'\x02\x21\x4c\x18', b'\x04\x22\x4d\x18'):
-        return subprocess.run(['lz4', '-dc', path], check=True, stdout=subprocess.PIPE).stdout
-    return open(path, 'rb').read()
+    # segments of different compression may follow each other, as the kernel accepts (OneUI 9 port: the ROM's
+    # vendor ramdisk is gzip, our fragment after it lz4): gzip members are inflated one by one, an lz4 (legacy or
+    # frame) segment runs to the end (lz4 -dc handles concatenated lz4 streams), anything else is raw
+    d = open(path, 'rb').read(); out = b''
+    while d:
+        if d[:2] == b'\x1f\x8b':
+            z = __import__('zlib').decompressobj(16 + 15); out += z.decompress(d); out += z.flush(); d = z.unused_data
+            while d[:1] == b'\0': d = d[1:]
+        elif d[:4] in (b'\x02\x21\x4c\x18', b'\x04\x22\x4d\x18'):
+            out += subprocess.run(['lz4', '-dc'], input=d, check=True, stdout=subprocess.PIPE).stdout; d = b''
+        else:
+            out += d; d = b''
+    return out
 
 def main():
     src, out = sys.argv[1], sys.argv[2]

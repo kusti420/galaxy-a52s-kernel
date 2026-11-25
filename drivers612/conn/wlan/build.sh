@@ -16,6 +16,7 @@ prepare() {  # rebuild work/ from donors/ + patches/ (WORK=<dir> to build elsewh
   for r in platform qcacld-3.0 qca-wifi-host-cmn fw-api; do cp -a $HERE/donors/$r $WK/$r; rm -rf $WK/$r/.git; done
   for p in $HERE/patches/platform-*.patch; do patch -s -p1 -d $WK/platform < $p || exit 1; done
   for p in $HERE/patches/qcacld-*.patch; do patch -s -p1 -d $WK/qcacld-3.0 < $p || exit 1; done
+  for p in $HERE/patches/cmn-*.patch; do [ -e "$p" ] || continue; patch -s -p1 -d $WK/qca-wifi-host-cmn < $p || exit 1; done
   cp $HERE/patches/grep_defines_lahaina.h $WK/qcacld-3.0/configs/
   rm -rf $WK/qcacld-3.0/cmn; ln -s ../qca-wifi-host-cmn $WK/qcacld-3.0/cmn
   # qcacld includes the platform headers as <net/cnss2.h>, <soc/qcom/icnss2.h>

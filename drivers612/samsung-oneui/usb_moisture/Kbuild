@@ -1,0 +1,5 @@
+# same switches as drivers612/power/Kbuild for the pdic headers
+ccflags-y += -DCONFIG_PDIC_NOTIFIER_MODULE=1 -DCONFIG_USB_TYPEC_MANAGER_NOTIFIER_MODULE=1 \
+ -DCONFIG_PDIC_SM5714_MODULE=1 -DCONFIG_IF_CB_MANAGER_MODULE=1 -DCONFIG_USB_NOTIFY_LAYER_MODULE=1 \
+ -I$(A52_POWER)/include
+obj-m := a52sxq_usb_moisture.o

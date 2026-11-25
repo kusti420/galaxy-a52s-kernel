@@ -22,6 +22,8 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/muic/common/muic_param.h>
+#include <linux/of.h>
+#include <linux/string.h>
 
 static int muic_param_pmic_info = -1;
 module_param(muic_param_pmic_info, int, 0444);
@@ -151,6 +153,44 @@ out:
 }
 EXPORT_SYMBOL_GPL(get_uart_sel);
 
+/*
+ * a52sxq 6.12: the "Fast charging" off switch comes back from the bootloader (param partition) as
+ * bits 8..15 of "sec_mparam.charging_mode=" (A528BXXU5FWK4: 0x00 never written, 0x3000 on,
+ * 0x3100 off; 5.4 reads it through the built-in sec_mparam module_param), older bootloaders as a
+ * bare "afc_disable=" word (5.4: early_param above). Neither reaches a loadable module, so the
+ * stored setting was ignored at every boot. Read both from /chosen/bootargs like
+ * battery/common/a52_lpm_bootargs.h. Returns -1 when neither word is there.
+ */
+static int a52_bootargs_int(const char *args, const char *word, int *val)
+{
+	size_t n = strlen(word);
+	const char *p;
+	char num[12];
+
+	for (p = args; (p = strstr(p, word)); p += n) {
+		if (p != args && p[-1] != ' ')
+			continue;
+		strscpy(num, p + n, sizeof(num));
+		*strchrnul(num, ' ') = '\0';
+		return kstrtoint(num, 0, val);
+	}
+	return -ENOENT;
+}
+
+static int a52_bootargs_afc_mode(void)
+{
+	const char *args = NULL;
+	int val;
+
+	if (!of_chosen || of_property_read_string(of_chosen, "bootargs", &args) || !args)
+		return -1;
+	if (!a52_bootargs_int(args, "afc_disable=", &val))
+		return val;
+	if (!a52_bootargs_int(args, "sec_mparam.charging_mode=", &val))
+		return (val & 0x0000FF00) >> 8;
+	return -1;
+}
+
 int get_afc_mode(void)
 {
 	int local_afc_mode = 0, local_charging_mode = 0;
@@ -159,6 +199,10 @@ int get_afc_mode(void)
 		local_afc_mode = muic_param_afc_mode;
 		goto out;
 	}
+
+	local_afc_mode = a52_bootargs_afc_mode();
+	if (local_afc_mode != -1)
+		goto out;
 
 	local_charging_mode = charging_mode;
 	local_afc_mode = (local_charging_mode & 0x0000FF00) >> 8;

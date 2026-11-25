@@ -1,0 +1,1 @@
+obj-m := cpufreq_limit.o

@@ -361,7 +361,7 @@ DUMP=$AK_ICH CHECK_DUMPS=$AK_LIN "$TW/mk-ak-zips.sh" "$AK_SRC" "$T/ak" > "$T/mka
 cp "$T/ak/SHA256SUMS" "$T/aksums1"
 DUMP=$AK_ICH "$TW/mk-ak-zips.sh" "$AK_SRC" "$T/ak" > "$T/mkak2.log" 2>&1 || { cat "$T/mkak2.log"; exit 1; }
 cmp -s "$T/aksums1" "$T/ak/SHA256SUMS" && ok "mk-ak-zips is deterministic" || bad "ak zips differ between two builds"
-grep -q 'byte-identical to the build' "$T/mkak1.log" && ok "mk-ak-zips self-check: the build's images rebuilt byte for byte from its ROM images" || bad "mk-ak-zips self-check"
+grep -q 'boot, vendor_boot, dtbo: match the build' "$T/mkak1.log" && ok "mk-ak-zips self-check: the build's images rebuilt byte for byte from its ROM images" || bad "mk-ak-zips self-check"
 grep -q 'origin=match' "$T/mkak1.log" && ok "mk-ak-zips: LineageOS images give a matching origin" || bad "mk-ak-zips CHECK_DUMPS"
 ZA=$(ls "$T"/ak/a52s-k612-*-twrp.zip | grep -v restore)
 ZR=$T/ak/a52s-k612-restore-twrp.zip
@@ -372,12 +372,26 @@ sed -i 's/^ICE_RAW=.*/ICE_RAW=1/' "$T/akice/z/a52s-k612.conf"; grep -q '^ICE_RAW
 ZI=$T/akice/ice.zip
 # kernel-only build (ADDON=vendor_boot, no vendor-addon/): AK_KO_SRC, default out/rbich7 (2026-11-19)
 AK_KO_SRC=${AK_KO_SRC:-$RB/out/rbich7}
+confzip() { # <zip> <name> <sed expr for the conf>: the same zip with a changed conf (SHA256SUMS redone) -> CZ
+	rm -rf "$T/$2"; mkdir -p "$T/$2/z"; (cd "$T/$2/z" && unzip -q "$1")
+	sed -i "$3" "$T/$2/z/a52s-k612.conf"
+	(cd "$T/$2/z" && find . -type f ! -path './META-INF/*' ! -name SHA256SUMS | sed 's#^\./##' | LC_ALL=C sort | xargs sha256sum > ../sums && mv ../sums SHA256SUMS && zip -qr -X ../v.zip .)
+	CZ=$T/$2/v.zip
+}
 ZK=""
 if [ -f "$AK_KO_SRC/boot.img" ] && [ ! -d "$AK_KO_SRC/vendor-addon" ]; then
 	DUMP=$AK_ICH "$TW/mk-ak-zips.sh" "$AK_KO_SRC" "$T/akko" > "$T/mkak3.log" 2>&1 || { cat "$T/mkak3.log"; exit 1; }
 	ZK=$(ls "$T"/akko/a52s-k612-*-twrp.zip | grep -v restore)
 	unzip -p "$ZK" a52s-k612.conf | grep -qx 'ADDON=none' && ok "kernel-only zip: ADDON=none, no vendor-addon" || bad "kernel-only zip conf"
 	EXK=$T/exp-ko; mkdir -p "$EXK"; cp "$AK_KO_SRC"/{boot,vendor_boot,dtbo}.img "$EXK/"
+	unzip -p "$ZK" a52s-k612.conf | grep -q '^TITLE=Linux 6.12 kernel .* for the Galaxy A52s 5G, any ROM$' && ok "kernel-only zip: title says any ROM" || bad "kernel-only zip title"
+	unzip -p "$ZK" a52s-k612.conf | grep -q '^ALLOW_' && bad "kernel-only zip: ROM key in the conf" || ok "kernel-only zip: no ROM key in the conf"
+	unzip -p "$ZK" README-TWRP.txt | grep -q 'tested:' && ! unzip -p "$ZK" README-TWRP.txt | grep -q 'based on LineageOS' && ok "kernel-only zip: README is ROM-generic" || bad "kernel-only zip README"
+	# conf variants of the kernel-only zip: an older zip's ROM keys, ICE_RAW=1; and the add-on zip with ALLOW_ONEUI9=1
+	confzip "$ZK" akko-old '$a ALLOW_ONEUI9=1\nALLOW_ICHTHYS=1'; ZKO=$CZ
+	confzip "$ZK" akko-ice 's/^ICE_RAW=.*/ICE_RAW=1/'; ZKI=$CZ
+	confzip "$T/ak/$(basename "$(ls "$T"/ak/a52s-k612-*-twrp.zip | grep -v restore)")" ak-oneui '$a ALLOW_ONEUI9=1'; ZAO=$CZ
+	unzip -p "$ZAO" a52s-k612.conf | grep -q '^TITLE=.*LineageOS 24 based ROMs (with /vendor add-on)$' && ok "add-on zip: title names LineageOS 24" || bad "add-on zip title"
 else
 	echo "NOTE: no kernel-only build at $AK_KO_SRC: kernel-only cases skipped"
 fi
@@ -451,6 +465,12 @@ new_root_ak() {
 	touch "$R/fake/ro.dm-0" "$R/fake/ro.dm-1" "$R/fake/ro.dm-2"
 	(cd "$R/blk" && sha256sum sda18 mmcblk1p1) > "$R/fake/untouchable.sha"
 }
+# set_rom <release> <sdk> <display id> <incremental>: a ROM without any ro.lineage.* property
+set_rom() {
+	printf 'ro.build.version.release=%s\nro.build.version.sdk=%s\nro.build.display.id=%s\nro.build.version.incremental=%s\n' "$@" > "$R/fake/parts/dm-0.d/system/build.prop"
+	: > "$R/fake/parts/dm-2.d/etc/build.prop"
+}
+expect_no_msg() { grep -q -- "$1" "$R/fake/ui.msg" && { bad "$SC: says '$1'"; grep -- "$1" "$R/fake/ui.msg" | sed 's/^/      /' | head -n 5; } || ok "$SC: does not say '$1'"; }
 sdcard_ok() { # internal storage decrypted and mounted (backup goes there, raw images)
 	sed -i 's#^/sdcard .*#/sdcard /dev/block/dm-40 4000000#; s#^/data/media/0 .*#/data/media/0 /dev/block/dm-40 4000000#' "$R/fake/df.conf"
 }
@@ -652,6 +672,14 @@ run_ak "$ZI" "$SH"
 expect_rc 0; expect_akparts "$EXI"; expect_ak_safe
 grep -q 'fstab: /data without wrappedkey' "$R/fake/last.log" && ok "$SC: fstab checked" || { bad "$SC: fstab check not logged"; grep -E 'fstab|vendor' "$R/fake/last.log" | tail -5; ls -la "$R/fake/parts/dm-1.d/etc"; }
 
+SC="$SH/ak-ice-hw-fstab-only"; new_root_ak iceD "$AK_ICH" ichthys
+mkdir -p "$R/fake/parts/dm-1.d/etc"; printf 'ro.boot.hardware=qcom\n' >> "$R/fake/props"
+printf '/dev/block/bootdevice/by-name/userdata /data f2fs noatime,inlinecrypt latemount,wait,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+emmc_optimized+wrappedkey_v0\n' > "$R/fake/parts/dm-1.d/etc/fstab.emmc"
+printf '/dev/block/bootdevice/by-name/userdata /data f2fs noatime,inlinecrypt latemount,wait,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized\n' > "$R/fake/parts/dm-1.d/etc/fstab.qcom"
+run_ak "$ZI" "$SH"
+expect_rc 0; expect_akparts "$EXI"; expect_ak_safe
+grep -q 'fstab: /data without wrappedkey (.*fstab.qcom)' "$R/fake/last.log" && ok "$SC: only fstab.qcom checked" || bad "$SC: fstab.<hardware> not used"
+
 SC="$SH/ak-ice-no-fstab"; new_root_ak iceC "$AK_ICH" ichthys
 run_ak "$ZI" "$SH"
 expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "no fstab in /vendor/etc"
@@ -759,6 +787,114 @@ run_ak "$ZK" "$SH"
 expect_rc 0; expect_akparts "$EXK"; expect_ak_safe
 rm -f "$R/fake/norw.dm-1"; expect_msg "add-on stays in /vendor"
 VBM_SRC=$AK_ICH/vbmeta.img
+
+# ---- the kernel-only zip installs over ANY ROM (2026-11-23): the ROM is identified only for the description
+# and for warnings; what protects the phone (device, vbmeta, image types, wrapped keys) still aborts
+SC="$SH/ak-ko-tested-roms"; new_root_ak g0 "$AK_ICH" ichthys
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_msg "ROM: IchthysOS ichthys202611112021 (Android 17)"; expect_no_msg "WARNING"
+new_root_ak g0l "$AK_ICH" lineage
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_msg "ROM: LineageOS 24.0-20261028-NIGHTLY-a52sxq (Android 17)"; expect_no_msg "WARNING"
+expect_msg "Package: Linux 6.12 kernel .* for the Galaxy A52s 5G, any ROM"
+
+SC="$SH/ak-ko-rom-made-up"; new_root_ak g1 "$AK_ICH" ichthys; set_rom 17 37 "FooOS-17.0-20261101-a52sxq" eng.foo
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_no_addon; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+expect_msg "ROM: FooOS-17.0-20261101-a52sxq (Android 17)"; expect_msg "WARNING: this kernel was never tested with this ROM"
+expect_msg "Tested: LineageOS 24, IchthysOS, K4_UN1CA One UI 9 port"; expect_msg "Installing anyway"; expect_no_msg "than Android 17"
+grep -qx 'rom: FooOS-17.0-20261101-a52sxq' "$(ak_bk | tail -n 1)info.txt" && ok "$SC: backup info names the ROM" || bad "$SC: backup info rom line"
+SC="$SH/ak-ko-rom-made-up-restore"
+run_ak "$ZR" "$SH"
+expect_rc 0; expect_akparts "$AK_ICH"; expect_ak_safe; expect_msg "your ROM's own kernel is back"
+
+SC="$SH/ak-ko-rom-android14"; new_root_ak g2 "$AK_ICH" ichthys   # a tested ROM name on an older Android: warning, no abort
+sed -i 's/^ro.build.version.release=.*/ro.build.version.release=14/; s/^ro.build.version.sdk=.*/ro.build.version.sdk=34/' "$R/fake/parts/dm-0.d/system/build.prop"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+expect_msg "(Android 14)"; expect_msg "WARNING: Android 14 is older than Android 17: this kernel is untested there and may not boot"
+expect_msg "Installing anyway"; expect_no_msg "never tested with this ROM"
+
+SC="$SH/ak-ko-rom-lineage21-android14"; new_root_ak g3 "$AK_ICH" lineage   # both warnings
+sed -i 's/^ro.build.version.release=.*/ro.build.version.release=14/; s/^ro.build.version.sdk=.*/ro.build.version.sdk=34/' "$R/fake/parts/dm-0.d/system/build.prop"
+sed -i 's/^ro.lineage.version=.*/ro.lineage.version=21.0-20250101-NIGHTLY-a52sxq/' "$R/fake/parts/dm-2.d/etc/build.prop"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_safe
+expect_msg "ROM: LineageOS 21.0-20250101-NIGHTLY-a52sxq (Android 14)"; expect_msg "is older than Android 17"; expect_msg "never tested with this ROM"
+
+SC="$SH/ak-ko-rom-sdk-only"; new_root_ak g4 "$AK_ICH" ichthys; set_rom VanillaIceCream 35 "BarOS test build" eng.bar   # codename release: SDK decides
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_safe; expect_msg "ROM: BarOS test build (Android VanillaIceCream)"; expect_msg "is older than Android 17"
+set_rom "" "" "BarOS test build" eng.bar; cp --sparse=always "$AK_ICH/boot.img" "$R/blk/sda19"; cp --sparse=always "$AK_ICH/vendor_boot.img" "$R/blk/sda21"; cp --sparse=always "$AK_ICH/dtbo.img" "$R/blk/sda22"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_msg "cannot tell this ROM's Android version"
+
+SC="$SH/ak-ko-rom-android18"; new_root_ak g5 "$AK_ICH" ichthys
+sed -i 's/^ro.build.version.release=.*/ro.build.version.release=18/; s/^ro.build.version.sdk=.*/ro.build.version.sdk=38/' "$R/fake/parts/dm-0.d/system/build.prop"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_safe; expect_msg "WARNING: Android 18 is newer than Android 17"
+
+# the OneUI 9 port: stock Samsung vendor (Android 14 props, none of the add-on's files), no key in the conf needed;
+# a conf of an older zip with ALLOW_ONEUI9=1 / ALLOW_ICHTHYS=1 is still accepted
+for z in "$ZK" "$ZKO"; do
+SC="$SH/ak-ko-rom-oneui9$([ "$z" = "$ZKO" ] && echo -old-conf)"; new_root_ak g6 "$AK_ICH" ichthys; set_rom 17 37 "OneUI9.3.140-98b20bd9 release-keys" 98b20bd9
+rm -r "$R/fake/parts/dm-1.d/bin" "$R/fake/parts/dm-1.d/etc/init"
+printf 'ro.product.vendor.device=a52sxq\nro.vendor.build.version.release=14\nro.vendor.build.version.sdk=34\n' > "$R/fake/parts/dm-1.d/build.prop"
+run_ak "$z" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_no_addon; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+expect_msg "ROM: One UI 9 port OneUI9.3.140-98b20bd9 (Android 17)"; expect_no_msg "WARNING"
+grep -qE '^mount .*(-o rw|remount,rw)' "$R/fake/cmd.log" && bad "$SC: /vendor was mounted read-write" || ok "$SC: /vendor never mounted read-write"
+done
+
+SC="$SH/ak-ko-system-unmountable"; new_root_ak g7 "$AK_ICH" ichthys; rm -r "$R/fake/parts/dm-0.d"   # ROM not identifiable: warning only
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_backup cache "$AK_ICH"; expect_ak_safe
+expect_msg "ROM: unknown (system cannot be mounted in this recovery)"; expect_msg "could not be identified"; expect_msg "never tested with this ROM"
+
+SC="$SH/ak-ko-vendor-not-a52sxq"; new_root_ak g8 "$AK_ICH" ichthys
+sed -i 's/^ro.product.vendor.device=.*/ro.product.vendor.device=a52q/' "$R/fake/parts/dm-1.d/build.prop"
+run_ak "$ZK" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_safe; expect_msg "WARNING: the vendor partition is made for 'a52q', not a52sxq"
+
+# the checks that protect the phone still abort, whatever the ROM
+SC="$SH/ak-ko-made-up-vbmeta-verification-on"; new_root_ak h1 "$AK_ICH" ichthys; set_rom 17 37 "FooOS-17.0-20261101-a52sxq" eng.foo
+printf '\x00' | dd of="$R/blk/sde19" bs=1 seek=123 conv=notrunc status=none; cp "$R/blk/sde19" "$R/vbm"; VBM_SRC=$R/vbm
+run_ak "$ZK" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "AVB verification is enabled"
+VBM_SRC=$AK_ICH/vbmeta.img
+
+SC="$SH/ak-ko-made-up-wrappedkey"; new_root_ak h2 "$AK_ICH" ichthys; set_rom 17 37 "FooOS-17.0-20261101-a52sxq" eng.foo
+mkdir -p "$R/fake/parts/dm-1.d/etc"; printf 'ro.boot.hardware=qcom\n' >> "$R/fake/props"
+printf '/dev/block/bootdevice/by-name/userdata /data f2fs noatime,inlinecrypt latemount,wait,fileencryption=aes-256-xts:aes-256-cts:v2+inlinecrypt_optimized+wrappedkey_v0\n' > "$R/fake/parts/dm-1.d/etc/fstab.qcom"
+run_ak "$ZKI" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "hardware-wrapped keys"; expect_msg "standard (not hardware-wrapped) keys only"
+sed -i 's/+wrappedkey_v0//' "$R/fake/parts/dm-1.d/etc/fstab.qcom"
+run_ak "$ZKI" "$SH"
+expect_rc 0; expect_akparts "$EXK"; expect_ak_safe; expect_msg "never tested with this ROM"
+
+SC="$SH/ak-ko-made-up-wrong-phone"; new_root_ak h3 "$AK_ICH" ichthys; set_rom 17 37 "FooOS-17.0-20261101-a52sxq" eng.foo
+sed -i 's/^ro.boot.bootloader=.*/ro.boot.bootloader=A525FXXU4CVJB/' "$R/fake/props"
+run_ak "$ZK" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_msg "is not an SM-A528B bootloader"
+
+SC="$SH/ak-ko-made-up-boot-is-not-boot"; new_root_ak h4 "$AK_ICH" ichthys; set_rom 17 37 "FooOS-17.0-20261101-a52sxq" eng.foo
+head -c 4096 /dev/zero | dd of="$R/blk/sda19" conv=notrunc status=none; cp "$R/blk/sda19" "$R/b.z"
+run_ak "$ZK" "$SH"
+expect_rc 1; cmp -s "$R/blk/sda19" "$R/b.z" && ok "$SC: boot unchanged" || bad "$SC: boot changed"; expect_no_ak_backup; expect_ak_safe; expect_msg "does not hold a boot image"
+
+SC="$SH/ak-ko-made-up-no-backup-space"; new_root_ak h5 "$AK_ICH" ichthys; set_rom 17 37 "FooOS-17.0-20261101-a52sxq" eng.foo
+sed -i 's#^/cache .*#/cache /dev/block/sda29 30000#' "$R/fake/df.conf"
+run_ak "$ZK" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe
+
+# the zip WITH a /vendor add-on stays LineageOS-only
+SC="$SH/ak-addon-rom-made-up"; new_root_ak h6 "$AK_ICH" ichthys; set_rom 17 37 "FooOS-17.0-20261101-a52sxq" eng.foo
+run_ak "$ZA" "$SH"
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_no_addon
+expect_msg "not LineageOS-based"; expect_msg "Use the kernel-only zip for other ROMs"
+SC="$SH/ak-addon-rom-oneui9"; new_root_ak h7 "$AK_ICH" ichthys; set_rom 17 37 "OneUI9.3.140-98b20bd9 release-keys" 98b20bd9
+run_ak "$ZAO" "$SH"   # even with ALLOW_ONEUI9=1 in the conf
+expect_rc 1; expect_akparts "$AK_ICH"; expect_no_ak_backup; expect_ak_safe; expect_no_addon; expect_msg "not LineageOS-based"
 fi
 
 # the shipped static arm64 binary itself (qemu-aarch64): full install + restore
@@ -785,8 +921,8 @@ truncate -s 33554432 "$V4/vb.img" || { bad "v4: mkbootimg/avbtool cannot make th
 if [ -n "$V4" ]; then
 	"$AKH" mkboot "$V4/boot.img" "$T/akx/Image" "$V4/nb.img" > "$V4/nb.out" 2>&1 && unpack_bootimg --boot_img "$V4/nb.img" --out "$V4/ub" > "$V4/ub.txt" &&
 	cmp -s "$V4/ub/kernel" "$T/akx/Image" && cmp -s "$V4/ub/ramdisk" "$V4/rd" && grep -q 'os patch level: 2026-06' "$V4/ub.txt" &&
-	grep -q '^command line args: x=1' "$V4/ub.txt" && avbtool info_image --image "$V4/nb.img" > /dev/null && "$AKH" info "$V4/nb.img" | grep -q avb_hash_ok=1 &&
-		ok "v4 boot: kernel replaced, ramdisk/os/patch/cmdline kept, AVB footer valid" || bad "v4 boot: $(cat "$V4/nb.out")"
+	grep -q '^command line args: *$' "$V4/ub.txt" && grep -qx cmdline_blanked=1 "$V4/nb.out" && avbtool info_image --image "$V4/nb.img" > /dev/null && "$AKH" info "$V4/nb.img" | grep -q avb_hash_ok=1 &&
+		ok "v4 boot: kernel replaced, ramdisk/os/patch kept, boot cmdline blanked (ABL appends it after ours), AVB footer valid" || bad "v4 boot: $(cat "$V4/nb.out")"
 	"$AKH" mkvendor "$V4/vb.img" "$T/akx/vendor_boot.dtb" "$T/akx/vendor-cmdline.txt" "$T/akx/vendor-ramdisk-a52.cpio.lz4" "$V4/nv.img" > "$V4/nv.out" 2>&1 &&
 	"$AKH" mkvendor "$V4/nv.img" "$T/akx/vendor_boot.dtb" "$T/akx/vendor-cmdline.txt" "$T/akx/vendor-ramdisk-a52.cpio.lz4" "$V4/nv2.img" > "$V4/nv2.out" 2>&1 &&
 	cmp -s "$V4/nv.img" "$V4/nv2.img" && grep -q removed_a52_fragments=1 "$V4/nv2.out" &&

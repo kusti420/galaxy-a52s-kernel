@@ -1,0 +1,61 @@
+Module.symvers (all power modules): 313 exports, CRC + name + module identical to drivers612/power/Module.symvers
+new sec-battery.ko 684928 bytes sha256 1bb8e0d2b895d7b5f48f230116253be018bc0c08edb4b1f1defc2bb9c6c9e438
+  shipped ./drivers612/realboot/out/rb108/work/vr/lib/modules/sec-battery.ko sha256 85cec1d239326f136d5a8b8554b5ae7f4a73eef015ca79f11a26bb78a9d230ce
+  export CRCs: 79 of 79 identical
+  import list: 128 shipped, 127 new; differences:
+    22d21
+    < 0x3111d883	sec_pd_get_apdo_prog_volt
+  modinfo identical (depends=sec_pd,sb-core,usb_typec_manager,vbus_notifier,common_muic)
+  consumers in rb108: 8 imported CRCs checked against the new sec-battery.ko, 0 mismatches
+new common_muic.ko 51472 bytes sha256 7b7ff75e0c82f6f3b56b9e4a2e5a3de9ea5a921f447eb49532f20ae27d4c3d31
+  shipped ./drivers612/realboot/out/rb108/work/vr/lib/modules/common_muic.ko sha256 85e214c07b3a58f1168fefcc67c16bccd767a4553fb8d42a0d1a05f0ed9d1cda
+  export CRCs: 26 of 26 identical
+  import list: 17 shipped, 26 new; differences:
+    4a5
+    > 0x31b67631	__fortify_panic
+    6a8
+    > 0x56e198b3	of_property_read_string
+    7a10,11
+    > 0x6affad5a	of_chosen
+    > 0x719e716c	strstr
+    8a13,17
+    > 0x8a4521ee	kstrtoint
+    > 0x8f8e273c	sized_strscpy
+    > 0x90d19584	strlen
+    > 0xae11e5d6	strchrnul
+    > 0xb5bedffb	strnlen
+  modinfo identical (depends=switch_class,sec_core,usb_notify_layer)
+  consumers in rb108: 18 imported CRCs checked against the new common_muic.ko, 0 mismatches
+new muic_sm5714.ko 158144 bytes sha256 35d996737adad85ae59b01613dc3b5d57b2dae2f9a6fcab2e642cf1cab782f7c
+  shipped ./drivers612/realboot/out/rb108/work/vr/lib/modules/muic_sm5714.ko sha256 13f01335a4c0aa1c9dfd419eb8c232a9e49e68eb133fcd0a6232e15c8b550018
+  export CRCs: 5 of 5 identical
+  import list: 61 shipped, 75 new; differences:
+    0a1
+    > 0x0660a871	kernel_read
+    10a12
+    > 0x31b67631	__fortify_panic
+    11a14
+    > 0x35480a5b	flush_work
+    12a16
+    > 0x43dff603	kstrtoll
+    18a23
+    > 0x56e198b3	of_property_read_string
+    24a30
+    > 0x6affad5a	of_chosen
+    25a32,33
+    > 0x719e716c	strstr
+    > 0x76a968b0	param_ops_bool
+    31a40
+    > 0x817b6320	kernel_write
+    34a44
+    > 0x8f8e273c	sized_strscpy
+    39a50
+    > 0xaae5717d	filp_close
+    40a52
+    > 0xae11e5d6	strchrnul
+    41a54
+    > 0xb5bedffb	strnlen
+    58a72
+    > 0xeaaf1545	filp_open
+  MODINFO DIFFERS
+  consumers in rb108: 3 imported CRCs checked against the new muic_sm5714.ko, 0 mismatches

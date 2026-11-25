@@ -582,6 +582,9 @@ struct stm_ts_data {
 
 #if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
 	struct notifier_block vbus_nb;
+	struct delayed_work vbus_bind_work;	/* a52sxq 6.12: late binding to vbus_notifier.ko */
+	int vbus_bind_tries;
+	bool vbus_bound;
 #endif	
 	struct notifier_block stm_input_nb;
 	struct delayed_work work_print_info;

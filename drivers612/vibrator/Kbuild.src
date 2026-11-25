@@ -1,3 +1,6 @@
 # Samsung sec_vibrator framework (/sys/class/timed_output/vibrator) + DC motor driver
 ccflags-y += -I$(src)/include
+# vibrator on/off to listeners (adsp_factory: the SSC masks the accelerometer while the motor runs), as 5.4.
+# Adds the exports sec_vib_notifier_register/unregister; adsp_factory_dlkm binds to them with symbol_get.
+ccflags-y += -DCONFIG_SEC_VIB_NOTIFIER=1
 obj-m += sec_vibrator.o dc_vibrator.o

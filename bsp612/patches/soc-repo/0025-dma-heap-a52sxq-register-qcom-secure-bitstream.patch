@@ -1,0 +1,42 @@
+Subject: [PATCH] dma-heap: a52sxq: register qcom,secure-bitstream (VMID_CP_BITSTREAM)
+
+Applied 2026-11-24 to soc-repo + soc-repo-staging (SPEC 04 gap vid.dec.secure; proposed 11-23). Built out of tree: drivers612/secure/secheap/build.sh.
+Applies to bsp612/soc-repo (patch -p1).
+
+drivers612/gpu-video/video/msm/vidc/msm_smem.c (secure_heap_for_buffer_type) asks
+for the dma heap "qcom,secure-bitstream" for the secure decoder's input/scratch/persist
+buffers and the secure encoder's output. The 6.12 heap driver only creates
+qcom,secure-pixel and qcom,secure-non-pixel; the live heap list of the shipped kernel
+(logs/selftest/PHONE1-20261122-193951 row quirk.dma_heaps) has no bitstream heap.
+qcom_secure_system_heap_create() already handles QCOM_DMA_HEAP_FLAG_CP_BITSTREAM
+(get_secure_vmid -> VMID_CP_BITSTREAM 0x9), so one more call is all it takes.
+
+Test order (never first on a daily phone: on 2026-11-12 a secure ION allocation reset
+the phone silently, and no later entry records that as fixed):
+ 1. kexec session on a test phone: /dev/dma_heap/qcom,secure-bitstream exists; allocate
+    1 MiB from it and free it -> no reset, no hyp_assign error.
+ 2. Android: a secure decoder session (c2.qti.avc.decoder.secure configure + start)
+    -> no "secure-bitstream" error line in dmesg.
+ 3. Hands: a Widevine L1 title plays in HD.
+Module affected: qcom_dma_heaps.ko only (no export changes).
+
+--- a/drivers/dma-buf/heaps/qcom_dma_heap.c	2026-11-23 18:41:53.235382088 +0200
++++ b/drivers/dma-buf/heaps/qcom_dma_heap.c	2026-11-23 18:41:53.235414108 +0200
+@@ -45,6 +45,17 @@
+ 				       QCOM_DMA_HEAP_FLAG_CP_PIXEL);
+ 		qcom_secure_system_heap_create("qcom,secure-non-pixel", NULL,
+ 				       QCOM_DMA_HEAP_FLAG_CP_NON_PIXEL);
++		/*
++		 * a52sxq: the 5.4-era msm_vidc port takes the secure decoder's input,
++		 * scratch and persist buffers (and the secure encoder's output) from
++		 * this heap: VMID_CP_BITSTREAM, the venus_sec_bitstream context bank.
++		 * 5.4 served them from the ION secure system heap with
++		 * ION_FLAG_CP_BITSTREAM. Without the heap every secure session
++		 * (Widevine L1 playback, HDCP wireless display) fails at its first
++		 * internal buffer.
++		 */
++		qcom_secure_system_heap_create("qcom,secure-bitstream", NULL,
++				       QCOM_DMA_HEAP_FLAG_CP_BITSTREAM);
+ 	}
+ 	qcom_sys_movable_heap_create();
+ 

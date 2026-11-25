@@ -1,0 +1,51 @@
+--- a/btpower.c
++++ b/btpower.c
+@@ -202,6 +202,15 @@
+ static struct bluetooth_power_platform_data *bt_power_pdata;
+ static struct platform_device *btpdev;
+ static bool previous;
++/*
++ * a52sxq 6.12: gpiod_free() drops a pinctrl module reference and a gpio_device reference even
++ * when the line is not requested (5.4 only when it really freed a line). bluetooth_power() freed
++ * the reset and debug GPIOs whenever their numbers were valid (power 0 after retention 2, a
++ * failed request at power on, a debug GPIO that was never asserted): each such free leaked one
++ * reference of pinctrl_yupik. Free only what this driver holds.
++ */
++static bool bt_rst_gpio_held;
++static bool bt_dbg_gpio_held;
+ static int pwr_state;
+ static struct class *bt_class;
+ static int bt_major;
+@@ -421,6 +430,7 @@
+ 					__func__, bt_reset_gpio, rc);
+ 			return rc;
+ 		}
++		bt_rst_gpio_held = true;
+ 
+ 		pr_info("BTON:Turn Bt OFF asserting BT_EN to low\n");
+ 		pr_info("bt-reset-gpio(%d) value(%d)\n", bt_reset_gpio,
+@@ -532,6 +542,7 @@
+ 			if  (rc)  {
+ 				pr_err("unable to request Debug Gpio\n");
+ 			}  else  {
++				bt_dbg_gpio_held = true;
+ 				rc = gpio_direction_output(bt_debug_gpio,  1);
+ 				if (rc)
+ 					pr_err("%s:Prob Set Debug-Gpio\n",
+@@ -605,10 +616,14 @@
+ 		if (bt_power_pdata->bt_gpio_sys_rst > 0)
+ 			bt_configure_gpios(on);
+ gpio_fail:
+-		if (bt_power_pdata->bt_gpio_sys_rst > 0)
++		if (bt_power_pdata->bt_gpio_sys_rst > 0 && bt_rst_gpio_held) {
++			bt_rst_gpio_held = false;
+ 			gpio_free(bt_power_pdata->bt_gpio_sys_rst);
+-		if (bt_power_pdata->bt_gpio_debug > 0)
++		}
++		if (bt_power_pdata->bt_gpio_debug > 0 && bt_dbg_gpio_held) {
++			bt_dbg_gpio_held = false;
+ 			gpio_free(bt_power_pdata->bt_gpio_debug);
++		}
+ 		if (bt_power_pdata->bt_chip_clk)
+ 			bt_clk_disable(bt_power_pdata->bt_chip_clk);
+ clk_fail:

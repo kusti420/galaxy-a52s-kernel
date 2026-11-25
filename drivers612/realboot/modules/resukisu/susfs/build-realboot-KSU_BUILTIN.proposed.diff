@@ -1,0 +1,49 @@
+--- a/drivers612/realboot/build-realboot.sh
++++ b/drivers612/realboot/build-realboot.sh
+@@ -132,6 +132,10 @@
+ #   ICE_RAW=1         (default 0; REF >= s99i) /data encryption in the ICE for standard keys (no blk-crypto-fallback)
+ #   LPM=1             (default 0) cpuidle governor qcom-cpu-lpm (WALT busy hysteresis, as 5.4 lpm-levels): see the option
+ #   GPU_BUSY_UP=<pct> (default unset; REF >= s97) adreno_tz governor steps up one level when >= pct busy (b5)
++#   KSU_BUILTIN=1     (default 0; SUSFS=1 is the same switch; 6.12 + DIAG=1 only) the OneUI 9 Image variant with
++#                     ReSukiSU 8770c7e3 BUILT IN + SUSFS v2.3.0 (modules/resukisu/build-susfs-image.sh ->
++#                     bsp612/out/susfs/Image, same release and export CRCs, with a52bc). IMAGE defaults to it.
++#                     Excludes KSU=1: no /ksuinit, no kernelsu.ko, no rdinit= (see modules/resukisu/SUSFS.md)
+ #   KSU=1             (default 0) KernelSU-Next LKM: /ksuinit + /kernelsu.ko in the vendor ramdisk, rdinit=/ksuinit
+ #                     (KSU_DIR=<dir> default modules/kernelsu/out); see the comment at the option
+ #   USBAUDIO=1        (default 0) snd-usb-audio-qmi in the first stage after stage wlanb (USB audio offload)
+@@ -198,6 +202,12 @@
+ 	MODEM_DRB_DEF=$BSP/src/drivers612/conn/rild/drb/dev_ril_bridge.ko         # bsp618 port build (stripped below)
+ 	MODEM_TESTED_DTB2_DEF=$TOP/logs/kx-m2k618-p1-p1-194536/kexec.dtb          # the 6.18 modem run (modem up, no data call)
+ fi
++KSU_BUILTIN=${KSU_BUILTIN:-${SUSFS:-0}}; case "$KSU_BUILTIN" in 0|1) ;; *) echo "KSU_BUILTIN=0|1" >&2; exit 2;; esac
++if [ "$KSU_BUILTIN" = 1 ]; then
++	[ "$KSER" = 612 ] && [ "${DIAG:-0}" = 1 ] || { echo "KSU_BUILTIN=1 needs KERNEL=612 DIAG=1 (the variant is an a52bc Image)" >&2; exit 2; }
++	[ "${KSU:-0}" = 0 ] || { echo "KSU_BUILTIN=1 excludes KSU=1 (KernelSU is in the Image: no /ksuinit, no kernelsu.ko)" >&2; exit 2; }
++	IMAGE=${IMAGE:-$BSP/out/susfs/Image}
++fi
+ DIAG=${DIAG:-0}
+ DEBUG=${DEBUG:-0}; case "$DEBUG" in 0|1) ;; *) echo "DEBUG=0|1" >&2; exit 2;; esac
+ SYSMAP=$DIST/System.map
+@@ -365,6 +375,14 @@
+ 	[ "$(sha256sum < "$IMAGE" | cut -d' ' -f1)" != "$(sha256sum < "$DIST/Image" | cut -d' ' -f1)" ] || fail "DIAG Image = dist Image"
+ 	cmp -s <(sed -n 's/^release=//p' "$(dirname "$IMAGE")/BUILDINFO") <(echo "$KREL") || fail "DIAG kernel BUILDINFO release differs"
+ 	say "DIAG kernel: $IMAGE = dist release + a52bc (breadcrumbs + RAM console); $(grep '^modversion' "$(dirname "$IMAGE")/BUILDINFO")"
++	if [ "$KSU_BUILTIN" = 1 ]; then
++		BI=$(dirname "$IMAGE")/BUILDINFO
++		grep -q ' susfs_init$' "$SYSMAP" && grep -q ' ksu_handle_susfs_cmd$' "$SYSMAP" || fail "KSU_BUILTIN=1 but $IMAGE has no built-in KernelSU + SUSFS (modules/resukisu/build-susfs-image.sh)"
++		grep -q '^modversion CRCs: .* identical' "$BI" || fail "KSU_BUILTIN=1: the variant's export CRCs differ from the GKI build ($(dirname "$IMAGE")/crc-changed.txt): the first-stage modules must be rebuilt against it"
++		say "KSU_BUILTIN=1: $(grep '^variant:' "$BI"); $(grep '^ksu:' "$BI"); $(grep '^susfs:' "$BI"); no rdinit, no kernelsu.ko"
++	else
++		grep -q ' susfs_init$' "$SYSMAP" && fail "$IMAGE has built-in KernelSU + SUSFS: say KSU_BUILTIN=1 (and not KSU=1)"
++	fi
+ 	# boots the same Image in QEMU and checks every breadcrumb, the RAM console, the warm-reset
+ 	# attempt counter and the no-reservation gate (kernel-diag/qemu-test.sh, ~40 s); QEMU_TEST=0 skips
+ 	if [ "${QEMU_TEST:-1}" = 1 ]; then
+@@ -1298,6 +1316,7 @@
+ printf 'name=%s kernel=%s krel=%s ref=%s image=%s tree=%s diag=%s modem=%s sdcard=%s wlan=%s addon=%s debug=%s btslim=%s\n' "$NAME" "$KV" "$KREL" "$REFRD" "$IMAGE" "$TREF" "$DIAG" "$MODEM" "$SDCARD" "$WLD" "$ADDON" "$DEBUG" "${BTSLIM:-0}" > "$O/BUILDINFO"
+ sed -i "s/\$/ usbaudio=${USBAUDIO:-0} wdt=${WDT:-0} qrng=${QRNG:-0} hall=${HALL:-0} volkey=${VOLKEY:-0} bwcompat=${BWCOMPAT:-0} adspfac=${ADSPFAC:-0} ksu=${KSU:-0} lpm=${LPM:-0} hold_ms=${HOLD_MS:-} ice_raw=${ICE_RAW:-0} ice_kat_fail=${ICE_KAT_FAIL:-0} ufs_poll_ms=${UFS_POLL_MS:-} ufs_qos=${UFS_QOS:-1} ufs_clkscale=${UFS_CLKSCALE:-1} ufs_wb=${UFS_WB:-} modload=${MODLOAD:-} modload_seq=$(echo ${MODLOAD_SEQ:-} | tr ' ' '+') async_mods=$(echo ${ASYNC_MODS:-} | tr " " "+") async_last=$(echo ${ASYNC_LAST:-} | tr ' ' '+') strip_btf=${STRIP_BTF:-0} thermal=${THERMAL:-0} thermal_x=$(echo ${THERMAL_X:-} | tr ' ' '+')/" "$O/BUILDINFO"
+ sed -i "s/\$/ argos=${ARGOS:-0} proca_magic=${PROCA_MAGIC:-0} shm_bridge_off=${SHM_BRIDGE_OFF:-0}/" "$O/BUILDINFO"
++sed -i "s/\$/ ksu_builtin=${KSU_BUILTIN:-0}/" "$O/BUILDINFO"
+ if [ "$DIAG_KERNEL" = 1 ]; then cp "$(dirname "$IMAGE")/BUILDINFO" "$O/diag-kernel.BUILDINFO"; fi
+ say "== summary"
+ sed 's/^/  /' "$O/SHA256SUMS" | tee -a "$R"

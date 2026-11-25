@@ -1,0 +1,4 @@
+# a52sxq.ko: the one runtime switch "which userspace runs on this kernel" (a52sxq.userspace=samsung|aosp|auto)
+ccflags-y += -I$(src)/include
+obj-m := a52sxq.o
+a52sxq-y := a52sxq_core.o

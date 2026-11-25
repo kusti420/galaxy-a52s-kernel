@@ -312,9 +312,9 @@ static int adc_gain[16] = { 0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, 
 
 /* Battery Threshold */
 #if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
-#define PCA9468_DC_VBAT_MIN		3100000	// 3100000uV
+#define PCA9468_DC_VBAT_MIN		3500000	// 3500000uV (5.4 3.4.16S value; donor had 3100000)
 #else
-#define PCA9468_DC_VBAT_MIN		3100000	// 3100000uV
+#define PCA9468_DC_VBAT_MIN		3500000	// 3500000uV (5.4 3.4.16S value; donor had 3100000)
 #endif
 /* Input Current Limit default value */
 #define PCA9468_IIN_CFG_DFT		2000000	// 2000000uA
@@ -322,7 +322,7 @@ static int adc_gain[16] = { 0, 1, 2, 3, 4, 5, 6, 7, -8, -7, -6, -5, -4, -3, -2, 
 #define PCA9468_ICHG_CFG_DFT	6000000	// 6000000uA
 #define PCA9468_ICHG_CFG_MAX	8000000	//uA
 /* Charging Float Voltage default value */
-#define PCA9468_VFLOAT_DFT		4500000	// 4500000uV
+#define PCA9468_VFLOAT_DFT		4340000	// 4340000uV (5.4 3.4.16S value; donor had 4500000)
 /* Sense Resistance default value */
 #if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
 #define PCA9468_SENSE_R_DFT		0		// 5mOhm

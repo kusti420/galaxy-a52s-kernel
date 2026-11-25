@@ -1,6 +1,8 @@
 #!/bin/bash
 # Runs the A52 Kernel Bench app on a phone and collects everything.
-# Usage: tools/bench-app/run-bench.sh <serial> [tests=all] [seconds=0] [--audible] [extra am extras...]
+# Usage: tools/bench-app/run-bench.sh <serial> [tests=all] [seconds=0] [--audible] [--oneui] [extra am extras...]
+#   --oneui: OneUI 9 port profile: always silent (overrides --audible), kernel log through `su -c` (ReSukiSU). It installs
+#   the bench APK (the project's own tool): on a phone where only /data/local/tmp tools are allowed, ask first.
 #   tests: all | comma list of ids or prefixes (gpu,camera.still,soak.mixed)     seconds: per-test duration override (0 = defaults)
 #   extra: passed to am start, e.g.  --es gpu_mb 512  --es storage_mb 64  --es url https://...
 # Output: logs/bench/<serial>-<time>/ (results.json, evidence, logcat, kernel log delta, kbad.txt), table on stdout; exit 1 on FAIL.
@@ -10,8 +12,10 @@ S=${1:?serial}; TESTS=${2:-all}; SECS=${3:-0}; shift; shift 2>/dev/null; shift 2
 HERE=$(cd "$(dirname "$0")" && pwd); TOP=$(cd "$HERE/../.." && pwd)
 # Silent by default: the tests that make sound (audio.out, audio.offload, soak.mixed plays a tone)
 # only run with --audible (anywhere after the serial) or AUDIBLE=1. "all" then means all silent tests.
-AUD=${AUDIBLE:-0}; _x=(); for _a in "$@"; do if [ "$_a" = --audible ]; then AUD=1; else _x+=("$_a"); fi; done; set -- "${_x[@]}"
+AUD=${AUDIBLE:-0}; ONEUI=${ONEUI:-0}; _x=(); for _a in "$@"; do if [ "$_a" = --audible ]; then AUD=1; elif [ "$_a" = --oneui ]; then ONEUI=1; else _x+=("$_a"); fi; done; set -- "${_x[@]}"
 [ "$TESTS" = --audible ] && { AUD=1; TESTS=all; }; [ "$SECS" = --audible ] && { AUD=1; SECS=0; }
+[ "$TESTS" = --oneui ] && { ONEUI=1; TESTS=all; }; [ "$SECS" = --oneui ] && { ONEUI=1; SECS=0; }
+[ "$ONEUI" = 1 ] && AUD=0   # OneUI profile: never audible, root (kernel log) through su -c; the app itself never vibrates
 if [ "$AUD" != 1 ]; then
   [ "$TESTS" = all ] && TESTS=gpu.render,gpu.torture,gpu.vulkan,display.pattern,display.refresh,audio.mic,camera.still,camera.video,camera.flash,codec.roundtrip,sensors.all,wifi.net,bt.le,storage.io,storage.sd,crypto.keystore,drm.widevine,cpu.perf,thermal.load,gnss.fix
   _t=; for _i in $(echo "$TESTS" | tr , ' '); do case "$_i" in audio|audio.out|audio.offload|soak|soak.mixed) echo "silent run: $_i left out (--audible to include)";; *) _t="${_t:+$_t,}$_i";; esac; done
@@ -27,7 +31,8 @@ mkdir -p "$(dirname "$LOCK")"; exec 9>"$LOCK"
 flock -w "${LOCK_WAIT:-900}" 9 || { echo "could not get $LOCK"; exit 2; }
 a() { adb -s "$S" shell "$@" 2>&1 | tr -d '\r'; }
 KBAD='WARNING: CPU|WARNING: at |BUG:|Internal error|Unable to handle kernel|Oops|Kernel panic|soft lockup|rcu_(preempt|sched).*(stall|detected)|hung_task|blocked for more than|page allocation failure|Out of memory: Kill|kgsl.*(out of memory|GPU PAGE FAULT|gpu fault|snapshot created|hang detected)|arm-smmu.*(context fault|Unhandled)|ufshcd.*(abort|error handler)|watchdog: BUG|UBSAN|KASAN|refcount_t:|sysfs: cannot create duplicate|deadlock'
-if a 'su 0 id' | grep -q 'uid=0'; then klog() { a 'su 0 dmesg'; }; KSRC=dmesg
+if [ "$ONEUI" != 1 ] && a 'su 0 id' | grep -q 'uid=0'; then klog() { a 'su 0 dmesg'; }; KSRC=dmesg
+elif a "su -c 'id'" | grep -q 'uid=0'; then klog() { a "su -c 'dmesg'"; }; KSRC=dmesg   # ReSukiSU / OneUI 9 port (u:r:ksu:s0)
 elif a id | grep -q 'uid=0'; then klog() { a dmesg; }; KSRC=dmesg
 elif a 'ls /sys/devices/system/cpu/a52kmsg' | grep -q '^/sys'; then klog() { a 'cat /sys/devices/system/cpu/a52kmsg'; }; KSRC=a52kmsg
 else klog() { :; }; KSRC=none; fi

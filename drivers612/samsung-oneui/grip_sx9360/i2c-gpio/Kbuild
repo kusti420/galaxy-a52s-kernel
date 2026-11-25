@@ -1,0 +1,4 @@
+# i2c-gpio + i2c-algo-bit from bsp612/kernel (6.12.81, verbatim copies) as external modules:
+# CONFIG_I2C_GPIO/ALGOBIT are =m in out/lahaina/.config but never built into bsp612/out/dist.
+# a52sxq: the grip sensor bus /soc/i2c@17 (i2c-gpio, SDA gpio8, SCL gpio9, 2 us delay).
+obj-m := i2c-algo-bit.o i2c-gpio.o

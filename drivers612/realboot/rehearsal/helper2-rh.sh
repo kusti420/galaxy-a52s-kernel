@@ -180,6 +180,11 @@ if [ -e /sys/block/zram2/disksize ]; then
 fi
 log "zram1 (/data) 3 GiB, zram2 (/metadata) 128 MiB: ok=$ZR"
 mkdevs
+# OneUI 9 port (2026-11-22): its policy lets no e2fs/mke2fs format a ram_device (fs_mgr "formattable" -> mke2fs
+# "Permission denied" -> /data read-only -> odsign/tombstoned loop -> reboot): write empty ext4 images made on the PC
+if [ "$ZR" = 1 ] && [ -f /a52/rh/zram2.ext4.gz ] && [ -f /a52/rh/zram1.ext4.gz ]; then
+	$B zcat /a52/rh/zram2.ext4.gz > /dev/zram2 && $B zcat /a52/rh/zram1.ext4.gz > /dev/zram1 && $B sync && log "zram1/zram2: empty ext4 written (pre-formatted)" || log "zram pre-format FAILED"
+fi
 
 # ---- gate for Android's init (testguard must hold userdata, the RAM disks must exist)
 i=0; ARMED=0

@@ -1,8 +1,10 @@
-Galaxy A52s 5G (SM-A528B, a52sxq) - Linux 6.12 kernel for LineageOS 24 - @NAME@, recovery zip
+Galaxy A52s 5G (SM-A528B, a52sxq) - Linux 6.12 kernel @NAME@, recovery zip (LineageOS 24)
 ==========================================================================================
 
 FOR ENTHUSIASTS ONLY. Qualcomm's 6.12 BSP kernel (GKI 6.12.81 + forward-ported Qualcomm/Samsung
-drivers) for LineageOS 24. Runs the ROM and vendor blobs unchanged.
+drivers). Runs the ROM and vendor blobs unchanged. This older zip format carries prebuilt
+images and a /vendor add-on made for LineageOS 24, so it installs on LineageOS 24 only; the
+newer kernel-only zips install over any ROM of this phone.
 Source: https://github.com/a52sxq-kernel/galaxy-a52s-kernel (GPL-2.0).
 
 INSTALL

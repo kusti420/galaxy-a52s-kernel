@@ -1089,7 +1089,15 @@ static ssize_t ss_temperature_show(struct device *dev,
 		LCD_INFO(vdd, "cur temperature : %d, temperature_table : (%d) %s\n",
 			vdd->br_info.temperature, vdd->temp_table.size, buf);
 	} else {
-		LCD_ERR(vdd, "No temperature table..\n");
+		/* a52sxq: the 5.4 panel DT has no samsung,temperature_table(_str). 5.4 printed the
+		 * thresholds from elvss_interpolation_temperature, comma separated; an empty read
+		 * here left the framework without the table (SPEC/01 gap 10).
+		 */
+		int t = vdd->br_info.common_br.elvss_interpolation_temperature;
+
+		if (t != -15 && t != -16)
+			t = -20;
+		rc = scnprintf(buf, 40, "%d, %d, 0, 1, 30, 40\n", t, t + 1);
 	}
 
 	return rc;
@@ -4596,6 +4604,32 @@ end:
 	return size;
 }
 
+/* a52sxq: mask_brightness writes act as on/off requests only after a 0 was written (see store) */
+static bool ss_mask_sysfs_trigger_armed;
+
+/*
+ * a52sxq.ko (drivers612/samsung-oneui/a52sxq_core): tell the userspace-flavour switch what the
+ * first mask_brightness write looked like. One UI's framework writes the level (331) once at boot
+ * and never a 0; the IchthysOS HAL writes 0 first; LineageOS never writes. Only used by a52sxq.ko
+ * while its setting is "auto" (no command line / sysfs setting); the first hint wins. Soft binding
+ * (symbol_get): no dependency on a52sxq.ko, a no-op when it is not loaded.
+ * Values: enum a52sxq_userspace in <linux/a52sxq_userspace.h>, 1 = AOSP, 2 = Samsung.
+ */
+extern void a52sxq_userspace_hint(int us, const char *why);
+static void ss_a52sxq_userspace_hint(int us, const char *why)
+{
+	static unsigned long hinted;
+	void (*hint)(int us, const char *why);
+
+	if (test_and_set_bit(0, &hinted))
+		return;
+	hint = symbol_get(a52sxq_userspace_hint);
+	if (!hint)
+		return;
+	hint(us, why);
+	symbol_put(a52sxq_userspace_hint);
+}
+
 /* SAMSUNG_FINGERPRINT */
 static ssize_t ss_finger_hbm_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
@@ -4615,7 +4649,24 @@ static ssize_t ss_finger_hbm_store(struct device *dev,
 	LCD_INFO(vdd,"mask_bl_level value : %d\n", value);
 	/* a52sxq / IchthysOS 5.4 semantics: a write switches the finger mask on (value > 0) or
 	 * off at the next kickoff (sde_connector_pre_kickoff). The level is set there, at the
-	 * transition, so a write cannot disturb a mask that is being held. */
+	 * transition, so a write cannot disturb a mask that is being held.
+	 *
+	 * OneUI (stock Samsung framework) gives this node the STOCK meaning instead:
+	 * SemUdfpsOpticalHelper.writeMaxBrightnessInfo writes the mask level (331) once as
+	 * configuration and the composer drives on/off through the "fingerprint_mask" connector
+	 * property. Taken as a request, that write lit the mask with nobody to ever drop it
+	 * (stuck 547 nit HBM, 2026-11-22). The two are told apart by what userspace does: the
+	 * IchthysOS HAL announces itself by writing 0 at start (LegacyHAL.cpp:138) and on every
+	 * release; the stock framework never writes 0. Until a 0 has been written a level write
+	 * is configuration only (stock 5.4 body: nothing but the level is recorded). */
+	if (value <= 0) {
+		WRITE_ONCE(ss_mask_sysfs_trigger_armed, true);
+		ss_a52sxq_userspace_hint(1, "mask_brightness-0-first");
+	} else if (!READ_ONCE(ss_mask_sysfs_trigger_armed)) {
+		LCD_INFO(vdd, "[FINGER_MASK] mask_brightness %d = level only (stock semantics, no 0 written yet)\n", value);
+		ss_a52sxq_userspace_hint(2, "mask_brightness-level-first");
+		return size;
+	}
 	WRITE_ONCE(vdd->ichthys_sysfs_mask_req, value > 0 ? value + 1 : 1);
 
 	return size;

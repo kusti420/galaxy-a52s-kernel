@@ -38,3 +38,34 @@ Rules
 
 Tools: `tools/bench-app/table.py results.json` prints the table (exit 1 on FAIL/incomplete),
 `tools/bench-app/compare.py a/results.json b/results.json [min_pct]` diffs two runs.
+
+## tools/selftest runs and the OneUI parity sweep
+
+A selftest run directory (`logs/selftest/<serial>-<time>/`) holds `summary.txt` (header: time, serial, kernel, build,
+root, profile), `table.txt` (`<id> PASS|FAIL|SKIP <detail>`), `metrics.tsv` (`name<TAB>value`) and per-test logs;
+`mkjson.py` turns it into `results.json` (`tests: {id: {status, detail, evidence}}`, `metrics`), `compare.py <base> <new>`
+diffs two of them.
+
+`tools/selftest/oneui/sweep.sh <serial>` (also run by `run.sh --oneui`) adds the OneUI/Samsung rows. Phone-side
+checks (`oneui/checks/*.sh`, run as root through `su -c`) print one TAB-separated line per row:
+
+    CHECK <id> <PASS|FAIL|SKIP> <owner> <stable> <detail>
+    METRIC <name> <number>
+
+and the host stores them, minus the first column, in `<run>/oneui.tsv`; the same rows appear in `table.txt` with the
+id prefixed `o.` so `results.json` and `compare.py` see them.
+
+- `id`: `<area>.<name>`, stable across versions (`svc.vaultkeeper`, `perf.cpufreq_limit.react`, `quirk.bpf_ringbuf`).
+- status: PASS = present and working on THIS kernel; FAIL = absent or broken on this kernel (expected for some rows on
+  5.4, e.g. the ring buffer); SKIP = could not be checked (no root, not in MTP mode, tool missing).
+- `owner`: who fixes a difference: `kernel`, `ROM`, `kernel+ROM`, `info`.
+- `stable`: the value that must be equal on 5.4 and 6.12. `set: a b c` is a name set (report.py lists what is missing
+  and what is extra on 6.12). Volatile evidence (labels, counts, temperatures, pids) goes into `detail`.
+- Collector rows (`col.*`, from `oneui/collect.py` over the saved kernel log and logcat): `stable` is a count;
+  report.py compares it numerically (higher on 6.12 = WORSE). The grouped lists are in `<run>/collectors.json` and
+  `<run>/collect-*.txt`.
+- Privacy: no IMEI/IMSI/ICCID/number/MAC/SSID/serial is printed (lengths and 12-hex-digit hashes only), runs of 14+
+  digits are masked, the radio logcat buffer and the full property list are never saved.
+
+`tools/selftest/oneui/report.py <5.4 run> <6.12 run>` writes `drivers612/ONEUI9-PARITY.md`
+(feature / 5.4 / 6.12 / verdict / owner).

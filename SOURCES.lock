@@ -26,6 +26,7 @@ donors/redwood-6.12	https://github.com/suvojeet-sengupta/redwood-6.12	bfa629742b
 donors/ReSukiSU	https://github.com/ReSukiSU/ReSukiSU.git	8770c7e324a22895703c4916b8a16520e0b81c79	reference
 donors/samsung-s26-6.12	https://github.com/polygraphene/SM-S942U_NA_16_Opensource	a571d15c116599dc413f009b79c940d92ca54bb4	reference
 donors/securemsm-kernel	https://git.codelinaro.org/clo/la/platform/vendor/qcom/opensource/securemsm-kernel.git	b1c5edcf3345a99866405dd5e1358ae8657c2750	build: upstream of drivers612/secure/securemsm/src
+donors/susfs4ksu	https://gitlab.com/simonpunk/susfs4ksu.git	b213c54126fb243595ce7876e91d84d6e0861fec	reference
 samsung612/donors/crdroid-sm8550	https://github.com/crdroidandroid/android_kernel_samsung_sm8550	c4f523a57784d139f55b29eda6c0bc09b99481aa	reference
 samsung612/donors/physwizz-a24	https://github.com/physwizz/A24-A15-A16	d5a619eb212889fb800d30700dbe53232eab5112	reference
 samsung612/donors/sm8550-modules	https://github.com/LineageOS/android_kernel_samsung_sm8550-modules	a1fdd086620bc0e2f767323c2853bcc9424e3087	reference

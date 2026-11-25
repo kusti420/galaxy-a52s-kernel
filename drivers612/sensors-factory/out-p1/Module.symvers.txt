@@ -1,0 +1,5 @@
+0x7cbf9265	ois_reset_register	./drivers612/sensors-factory/out-p1/w/sensors-factory/adsp_factory_dlkm	EXPORT_SYMBOL	
+0xd272d446	ois_reset_unregister	./drivers612/sensors-factory/out-p1/w/sensors-factory/adsp_factory_dlkm	EXPORT_SYMBOL	
+0x0a227d4d	sensordump_notifier_register	./drivers612/sensors-factory/out-p1/w/sensors-factory/adsp_factory_dlkm	EXPORT_SYMBOL	
+0x0a227d4d	sensordump_notifier_unregister	./drivers612/sensors-factory/out-p1/w/sensors-factory/adsp_factory_dlkm	EXPORT_SYMBOL	
+0xed1908bd	sensordump_notifier_call_chain	./drivers612/sensors-factory/out-p1/w/sensors-factory/adsp_factory_dlkm	EXPORT_SYMBOL_GPL	

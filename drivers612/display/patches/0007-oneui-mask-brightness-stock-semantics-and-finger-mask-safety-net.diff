@@ -1,0 +1,154 @@
+diff --git a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c
+index e636be6..d5debe3 100644
+--- a/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c
++++ b/drivers612/display/techpack/display-drivers/msm/samsung/ss_dsi_panel_sysfs.c
+@@ -4596,6 +4596,9 @@ end:
+ 	return size;
+ }
+ 
++/* a52sxq: mask_brightness writes act as on/off requests only after a 0 was written (see store) */
++static bool ss_mask_sysfs_trigger_armed;
++
+ /* SAMSUNG_FINGERPRINT */
+ static ssize_t ss_finger_hbm_store(struct device *dev,
+ 		struct device_attribute *attr, const char *buf, size_t size)
+@@ -4615,7 +4618,22 @@ static ssize_t ss_finger_hbm_store(struct device *dev,
+ 	LCD_INFO(vdd,"mask_bl_level value : %d\n", value);
+ 	/* a52sxq / IchthysOS 5.4 semantics: a write switches the finger mask on (value > 0) or
+ 	 * off at the next kickoff (sde_connector_pre_kickoff). The level is set there, at the
+-	 * transition, so a write cannot disturb a mask that is being held. */
++	 * transition, so a write cannot disturb a mask that is being held.
++	 *
++	 * OneUI (stock Samsung framework) gives this node the STOCK meaning instead:
++	 * SemUdfpsOpticalHelper.writeMaxBrightnessInfo writes the mask level (331) once as
++	 * configuration and the composer drives on/off through the "fingerprint_mask" connector
++	 * property. Taken as a request, that write lit the mask with nobody to ever drop it
++	 * (stuck 547 nit HBM, 2026-11-22). The two are told apart by what userspace does: the
++	 * IchthysOS HAL announces itself by writing 0 at start (LegacyHAL.cpp:138) and on every
++	 * release; the stock framework never writes 0. Until a 0 has been written a level write
++	 * is configuration only (stock 5.4 body: nothing but the level is recorded). */
++	if (value <= 0)
++		WRITE_ONCE(ss_mask_sysfs_trigger_armed, true);
++	else if (!READ_ONCE(ss_mask_sysfs_trigger_armed)) {
++		LCD_INFO(vdd, "[FINGER_MASK] mask_brightness %d = level only (stock semantics, no 0 written yet)\n", value);
++		return size;
++	}
+ 	WRITE_ONCE(vdd->ichthys_sysfs_mask_req, value > 0 ? value + 1 : 1);
+ 
+ 	return size;
+diff --git a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+index 76a2586..40691ff 100644
+--- a/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
++++ b/drivers612/display/techpack/display-drivers/msm/sde/sde_connector.c
+@@ -1055,6 +1055,55 @@ static bool _sde_connector_fod_layer_active(struct drm_connector *connector)
+ 
+ 	return to_sde_crtc_state(crtc->state)->fod_dim_layer != NULL;
+ }
++
++/*
++ * a52sxq finger mask safety net (2026-11-22, stuck 547 nit HBM under OneUI).
++ * The mask may only stay on while something holds it: the FOD dim layer, a non-zero
++ * "fingerprint_mask" property, or a mask_brightness request that is younger than
++ * ICHTHYS_MASK_SYSFS_HOLD_MS. Anything else is dropped after ICHTHYS_MASK_ORPHAN_FRAMES
++ * kickoffs, and a sysfs-held mask also by a timer (a static screen has no kickoff).
++ * One panel with an optical sensor per device: file statics, so no struct layout changes.
++ */
++#define ICHTHYS_MASK_SYSFS_HOLD_MS	10000
++#define ICHTHYS_MASK_ORPHAN_FRAMES	3
++static struct samsung_display_driver_data *ichthys_mask_wd_vdd;
++static bool ichthys_mask_by_sysfs;
++static unsigned long ichthys_mask_sysfs_deadline;
++static unsigned int ichthys_mask_orphan_frames;
++
++/* returns true if the mask was on and has been switched off */
++static bool _sde_connector_finger_mask_force_off(struct samsung_display_driver_data *vdd,
++		bool sysfs_only, const char *why)
++{
++	bool dropped = false;
++
++	mutex_lock(&vdd->vrr.vrr_lock);
++	if (vdd->finger_mask && (!sysfs_only || READ_ONCE(ichthys_mask_by_sysfs))) {
++		SDE_ERROR("[FINGER_MASK] safety net: mask on with no holder (%s), forcing off\n", why);
++		vdd->br_info.common_br.finger_mask_bl_level = 0;
++		vdd->finger_mask_updated = true;
++		vdd->finger_mask = 0;
++		ss_send_hbm_fingermask_image_tx(vdd, 0);
++		vdd->finger_mask_updated = false;
++		WRITE_ONCE(ichthys_mask_by_sysfs, false);
++		dropped = true;
++	}
++	mutex_unlock(&vdd->vrr.vrr_lock);
++	return dropped;
++}
++
++static void _sde_connector_finger_mask_wd_fn(struct work_struct *work)
++{
++	struct samsung_display_driver_data *vdd = READ_ONCE(ichthys_mask_wd_vdd);
++
++	if (!vdd)
++		return;
++	if (READ_ONCE(ichthys_mask_by_sysfs) &&
++			time_before(jiffies, READ_ONCE(ichthys_mask_sysfs_deadline)))
++		return;	/* re-armed by a newer request, its own work is queued */
++	_sde_connector_finger_mask_force_off(vdd, true, "mask_brightness request timed out");
++}
++static DECLARE_DELAYED_WORK(ichthys_mask_wd, _sde_connector_finger_mask_wd_fn);
+ #endif
+ 
+ int sde_connector_pre_kickoff(struct drm_connector *connector)
+@@ -1165,10 +1214,27 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ 			c_conn->ichthys_finger_mask_prop = finger_mask_state;
+ 			want = fod || finger_mask_state != 0;
+ 			sysfs_req = xchg(&vdd->ichthys_sysfs_mask_req, 0);
++			/* a layer / property holder takes a sysfs-lit mask over: no time bound,
++			 * its own edge switches the mask off */
++			if (fod || finger_mask_state)
++				WRITE_ONCE(ichthys_mask_by_sysfs, false);
+ 
+ 			if (sysfs_req) {
+ 				/* 0 = none, 1 = off, level + 1 = on (ss_finger_hbm_store) */
+ 				want = sysfs_req > 1;
++				if (!want) {
++					WRITE_ONCE(ichthys_mask_by_sysfs, false);
++					cancel_delayed_work(&ichthys_mask_wd);
++				} else if (!fod && !finger_mask_state &&
++						(!vdd->finger_mask || READ_ONCE(ichthys_mask_by_sysfs))) {
++					/* sysfs is (or becomes) the only holder: bounded in time */
++					WRITE_ONCE(ichthys_mask_wd_vdd, vdd);
++					WRITE_ONCE(ichthys_mask_sysfs_deadline, jiffies +
++						msecs_to_jiffies(ICHTHYS_MASK_SYSFS_HOLD_MS));
++					WRITE_ONCE(ichthys_mask_by_sysfs, true);
++					mod_delayed_work(system_wq, &ichthys_mask_wd,
++						msecs_to_jiffies(ICHTHYS_MASK_SYSFS_HOLD_MS) + 1);
++				}
+ 				if (want != !!vdd->finger_mask) {
+ 					mutex_lock(&vdd->vrr.vrr_lock);
+ 					vdd->br_info.common_br.finger_mask_bl_level =
+@@ -1198,8 +1264,27 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
+ 				vdd->finger_mask = want;
+ 				ss_send_hbm_fingermask_image_tx(vdd, vdd->finger_mask);
+ 				vdd->finger_mask_updated = false;
++				/* the layer / property holds (or released) it, not sysfs */
++				WRITE_ONCE(ichthys_mask_by_sysfs, false);
+ 				mutex_unlock(&vdd->vrr.vrr_lock);
+ 			}
++
++			/*
++			 * Safety net: mask on, no FOD layer, property 0 and no live sysfs
++			 * request -> nobody will ever switch it off. Drop it after a few
++			 * kickoffs (not the first one: the transition frame itself).
++			 */
++			if (vdd->finger_mask && !fod && !finger_mask_state &&
++					!(READ_ONCE(ichthys_mask_by_sysfs) && time_before(jiffies,
++						READ_ONCE(ichthys_mask_sysfs_deadline)))) {
++				if (++ichthys_mask_orphan_frames >= ICHTHYS_MASK_ORPHAN_FRAMES) {
++					ichthys_mask_orphan_frames = 0;
++					_sde_connector_finger_mask_force_off(vdd, false,
++						"no fod layer, property 0, no live sysfs request");
++				}
++			} else {
++				ichthys_mask_orphan_frames = 0;
++			}
+ 		}
+ 	}
+ #endif

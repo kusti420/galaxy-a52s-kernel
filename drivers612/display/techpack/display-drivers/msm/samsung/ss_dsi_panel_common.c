@@ -1697,6 +1697,67 @@ done:
 }
 #endif
 
+#if IS_ENABLED(CONFIG_DEV_RIL_BRIDGE)
+/*
+ * a52sxq 6.12: dynamic MIPI clock (5.4: CONFIG_DEV_RIL_BRIDGE=y, everything built in).
+ * libsec-ril writes the serving RAT/band/ARFCN to /dev/drb (dev_ril_bridge.ko); the panel then
+ * moves the DSI clock (samsung,dynamic_mipi_clk_timing_table: 1108 / 1124 / 1125 MHz) and
+ * re-sends FFC. Only One UI has that RIL; on LineageOS / IchthysOS nothing ever writes /dev/drb.
+ *
+ * msm_drm a52_dyn_mipi=
+ *   0  off: as every build before this change (flag not parsed, no listener)
+ *   1  auto (default): tables parsed, listener bound; is_support stays false, so no FFC at panel
+ *      on and no clock restore, until the first band report that is found in the table
+ *   2  as 5.4: is_support from boot (FFC for clock index 0 at every panel on)
+ * 1 and 2 are read once, when the panel DT is parsed. Writing 0 later
+ * (/sys/module/msm_drm/parameters/a52_dyn_mipi) makes the listener ignore every further band
+ * report: the clock stays where it is (stop switch, no reboot needed).
+ *
+ * dev_ril_bridge.ko is loaded after msm_drm (modem stage), so the listener is registered with
+ * symbol_get() from a delayed work: no entry in depends / modules.dep, no load-order change, and
+ * a ramdisk without dev_ril_bridge.ko only logs one line after the last try.
+ */
+static int a52_dyn_mipi = 1;
+module_param(a52_dyn_mipi, int, 0644);
+MODULE_PARM_DESC(a52_dyn_mipi, "dynamic MIPI clock from RIL band info: 0 off, 1 armed by the first band report (default), 2 as 5.4");
+static bool a52_dyn_mipi_dt_ok;
+
+#define A52_DRB_BIND_MS		2000
+#define A52_DRB_BIND_TRIES	90
+
+static struct notifier_block *a52_drb_nb;
+static int a52_drb_tries;
+static void a52_drb_bind_work_fn(struct work_struct *work);
+static DECLARE_DELAYED_WORK(a52_drb_bind_work, a52_drb_bind_work_fn);
+
+static void a52_drb_bind_work_fn(struct work_struct *work)
+{
+	int (*reg)(struct notifier_block *nb);
+
+	reg = symbol_get(register_dev_ril_bridge_event_notifier);
+	if (!reg) {
+		if (++a52_drb_tries < A52_DRB_BIND_TRIES)
+			schedule_delayed_work(&a52_drb_bind_work, msecs_to_jiffies(A52_DRB_BIND_MS));
+		else
+			pr_info("a52sxq display: no dev_ril_bridge after %d tries: MIPI clock stays fixed\n",
+				a52_drb_tries);
+		return;
+	}
+	/* the reference on dev_ril_bridge.ko taken by symbol_get() is kept: the listener stays */
+	reg(a52_drb_nb);
+	pr_info("a52sxq display: RF band listener on dev_ril_bridge (try %d, a52_dyn_mipi=%d)\n",
+		a52_drb_tries + 1, a52_dyn_mipi);
+}
+
+static void ss_a52_drb_bind_start(struct samsung_display_driver_data *vdd)
+{
+	if (a52_drb_nb)		/* one panel, one listener */
+		return;
+	a52_drb_nb = &vdd->dyn_mipi_clk.notifier;
+	schedule_delayed_work(&a52_drb_bind_work, msecs_to_jiffies(A52_DRB_BIND_MS));
+}
+#endif
+
 #if IS_ENABLED(CONFIG_DEV_RIL_BRIDGE) || IS_ENABLED(CONFIG_UML)
 static int ss_find_dyn_mipi_clk_timing_idx(struct samsung_display_driver_data *vdd)
 {
@@ -1796,7 +1857,12 @@ int ss_rf_info_notify_callback(struct notifier_block *nb,
 	struct rf_info rf_info_backup;
 	msg = (struct dev_ril_bridge_msg *)data;
 #endif
+	bool a52_armed_now = false;
 
+#if IS_ENABLED(CONFIG_DEV_RIL_BRIDGE)
+	if (!READ_ONCE(a52_dyn_mipi))	/* a52sxq: stop switch */
+		return NOTIFY_DONE;
+#endif
 	LCD_INFO(vdd, "RIL noti: ndx: %d, size: %lu, dev_id: %d, len: %d\n",
 			vdd->ndx, size, msg->dev_id, msg->data_len);
 
@@ -1809,12 +1875,23 @@ int ss_rf_info_notify_callback(struct notifier_block *nb,
 		memcpy(&rf_info_backup, &dyn_mipi_clk->rf_info, sizeof(struct rf_info));
 		memcpy(&dyn_mipi_clk->rf_info, msg->data, sizeof(struct rf_info));
 
+#if IS_ENABLED(CONFIG_DEV_RIL_BRIDGE)
+		/* a52sxq auto mode: the first band report arms the feature (see a52_dyn_mipi) */
+		if (!dyn_mipi_clk->is_support && a52_dyn_mipi_dt_ok) {
+			dyn_mipi_clk->is_support = true;
+			a52_armed_now = true;
+		}
+#endif
 		/* check & update*/
 		if (ss_change_dyn_mipi_clk_timing(vdd) < 0) {
 			LCD_ERR(vdd, "Failed to update MIPI clock timing, restore previous rf_info..\n");
 			/* restore origin data */
 			memcpy(&dyn_mipi_clk->rf_info, &rf_info_backup, sizeof(struct rf_info));
 			ret = NOTIFY_BAD;
+			if (a52_armed_now)	/* band not in the table: stay inert */
+				dyn_mipi_clk->is_support = false;
+		} else if (a52_armed_now) {
+			LCD_INFO(vdd, "a52sxq: dynamic MIPI clock armed by the first RIL band report\n");
 		}
 
 		if (vdd->dyn_mipi_clk.osc_support && vdd->panel_func.update_osc)
@@ -6510,8 +6587,10 @@ void ss_panel_parse_dt(struct samsung_display_driver_data *vdd)
 
 #if IS_ENABLED(CONFIG_DEV_RIL_BRIDGE)
 	/* Dynamic MIPI Clock */
-	vdd->dyn_mipi_clk.is_support = of_property_read_bool(np, "samsung,support_dynamic_mipi_clk");
-	LCD_INFO(vdd, "vdd->dyn_mipi_clk.is_support = %d\n", vdd->dyn_mipi_clk.is_support);
+	vdd->dyn_mipi_clk.is_support = a52_dyn_mipi > 0 &&
+		of_property_read_bool(np, "samsung,support_dynamic_mipi_clk");
+	LCD_INFO(vdd, "vdd->dyn_mipi_clk.is_support = %d (a52_dyn_mipi=%d)\n",
+		vdd->dyn_mipi_clk.is_support, a52_dyn_mipi);
 
 	if (vdd->dyn_mipi_clk.is_support) {
 		vdd->dyn_mipi_clk.osc_support = of_property_read_bool(np, "samsung,support_dynamic_mipi_clk_osc");
@@ -6526,7 +6605,8 @@ void ss_panel_parse_dt(struct samsung_display_driver_data *vdd)
 
 		vdd->dyn_mipi_clk.notifier.priority = 0;
 		vdd->dyn_mipi_clk.notifier.notifier_call = ss_rf_info_notify_callback;
-		register_dev_ril_bridge_event_notifier(&vdd->dyn_mipi_clk.notifier);
+		/* a52sxq 6.12: no direct call (dev_ril_bridge.ko loads later): late soft binding */
+		ss_a52_drb_bind_start(vdd);
 
 		if (of_property_read_bool(np, "samsung,dynamic_mipi_clk_force_dft")) {
 			vdd->dyn_mipi_clk.requested_clk_idx = 0;
@@ -6534,6 +6614,15 @@ void ss_panel_parse_dt(struct samsung_display_driver_data *vdd)
 				vdd->dyn_mipi_clk.clk_timing_table.clk_rate[0];
 			LCD_INFO(vdd, "force to default dynamic mipi clock(%d)\n",
 					vdd->dyn_mipi_clk.requested_clk_rate);
+		}
+
+		if (a52_dyn_mipi == 1) {
+			/* auto: tables parsed and listener bound, but nothing on the panel side
+			 * changes until the modem reports a band that is in the table */
+			a52_dyn_mipi_dt_ok = true;
+			vdd->dyn_mipi_clk.is_support = false;
+			vdd->dyn_mipi_clk.requested_clk_idx = 0;
+			vdd->dyn_mipi_clk.requested_clk_rate = 0;
 		}
 	}
 #endif

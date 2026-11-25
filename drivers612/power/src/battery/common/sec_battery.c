@@ -13,6 +13,7 @@
 #include <linux/battery/sb_notify.h>
 
 #include "sec_battery.h"
+#include "sb_oneui_attrs.h"
 #include "sec_battery_sysfs.h"
 #include "sec_battery_dt.h"
 #include "sec_battery_ttf.h"
@@ -42,6 +43,7 @@
 #include "battery_logger.h"
 #include "sb_tx.h"
 #include "sb_batt_dump.h"
+#include "a52_lpm_bootargs.h"
 #if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
 #include <linux/vbus_notifier.h>
 #endif
@@ -96,6 +98,13 @@ static enum power_supply_property sec_power_props[] = {
 	POWER_SUPPLY_PROP_ONLINE,
 };
 
+/* a52sxq: usb + ac export voltage_max/current_max as both 5.4 trees (AOSP health reads them) */
+static enum power_supply_property sec_usb_props[] = {
+	POWER_SUPPLY_PROP_ONLINE,
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,
+	POWER_SUPPLY_PROP_CURRENT_MAX,
+};
+
 static enum power_supply_property sec_wireless_props[] = {
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_PRESENT,
@@ -104,6 +113,8 @@ static enum power_supply_property sec_wireless_props[] = {
 static enum power_supply_property sec_ac_props[] = {
 	POWER_SUPPLY_PROP_ONLINE,
 	POWER_SUPPLY_PROP_TEMP,
+	POWER_SUPPLY_PROP_VOLTAGE_MAX,
+	POWER_SUPPLY_PROP_CURRENT_MAX,
 };
 
 static enum power_supply_property sec_otg_props[] = {
@@ -5090,6 +5101,8 @@ static void cw_nocharge_type(struct sec_battery_info *battery)
 	/* initialize all status */
 	battery->charging_mode = SEC_BATTERY_CHARGING_NONE;
 	battery->is_recharging = false;
+	/* a cable removal ends a "Pause USB Power Delivery" session (5.4 k4 0008) */
+	sb_oneui_pass_through_cable_removed(battery);
 	battery->cisd.ab_vbat_check_count = 0;
 	battery->cisd.state &= ~CISD_STATE_OVER_VOLTAGE;
 	battery->d2d_check = false;
@@ -5232,6 +5245,8 @@ static void cw_slate_mode(struct sec_battery_info *battery)
 #if IS_ENABLED(CONFIG_DIRECT_CHARGING)
 	battery->lrp_chg_src = SEC_CHARGING_SOURCE_DIRECT;
 #endif
+
+	sb_oneui_pass_through_cable_removed(battery);
 
 	for (j = 0; j < VOTER_MAX; j++) {
 		sec_vote(battery->iv_vote, j, false, 0);
@@ -6811,8 +6826,20 @@ static int sec_usb_get_property(struct power_supply *psy,
 {
 	struct sec_battery_info *battery = power_supply_get_drvdata(psy);
 
-	if (psp != POWER_SUPPLY_PROP_ONLINE)
+	switch (psp) {
+	case POWER_SUPPLY_PROP_ONLINE:
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		/* mV -> uV (5.4 sec_battery.c sec_usb_get_property) */
+		val->intval = battery->input_voltage * 1000;
+		return 0;
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		/* mA -> uA */
+		val->intval = battery->pdata->charging_current[battery->cable_type].input_current_limit * 1000;
+		return 0;
+	default:
 		return -EINVAL;
+	}
 
 	if ((battery->health == POWER_SUPPLY_HEALTH_OVERVOLTAGE) ||
 		(battery->health == POWER_SUPPLY_EXT_HEALTH_UNDERVOLTAGE)) {
@@ -6893,6 +6920,14 @@ static int sec_ac_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_TEMP:
 		val->intval = battery->chg_temp;
 		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		/* mV -> uV (5.4 sec_battery.c sec_ac_get_property) */
+		val->intval = battery->input_voltage * 1000;
+		return 0;
+	case POWER_SUPPLY_PROP_CURRENT_MAX:
+		/* mA -> uA */
+		val->intval = battery->pdata->charging_current[battery->cable_type].input_current_limit * 1000;
+		return 0;
 	case POWER_SUPPLY_EXT_PROP_MIN ... POWER_SUPPLY_EXT_PROP_MAX:
 		switch (ext_psp) {
 			case POWER_SUPPLY_EXT_PROP_WATER_DETECT:
@@ -8035,9 +8070,15 @@ static int usb_typec_handle_id_power_status(struct sec_battery_info *battery,
 		int max_curr = battery->sink_status.power_list[i].max_current;
 		bool isAccept = battery->sink_status.power_list[i].accept;
 
-		if ((pdo_type == APDO_TYPE) &&
-			(sec_pd_get_apdo_prog_volt(pdo_type, max_volt) > battery->pdata->apdo_max_volt))
-			temp_power = battery->pdata->apdo_max_volt * max_curr; /* Protect to show sfc2.0 with 45w ta + 3a cable */
+		/*
+		 * a52sxq: APDO power as the stock 5.4 driver (sec_battery.c "apdo_power"):
+		 * min(real APDO max voltage, battery,apdo_max_volt) x max current. The donor used the
+		 * nominal programmable voltage (11 V APDO counted as 9 V), so an 11 V / 2.25 A charger
+		 * gave 20250 mW (hv_charger_status 2) instead of 24750 mW (3, "Super fast charging").
+		 * The upper clamp also covers the donor's 45 W TA + 3 A cable case.
+		 */
+		if (pdo_type == APDO_TYPE)
+			temp_power = min_t(int, max_volt, battery->pdata->apdo_max_volt) * max_curr;
 		else
 			temp_power = sec_pd_get_max_power(pdo_type, min_volt, max_volt, max_curr);
 
@@ -9081,8 +9122,8 @@ static int sec_usb_set_property(struct power_supply *psy,
 static const struct power_supply_desc usb_power_supply_desc = {
 	.name = "usb",
 	.type = POWER_SUPPLY_TYPE_USB,
-	.properties = sec_power_props,
-	.num_properties = ARRAY_SIZE(sec_power_props),
+	.properties = sec_usb_props,
+	.num_properties = ARRAY_SIZE(sec_usb_props),
 	.get_property = sec_usb_get_property,
 	.set_property = sec_usb_set_property,
 };
@@ -9550,6 +9591,8 @@ static int sec_battery_probe(struct platform_device *pdev)
 	ret = sb_full_soc_init(battery);
 	dev_info(battery->dev, "%s: sb_full_soc (%s)\n", __func__, (ret) ? "fail" : "success");
 
+	sb_oneui_attrs_init(battery);
+
 	ret = sb_notify_register(&battery->sb_nb, sb_handle_notification, "battery", SB_DEV_BATTERY);
 	dev_info(battery->dev, "%s: sb_notify_register (%s)\n", __func__, (ret) ? "fail" : "success");
 
@@ -9837,6 +9880,10 @@ static struct platform_driver sec_battery_driver = {
 
 static int __init sec_battery_init(void)
 {
+	/* a52sxq 6.12: nobody passes sec-battery.lpcharge=; take power-off charging from the bootargs */
+	if (!lpcharge && a52_bootargs_lpm())
+		lpcharge = 1;
+	pr_info("%s: lpcharge=%u\n", __func__, lpcharge);
 	sec_chg_init_gdev();
 	return platform_driver_register(&sec_battery_driver);
 }

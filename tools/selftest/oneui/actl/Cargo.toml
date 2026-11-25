@@ -1,0 +1,14 @@
+[package]
+name = "actl"
+version = "1.0.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "ALSA control probe for the OneUI parity sweep: list the sound card's mixer controls, probe which A2DP offload encoder formats the kernel accepts"
+
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
+strip = "symbols"

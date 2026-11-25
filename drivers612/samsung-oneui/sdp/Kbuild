@@ -1,0 +1,4 @@
+# Samsung Knox SDP (dek_evt/dek_req/dek_log, netlink 28 fs handler, netlink 29 pub crypto) for GKI 6.12 as a module
+obj-m := sdp_dek.o
+sdp_dek-y := sdp_main.o dek.o dek_aes.o pub_crypto_emul.o kek_pack.o fs_handler.o dek_sysfs.o sdp_crypto.o
+ccflags-y += -I$(src) -include $(src)/sdp_compat.h

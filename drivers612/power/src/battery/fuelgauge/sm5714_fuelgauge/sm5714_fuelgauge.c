@@ -50,6 +50,7 @@ static int sm5714_device_id = -1;
 static int sm5714_fg_debug_print;
 #endif
 
+#include "a52_lpm_bootargs.h"
 static unsigned int __read_mostly lpcharge;
 module_param(lpcharge, uint, 0444);
 static int __read_mostly factory_mode;
@@ -3215,6 +3216,8 @@ static struct platform_driver sm5714_fuelgauge_driver = {
 
 static int __init sm5714_fuelgauge_init(void)
 {
+	if (!lpcharge && a52_bootargs_lpm())	/* a52sxq 6.12: see a52_lpm_bootargs.h */
+		lpcharge = 1;
 	pr_info("%s:\n", __func__);
 	return platform_driver_register(&sm5714_fuelgauge_driver);
 }

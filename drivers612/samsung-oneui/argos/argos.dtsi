@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/*
+ * Samsung ARGOS node for the a52sxq 6.12 board tree (OneUI vendor argosd + sec_argos.ko).
+ *
+ * Content = 5.4 arch/arm64/boot/dts/samsung/a52/a52sxq/a52sxq_kor_single_w00_r02.dts
+ * fragment@84 (r00 and r01 identical), in source order boot_device@1..@7.
+ *
+ * WHY IT IS NEEDED: the stock /vendor/bin/argosd opendir()s /proc/device-tree/soc/argos first
+ * and exits (status 0) when it is missing; init then restarts it forever. A module cannot add
+ * it: CONFIG_OF_OVERLAY and CONFIG_OF_DYNAMIC are off on GKI 6.12 (of_changeset_*,
+ * of_overlay_fdt_apply, of_attach_node not built / not exported).
+ *
+ * What argosd reads (from its code, offline):
+ *   - the entries of /proc/device-tree/soc/argos containing '@' (count n = 7)
+ *   - for N = 1..n, as text from boot_device@N/:
+ *       net_boost,node       interface name(s) matched against /proc/net/dev (space separated;
+ *                            empty string = use net_boost,sysnode)
+ *       net_boost,label      only logged; a label ending in "TX" counts tx bytes only, "RX" rx
+ *                            only, anything else rx + tx
+ *       net_boost,sysnode    path of a decimal byte counter (only when node is empty)
+ *       net_boost,interval_idx  optional, big-endian u32: 2 = 250 ms, 1 = 500 ms, else/absent 1 s
+ *   - it writes "0x<Mbps hex><N hex>\n\0" to /dev/network_throughput.
+ * The kernel side (sec_argos.ko) reads net_boost,label / table_size / table; it has the same
+ * table built in, so the module works without this node, but argosd does not.
+ *
+ * Added on 6.12 (argosd ignores it): interconnects, for the DDR vote of the WIFI TX table
+ * (5.4: icc_get(dev, MASTER_APPSS_PROC = 2, SLAVE_EBI1 = 512); 6.12 exports only of_icc_get).
+ * IDs are the same in soc-repo include/dt-bindings/interconnect/qcom,yupik.h; labels gem_noc /
+ * mc_virt are in the yupik.dtb __symbols__. Drop the two lines to run without the DDR vote.
+ *
+ * Use: in the board overlay (bsp612 bindings, base node /soc labelled "soc"):
+ *   #include "argos.dtsi"   (or paste)  -> /soc/argos
+ * Node name MUST stay "argos" directly under /soc, and child names boot_device@1..@7
+ * (argosd builds the paths with "%s%d%s"). No reg, no status.
+ */
+
+&soc {
+	argos {
+		compatible = "samsung,argos";
+		#address-cells = <1>;
+		interconnects = <&gem_noc 2 &mc_virt 512>;	/* MASTER_APPSS_PROC -> SLAVE_EBI1 */
+
+		boot_device@1 {
+			net_boost,label = "WIFI TX";
+			net_boost,node = "wlan0";
+			net_boost,table_size = <2>;
+			net_boost,table = <20 0 0 576000 0 1017 0 0 0 0
+					   200 2131200 0 1804800 0 5161 0 1 1 1>;
+		};
+
+		boot_device@2 {
+			net_boost,label = "WIFI RX";
+			net_boost,node = "wlan0";
+			net_boost,table_size = <1>;
+			net_boost,table = <0 0 0 0 0 0 0 0 0 0>;
+		};
+
+		boot_device@3 {
+			net_boost,label = "SWLAN";
+			net_boost,node = "swlan0";
+			net_boost,table_size = <1>;
+			net_boost,table = <0 0 0 0 0 0 0 0 0 0>;
+		};
+
+		boot_device@4 {
+			net_boost,label = "UFS";
+			net_boost,node = [00];
+			net_boost,sysnode = "/sys/class/sec/ufs/transferred_cnt";
+			net_boost,table_size = <1>;
+			net_boost,table = <800 0 0 902400 0 0 0 0 0 0>;
+		};
+
+		boot_device@5 {
+			net_boost,label = "P2P";
+			net_boost,node = "p2p-wlan0-0";
+			net_boost,table_size = <1>;
+			net_boost,table = <0 0 0 0 0 0 0 0 0 0>;
+		};
+
+		boot_device@6 {
+			net_boost,label = "NAN";
+			net_boost,node = "aware_data0";
+			net_boost,table_size = <1>;
+			net_boost,table = <0 0 0 0 0 0 0 0 0 0>;
+		};
+
+		boot_device@7 {
+			net_boost,label = "IPC";
+			net_boost,node = "rmnet_mhi0";
+			net_boost,table_size = <1>;
+			net_boost,table = <0 0 0 0 0 0 0 0 0 0>;
+		};
+	};
+};

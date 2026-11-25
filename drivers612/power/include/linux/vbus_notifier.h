@@ -73,5 +73,9 @@ extern void vbus_notifier_handle(vbus_status_t new_dev);
 extern int vbus_notifier_register(struct notifier_block *nb,
 		notifier_fn_t notifier, vbus_notifier_device_t listener);
 extern int vbus_notifier_unregister(struct notifier_block *nb);
+/* a52sxq 6.12: EXPORT_SYMBOL_GPL twins of the two above, for symbol_get() users (touch) */
+extern int a52sxq_vbus_notifier_register(struct notifier_block *nb,
+		notifier_fn_t notifier, vbus_notifier_device_t listener);
+extern int a52sxq_vbus_notifier_unregister(struct notifier_block *nb);
 
 #endif /* __VBUS_NOTIFIER_H__ */

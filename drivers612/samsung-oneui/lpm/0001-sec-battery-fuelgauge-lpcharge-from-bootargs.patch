@@ -1,0 +1,89 @@
+diff --color -ruN a/src/battery/common/a52_lpm_bootargs.h src/battery/common/a52_lpm_bootargs.h
+--- a/src/battery/common/a52_lpm_bootargs.h	1970-01-01 03:00:00.000000000 +0300
++++ b/src/battery/common/a52_lpm_bootargs.h	2026-11-22 20:54:48.124969823 +0200
+@@ -0,0 +1,43 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * a52sxq 6.12: power-off charging ("lpm") detection for code built as modules.
++ *
++ * 5.4 gets it from built-in code: sec_mparam.c (module_param lpcharge -> "sec_mparam.lpcharge=1")
++ * and early_param("androidboot.mode") == "charger" (sec_debug_user_reset.c:91, sec_log_buf.c:58,
++ * pdic_param.c). Neither works in a loadable module (early_param is compiled out, the static
++ * lpcharge of sec-battery / sm5714_fuelgauge is only set by a "<module>.lpcharge=" word that
++ * this bootloader does not write), so read the words from /chosen/bootargs (what the ABL
++ * handed over). Same method as usb/typec/common/pdic_param.c is_lpcharge_pdic_param().
++ */
++#ifndef A52_LPM_BOOTARGS_H
++#define A52_LPM_BOOTARGS_H
++#include <linux/of.h>
++#include <linux/string.h>
++
++/* true for "<word>" at the start of the cmdline or after a space */
++static inline bool a52_bootargs_has(const char *args, const char *word)
++{
++	size_t n = strlen(word);
++	const char *p = args;
++
++	while ((p = strstr(p, word))) {
++		if ((p == args || p[-1] == ' ') && (p[n] == ' ' || p[n] == '\0' || p[n] == '\n'))
++			return true;
++		p += n;
++	}
++	return false;
++}
++
++static inline bool a52_bootargs_lpm(void)
++{
++	const char *args = NULL;
++
++	if (!of_chosen || of_property_read_string(of_chosen, "bootargs", &args) || !args)
++		return false;
++	return a52_bootargs_has(args, "androidboot.mode=charger") ||
++	       a52_bootargs_has(args, "sec_mparam.lpcharge=1") ||
++	       a52_bootargs_has(args, "sec-battery.lpcharge=1") ||
++	       a52_bootargs_has(args, "sec_battery.lpcharge=1") ||
++	       a52_bootargs_has(args, "lpcharge=1");
++}
++#endif
+diff --color -ruN a/src/battery/common/sec_battery.c src/battery/common/sec_battery.c
+--- a/src/battery/common/sec_battery.c	2026-11-22 20:54:48.121873346 +0200
++++ b/src/battery/common/sec_battery.c	2026-11-22 20:54:48.137050511 +0200
+@@ -43,6 +43,7 @@
+ #include "battery_logger.h"
+ #include "sb_tx.h"
+ #include "sb_batt_dump.h"
++#include "a52_lpm_bootargs.h"
+ #if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
+ #include <linux/vbus_notifier.h>
+ #endif
+@@ -9844,6 +9845,10 @@
+ 
+ static int __init sec_battery_init(void)
+ {
++	/* a52sxq 6.12: nobody passes sec-battery.lpcharge=; take power-off charging from the bootargs */
++	if (!lpcharge && a52_bootargs_lpm())
++		lpcharge = 1;
++	pr_info("%s: lpcharge=%u\n", __func__, lpcharge);
+ 	sec_chg_init_gdev();
+ 	return platform_driver_register(&sec_battery_driver);
+ }
+diff --color -ruN a/src/battery/fuelgauge/sm5714_fuelgauge/sm5714_fuelgauge.c src/battery/fuelgauge/sm5714_fuelgauge/sm5714_fuelgauge.c
+--- a/src/battery/fuelgauge/sm5714_fuelgauge/sm5714_fuelgauge.c	2026-11-22 20:54:48.122940710 +0200
++++ b/src/battery/fuelgauge/sm5714_fuelgauge/sm5714_fuelgauge.c	2026-11-22 20:54:48.137888554 +0200
+@@ -50,6 +50,7 @@
+ static int sm5714_fg_debug_print;
+ #endif
+ 
++#include "a52_lpm_bootargs.h"
+ static unsigned int __read_mostly lpcharge;
+ module_param(lpcharge, uint, 0444);
+ static int __read_mostly factory_mode;
+@@ -3215,6 +3216,8 @@
+ 
+ static int __init sm5714_fuelgauge_init(void)
+ {
++	if (!lpcharge && a52_bootargs_lpm())	/* a52sxq 6.12: see a52_lpm_bootargs.h */
++		lpcharge = 1;
+ 	pr_info("%s:\n", __func__);
+ 	return platform_driver_register(&sm5714_fuelgauge_driver);
+ }

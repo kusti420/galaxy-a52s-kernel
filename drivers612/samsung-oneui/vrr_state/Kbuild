@@ -1,0 +1,1 @@
+obj-m := a52sxq_vrr_state.o

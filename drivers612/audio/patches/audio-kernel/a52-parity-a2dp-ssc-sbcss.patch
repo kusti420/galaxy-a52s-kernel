@@ -1,0 +1,244 @@
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
+index edee80e..9c00890 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
+@@ -90,6 +90,9 @@ enum {
+ 	ENC_FMT_APTX_AD_SPEECH = ASM_MEDIA_FMT_APTX_AD_SPEECH,
+ 	DEC_FMT_APTX_AD_SPEECH = ASM_MEDIA_FMT_APTX_AD_SPEECH,
+ 	ENC_FMT_LC3 = ASM_MEDIA_FMT_LC3,
++	/* a52sxq (Samsung 5.4 parity, 5.4 msm-dai-q6-v2.c:59) */
++	ENC_FMT_SBC_SS = ASM_MEDIA_FMT_SBC_SS,
++	ENC_FMT_SSC = ASM_MEDIA_FMT_SSC,
+ };
+ 
+ enum {
+@@ -4052,7 +4055,21 @@ static int msm_dai_q6_afe_enc_cfg_put(struct snd_kcontrol *kcontrol,
+ 				ucontrol->value.bytes.data + format_size,
+ 				sizeof(struct asm_enc_lc3_cfg_t));
+ 			break;
+-
++		/* a52sxq (Samsung 5.4 parity, 5.4 msm-dai-q6-v2.c:3644 / 3694): the stock One UI
++		 * liba2dpoffload.so sends these two formats (configure_sbc_ss_enc_format,
++		 * configure_ssc_enc_format); without the cases the put fails with -EINVAL and the
++		 * A2DP offload session never starts.
++		 */
++		case ENC_FMT_SBC_SS:
++			memcpy(&dai_data->enc_config.data,
++				ucontrol->value.bytes.data + format_size,
++				sizeof(struct asm_ss_sbc_enc_cfg_t));
++			break;
++		case ENC_FMT_SSC:
++			memcpy(&dai_data->enc_config.data,
++				ucontrol->value.bytes.data + format_size,
++				sizeof(struct asm_custom_enc_cfg_ssc_t));
++			break;
+ 		default:
+ 			pr_debug("%s: Ignore enc config for unknown format = %d\n",
+ 				 __func__, dai_data->enc_config.format);
+@@ -4689,6 +4706,13 @@ static int msm_dai_q6_afe_dec_cfg_get(struct snd_kcontrol *kcontrol,
+ 	case DEC_FMT_MP3:
+ 		/* No decoder specific data available */
+ 		break;
++	case ENC_FMT_SBC_SS:
++	case ENC_FMT_SSC:
++		/* a52sxq (Samsung 5.4 parity, 5.4 msm-dai-q6-v2.c:4514): ABR feedback path */
++		memcpy(ucontrol->value.bytes.data + format_size,
++			&dai_data->dec_config.abr_dec_cfg,
++			sizeof(struct afe_abr_dec_cfg_t));
++		break;
+ 	default:
+ 		pr_err("%s: Invalid format %d\n",
+ 				__func__, dai_data->dec_config.format);
+@@ -4735,6 +4759,13 @@ static int msm_dai_q6_afe_dec_cfg_put(struct snd_kcontrol *kcontrol,
+ 			ucontrol->value.bytes.data + format_size,
+ 			sizeof(struct asm_aptx_ad_dec_cfg_t));
+ 		break;
++	case ENC_FMT_SBC_SS:
++	case ENC_FMT_SSC:
++		/* a52sxq (Samsung 5.4 parity, 5.4 msm-dai-q6-v2.c:4568): ABR feedback path */
++		memcpy(&dai_data->dec_config.abr_dec_cfg,
++			ucontrol->value.bytes.data + format_size,
++			sizeof(struct afe_abr_dec_cfg_t));
++		break;
+ 	default:
+ 		pr_err("%s: Invalid format %d\n",
+ 				__func__, dai_data->dec_config.format);
+diff --git a/drivers612/audio/audio-kernel/dsp/q6afe.c b/drivers612/audio/audio-kernel/dsp/q6afe.c
+index 442e137..5519f0c 100644
+--- a/drivers612/audio/audio-kernel/dsp/q6afe.c
++++ b/drivers612/audio/audio-kernel/dsp/q6afe.c
+@@ -457,7 +457,10 @@ static int q6afe_load_avcs_modules(int num_modules, u16 port_id,
+ 				pm[i]->payload->load_unload_info[0].id1 =
+ 					AVS_MODULE_ID_DEPACKETIZER_COP_V1;
+ 
+-				if (format_id == ENC_CODEC_TYPE_LDAC) {
++				/* a52sxq (Samsung 5.4 parity, 5.4 q6afe.c:483): SBC_SS + SSC */
++				if (format_id == ENC_CODEC_TYPE_LDAC ||
++					format_id == ASM_MEDIA_FMT_SBC_SS ||
++					format_id == ASM_MEDIA_FMT_SSC) {
+ 					pm[i]->payload->load_unload_info[0].id1 =
+ 						AVS_MODULE_ID_DEPACKETIZER_COP;
+ 					goto load_unload;
+@@ -5238,7 +5241,9 @@ static int q6afe_send_dec_config(u16 port_id,
+ 	param_hdr.param_size = sizeof(struct avs_dec_depacketizer_id_param_t);
+ 	dec_depkt_id_param.dec_depacketizer_id =
+ 					       AFE_MODULE_ID_DEPACKETIZER_COP_V1;
+-	if (cfg->format == ENC_CODEC_TYPE_LDAC)
++	if (cfg->format == ENC_CODEC_TYPE_LDAC ||
++	    cfg->format == ASM_MEDIA_FMT_SBC_SS ||
++	    cfg->format == ASM_MEDIA_FMT_SSC)
+ 		dec_depkt_id_param.dec_depacketizer_id =
+ 					       AFE_MODULE_ID_DEPACKETIZER_COP;
+ 	if (format == ASM_MEDIA_FMT_LC3) {
+@@ -5552,6 +5557,9 @@ exit:
+ 	return ret;
+ }
+ 
++static_assert(sizeof(struct asm_ss_sbc_enc_cfg_t) <= sizeof(union afe_enc_config_data));
++static_assert(sizeof(struct asm_custom_enc_cfg_ssc_t) <= sizeof(union afe_enc_config_data));
++
+ static int q6afe_send_enc_config(u16 port_id,
+ 				 union afe_enc_config_data *cfg, u32 format,
+ 				 union afe_port_config afe_config,
+@@ -5599,7 +5607,8 @@ static int q6afe_send_enc_config(u16 port_id,
+ 		format != ASM_MEDIA_FMT_CELT && format != ASM_MEDIA_FMT_LDAC &&
+ 		format != ASM_MEDIA_FMT_APTX_ADAPTIVE &&
+ 		format != ASM_MEDIA_FMT_APTX_AD_SPEECH &&
+-		format != ASM_MEDIA_FMT_LC3) {
++		format != ASM_MEDIA_FMT_LC3 &&
++		format != ASM_MEDIA_FMT_SSC && format != ASM_MEDIA_FMT_SBC_SS) {
+ 		pr_err("%s:Unsuppported enc format. Ignore AFE config\n",
+ 				__func__);
+ 		return 0;
+@@ -5622,7 +5631,9 @@ static int q6afe_send_enc_config(u16 port_id,
+ 		goto exit;
+ 	}
+ 
+-	if (format == ASM_MEDIA_FMT_LDAC) {
++	if (format == ASM_MEDIA_FMT_LDAC ||
++	    format == ASM_MEDIA_FMT_SBC_SS ||
++	    format == ASM_MEDIA_FMT_SSC) {
+ 		param_hdr.param_size = sizeof(struct afe_enc_cfg_blk_param_t)
+ 					    - sizeof(struct afe_abr_enc_cfg_t);
+ 		enc_blk_param.enc_cfg_blk_size =
+@@ -5852,6 +5863,10 @@ static int q6afe_send_enc_config(u16 port_id,
+ 
+ 	if ((format == ASM_MEDIA_FMT_LDAC &&
+ 	     cfg->ldac_config.abr_config.is_abr_enabled) ||
++	    (format == ASM_MEDIA_FMT_SBC_SS &&
++	     A52_SS_SBC_CFG(cfg)->abr_config.is_abr_enabled) ||
++	    (format == ASM_MEDIA_FMT_SSC &&
++	     A52_SSC_CFG(cfg)->abr_config.is_abr_enabled) ||
+ 	     format == ASM_MEDIA_FMT_APTX_ADAPTIVE ||
+ 	     format == ASM_MEDIA_FMT_APTX_AD_SPEECH ||
+ 		 format == ASM_MEDIA_FMT_LC3) {
+@@ -5862,8 +5877,15 @@ static int q6afe_send_enc_config(u16 port_id,
+ 			param_hdr.param_id = AFE_ENCODER_PARAM_ID_BIT_RATE_LEVEL_MAP;
+ 			param_hdr.param_size =
+ 				sizeof(struct afe_enc_level_to_bitrate_map_param_t);
+-			map_param.mapping_table =
+-				cfg->ldac_config.abr_config.mapping_info;
++			if (format == ASM_MEDIA_FMT_SBC_SS)
++				map_param.mapping_table =
++					A52_SS_SBC_CFG(cfg)->abr_config.mapping_info;
++			else if (format == ASM_MEDIA_FMT_SSC)
++				map_param.mapping_table =
++					A52_SSC_CFG(cfg)->abr_config.mapping_info;
++			else
++				map_param.mapping_table =
++					cfg->ldac_config.abr_config.mapping_info;
+ 			ret = q6afe_pack_and_set_param_in_band(port_id,
+ 							q6audio_get_port_index(port_id),
+ 							param_hdr,
+@@ -5890,6 +5912,12 @@ static int q6afe_send_enc_config(u16 port_id,
+ 		else if (format == ASM_MEDIA_FMT_LC3)
+ 			imc_info_param.imc_info =
+ 			cfg->lc3_enc_config.imc_info;
++		else if (format == ASM_MEDIA_FMT_SBC_SS)
++			imc_info_param.imc_info =
++			A52_SS_SBC_CFG(cfg)->abr_config.imc_info;
++		else if (format == ASM_MEDIA_FMT_SSC)
++			imc_info_param.imc_info =
++			A52_SSC_CFG(cfg)->abr_config.imc_info;
+ 		else
+ 			imc_info_param.imc_info =
+ 			cfg->ldac_config.abr_config.imc_info;
+@@ -6495,7 +6523,9 @@ static int __afe_port_start(u16 port_id, union afe_port_config *afe_config,
+ 				 */
+ 				if (codec_format == ENC_CODEC_TYPE_LDAC ||
+ 					codec_format == ASM_MEDIA_FMT_APTX_ADAPTIVE ||
+-					codec_format == ASM_MEDIA_FMT_LC3)
++					codec_format == ASM_MEDIA_FMT_LC3 ||
++					codec_format == ASM_MEDIA_FMT_SBC_SS ||
++					codec_format == ASM_MEDIA_FMT_SSC)
+ 					ret = q6afe_load_avcs_modules(1, port_id,
+ 						DECODER_CASE, codec_format);
+ 				else
+diff --git a/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h b/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h
+index ba3abb6..8dca295 100644
+--- a/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h
++++ b/drivers612/audio/audio-kernel/include/dsp/apr_audio-v2.h
+@@ -4441,6 +4441,8 @@ struct lc3_channel_mode_param_t {
+  * @table{weak__asm__sbc__enc__cfg__t}
+  */
+ #define ASM_MEDIA_FMT_SBC                         0x00010BF2
++/* a52sxq (Samsung 5.4 parity, 5.4 apr_audio-v2.h:4487): Samsung SBC with ABR, A2DP offload */
++#define ASM_MEDIA_FMT_SBC_SS                      0x00010BF5
+ 
+ /* SBC channel Mono mode.*/
+ #define ASM_MEDIA_FMT_SBC_CHANNEL_MODE_MONO                     1
+@@ -4520,6 +4522,12 @@ struct asm_sbc_enc_cfg_t {
+ 	uint32_t    sample_rate;
+ };
+ 
++/* a52sxq (Samsung 5.4 parity, 5.4 apr_audio-v2.h:4567) */
++struct asm_ss_sbc_enc_cfg_t {
++	struct asm_sbc_enc_cfg_t custom_config;
++	struct afe_abr_enc_cfg_t abr_config;
++} __packed;
++
+ #define ASM_MEDIA_FMT_AAC_AOT_LC            2
+ #define ASM_MEDIA_FMT_AAC_AOT_SBR           5
+ #define ASM_MEDIA_FMT_AAC_AOT_PS            29
+@@ -4831,6 +4839,24 @@ struct asm_ldac_enc_cfg_t {
+ 	struct afe_abr_enc_cfg_t abr_config;
+ } __packed;
+ 
++/* a52sxq (Samsung 5.4 parity, 5.4 apr_audio-v2.h:4883): Samsung Scalable Codec (Galaxy Buds),
++ * A2DP offload encoder in the ADSP. FMT ID for SSC.
++ */
++#define ASM_MEDIA_FMT_SSC 0x00010BF3
++
++struct asm_custom_enc_cfg_ssc_t {
++	uint32_t    sample_rate;
++	/* Mono or stereo */
++	uint16_t    num_channels;
++	uint16_t    reserved;
++	/* num_ch == 1, then PCM_CHANNEL_C,
++	 * num_ch == 2, then {PCM_CHANNEL_L, PCM_CHANNEL_R}
++	 */
++	uint8_t     channel_mapping[8];
++	uint32_t    custom_size;
++	struct afe_abr_enc_cfg_t abr_config;
++} __packed;
++
+ struct afe_enc_fmt_id_param_t {
+ 	/*
+ 	 * Supported values:
+@@ -5028,7 +5054,16 @@ union afe_enc_config_data {
+ 	struct asm_aptx_ad_enc_cfg_t  aptx_ad_config;
+ 	struct asm_aptx_ad_speech_enc_cfg_t aptx_ad_speech_config;
+ 	struct asm_enc_lc3_cfg_t lc3_enc_config;
++	/* a52sxq: Samsung's 5.4 has two more members here, struct asm_ss_sbc_enc_cfg_t
++	 * ss_sbc_config and struct asm_custom_enc_cfg_ssc_t ssc_config. They are NOT added:
++	 * the module CRCs come from DWARF (gendwarfksyms), a new member would change the CRC of
++	 * afe_open / afe_port_start{,_v2,_v3}. Both are smaller than ldac_config, so the union
++	 * has room; q6afe.c and msm-dai-q6-v2.c reach them through a cast (A52_SS_SBC_CFG /
++	 * A52_SSC_CFG).
++	 */
+ };
++#define A52_SS_SBC_CFG(cfg) ((struct asm_ss_sbc_enc_cfg_t *)(cfg))
++#define A52_SSC_CFG(cfg) ((struct asm_custom_enc_cfg_ssc_t *)(cfg))
+ 
+ struct afe_enc_config {
+ 	u32 format;

@@ -1,0 +1,154 @@
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-hdmi-v2.c b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-hdmi-v2.c
+index 911637f..14bbe25 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-hdmi-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-hdmi-v2.c
+@@ -22,14 +22,12 @@
+ 
+ #define HDMI_RX_CA_MAX 0x32
+ 
+-#define SOC_SINGLE_MULTI_EXT(xname, xreg, xshift, xmax, xinvert, xcount,\
+- 	xhandler_get, xhandler_put) \
+-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+-	.info = snd_soc_info_volsw, \
+- 	.get = xhandler_get, .put = xhandler_put, \
+- 	.private_value = (unsigned long)&(struct soc_mixer_control) \
+- 		{.reg = xreg, .shift = xshift, .rshift = xshift, .max = xcount, \
+- 		/*.count = xcount,*/ .platform_max = xmax, .invert = xinvert} }
++/* a52sxq (5.4 parity): the donor defined SOC_SINGLE_MULTI_EXT here with .info = snd_soc_info_volsw,
++ * which reports 1 or 2 values whatever xcount says. The 5.4 HAL blobs write these controls as arrays
++ * (mixer_ctl_set_array with 3..128 values) and tinyalsa refuses a longer array than the control reports.
++ * Use the count-aware info as msm-pcm-voice-v2.c does (5.4: snd_soc_info_multi_ext in soc-ops.c).
++ */
++#include "sec_multi_ext.h"
+ 
+ enum {
+ 	DP_CONTROLLER0 = 0,
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
+index 9c00890..24c4b9f 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-dai-q6-v2.c
+@@ -58,14 +58,12 @@
+ 				    SNDRV_PCM_FMTBIT_S24_LE | \
+ 				    SNDRV_PCM_FMTBIT_S32_LE)
+ 
+-#define SOC_SINGLE_MULTI_EXT(xname, xreg, xshift, xmax, xinvert, xcount,\
+-	xhandler_get, xhandler_put) \
+-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+-	.info = snd_soc_info_volsw, \
+-	.get = xhandler_get, .put = xhandler_put, \
+-	.private_value = (unsigned long)&(struct soc_mixer_control) \
+-		{.reg = xreg, .shift = xshift, .rshift = xshift, .max = xcount, \
+-		/*.count = xcount,*/ .platform_max = xmax, .invert = xinvert} }
++/* a52sxq (5.4 parity): the donor defined SOC_SINGLE_MULTI_EXT here with .info = snd_soc_info_volsw,
++ * which reports 1 or 2 values whatever xcount says. The 5.4 HAL blobs write these controls as arrays
++ * (mixer_ctl_set_array with 3..128 values) and tinyalsa refuses a longer array than the control reports.
++ * Use the count-aware info as msm-pcm-voice-v2.c does (5.4: snd_soc_info_multi_ext in soc-ops.c).
++ */
++#include "sec_multi_ext.h"
+ 
+ static int msm_mi2s_get_port_id(u32 mi2s_id, int stream, u16 *port_id);
+ static int msm_dai_q6_dai_probe(struct snd_soc_dai *dai);
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-pcm-host-voice-v2.c b/drivers612/audio/audio-kernel/asoc/msm-pcm-host-voice-v2.c
+index 69e11a3..ea5b3b3 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-pcm-host-voice-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-pcm-host-voice-v2.c
+@@ -52,14 +52,12 @@
+ #define VoMMode2_RX_CAPTURE_DAI_ID  "VoiceMMode2 HOST RX CAPTURE"
+ #define VoMMode2_RX_PLAYBACK_DAI_ID "VoiceMMode2 HOST RX PLAYBACK"
+ 
+-#define SOC_SINGLE_MULTI_EXT(xname, xreg, xshift, xmax, xinvert, xcount,\
+-	xhandler_get, xhandler_put) \
+-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+-	.info = snd_soc_info_volsw, \
+-	.get = xhandler_get, .put = xhandler_put, \
+-	.private_value = (unsigned long)&(struct soc_mixer_control) \
+-		{.reg = xreg, .shift = xshift, .rshift = xshift, .max = xcount, \
+-		/*.count = xcount,*/ .platform_max = xmax, .invert = xinvert} }
++/* a52sxq (5.4 parity): the donor defined SOC_SINGLE_MULTI_EXT here with .info = snd_soc_info_volsw,
++ * which reports 1 or 2 values whatever xcount says. The 5.4 HAL blobs write these controls as arrays
++ * (mixer_ctl_set_array with 3..128 values) and tinyalsa refuses a longer array than the control reports.
++ * Use the count-aware info as msm-pcm-voice-v2.c does (5.4: snd_soc_info_multi_ext in soc-ops.c).
++ */
++#include "sec_multi_ext.h"
+ 
+ 
+ enum {
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-pcm-routing-v2.c b/drivers612/audio/audio-kernel/asoc/msm-pcm-routing-v2.c
+index 4818ec1..f5f5032 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-pcm-routing-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-pcm-routing-v2.c
+@@ -146,16 +146,12 @@ enum {
+ 
+ #define LSM_FUNCTION_TEXT "LSM Function"
+ 
+-#define SOC_SINGLE_MULTI_EXT(xname, xreg, xshift, xmax, xinvert, xcount, \
+-	xhandler_get, xhandler_put) \
+-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+-	.info = snd_soc_info_volsw, \
+-	.get = xhandler_get, .put = xhandler_put, \
+-	.private_value = (unsigned long)&(struct soc_mixer_control) { \
+-		.reg = xreg, .shift = xshift, .rshift = xshift, .max = xcount, \
+-		.platform_max = xmax, .invert = xinvert \
+-	} \
+-}
++/* a52sxq (5.4 parity): the donor defined SOC_SINGLE_MULTI_EXT here with .info = snd_soc_info_volsw,
++ * which reports 1 or 2 values whatever xcount says. The 5.4 HAL blobs write these controls as arrays
++ * (mixer_ctl_set_array with 3..128 values) and tinyalsa refuses a longer array than the control reports.
++ * Use the count-aware info as msm-pcm-voice-v2.c does (5.4: snd_soc_info_multi_ext in soc-ops.c).
++ */
++#include "sec_multi_ext.h"
+ 
+ static const char * const lsm_port_text[] = {
+ 	"None",
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-pcm-voip-v2.c b/drivers612/audio/audio-kernel/asoc/msm-pcm-voip-v2.c
+index d08585a..632693c 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-pcm-voip-v2.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-pcm-voip-v2.c
+@@ -169,16 +169,12 @@ struct voip_drv_info {
+ 	uint32_t evrc_max_rate;
+ };
+ 
+-#define SOC_SINGLE_MULTI_EXT(xname, xreg, xshift, xmax, xinvert, xcount, \
+-	xhandler_get, xhandler_put) \
+-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+-	.info = snd_soc_info_volsw, \
+-	.get = xhandler_get, .put = xhandler_put, \
+-	.private_value = (unsigned long)&(struct soc_mixer_control) { \
+-		.reg = xreg, .shift = xshift, .rshift = xshift, .max = xcount, \
+-		.platform_max = xmax, .invert = xinvert \
+-	} \
+-}
++/* a52sxq (5.4 parity): the donor defined SOC_SINGLE_MULTI_EXT here with .info = snd_soc_info_volsw,
++ * which reports 1 or 2 values whatever xcount says. The 5.4 HAL blobs write these controls as arrays
++ * (mixer_ctl_set_array with 3..128 values) and tinyalsa refuses a longer array than the control reports.
++ * Use the count-aware info as msm-pcm-voice-v2.c does (5.4: snd_soc_info_multi_ext in soc-ops.c).
++ */
++#include "sec_multi_ext.h"
+ 
+ static int voip_get_media_type(uint32_t mode, uint32_t rate_type,
+ 				unsigned int samp_rate,
+diff --git a/drivers612/audio/audio-kernel/asoc/msm-qti-pp-config.c b/drivers612/audio/audio-kernel/asoc/msm-qti-pp-config.c
+index 6324d83..f106a92 100644
+--- a/drivers612/audio/audio-kernel/asoc/msm-qti-pp-config.c
++++ b/drivers612/audio/audio-kernel/asoc/msm-qti-pp-config.c
+@@ -23,14 +23,12 @@
+ #define MAX_EQ_SESSIONS		(MSM_FRONTEND_DAI_MAX + 1)
+ #define CHMIX_CFG_CONST_PARAM_SIZE 4
+ 
+-#define SOC_SINGLE_MULTI_EXT(xname, xreg, xshift, xmax, xinvert, xcount,\
+-	xhandler_get, xhandler_put) \
+-{	.iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, \
+-	.info = snd_soc_info_volsw, \
+-	.get = xhandler_get, .put = xhandler_put, \
+-	.private_value = (unsigned long)&(struct soc_mixer_control) \
+-		{.reg = xreg, .shift = xshift, .rshift = xshift, .max = xcount, \
+-		/*.count = xcount,*/ .platform_max = xmax, .invert = xinvert} }
++/* a52sxq (5.4 parity): the donor defined SOC_SINGLE_MULTI_EXT here with .info = snd_soc_info_volsw,
++ * which reports 1 or 2 values whatever xcount says. The 5.4 HAL blobs write these controls as arrays
++ * (mixer_ctl_set_array with 3..128 values) and tinyalsa refuses a longer array than the control reports.
++ * Use the count-aware info as msm-pcm-voice-v2.c does (5.4: snd_soc_info_multi_ext in soc-ops.c).
++ */
++#include "sec_multi_ext.h"
+ 
+ 
+ enum {

@@ -88,7 +88,9 @@ DEADMAN=${DEADMAN:-480}; KXW=${KX_WAIT:-300}; RH_ABL=${RH_ABL:-full}
 O=$HERE/out/rh-$NAME; W=$O/work
 fail() { echo "CHECK FAILED: $*" >&2; exit 1; }
 say() { echo "$*" | tee -a "$O/REPORT.txt"; }
-decomp() { case "$(file -b "$1")" in LZ4*) lz4 -dc "$1";; gzip*) gzip -dc "$1";; *) fail "unknown compression: $1";; esac; }
+# segments of mixed compression (OneUI 9 port: the ROM's vendor ramdisk gzip + our lz4 fragment) as the kernel takes
+# them: tools/cpiox.py raw()
+decomp() { case "$(file -b "$1")" in LZ4*|gzip*) python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import cpiox; sys.stdout.buffer.write(cpiox.raw(sys.argv[2]))' "$HERE/tools" "$1";; *) fail "unknown compression: $1";; esac; }
 modname() { "$LLVM/llvm-objcopy" -O binary --only-section=.modinfo "$1" "$W/modinfo.bin" && tr '\0' '\n' < "$W/modinfo.bin" | sed -n 's/^name=//p' | head -1; }
 vermagic() { [ "$(strings -a "$1" | grep -c "^vermagic=$KREL ")" -ge 1 ] || fail "wrong vermagic: $1"; }
 
@@ -118,12 +120,21 @@ fi
 grep -q "kernel=$V " "$RB/BUILDINFO" || fail "$RB is not a $V build"
 # the phone whose dumps (live tree = measured ABL arguments) the build was made from
 RBS=$(sed -n '1s/.* dump=[^ ]*testdev-\([A-Z0-9]*\) .*/\1/p' "$RB/REPORT.txt")
-case "$RBS" in PHONE1) RBPHONE=1;; PHONE2) RBPHONE=2;; *) fail "cannot tell which phone $RB was built for (dump= in its REPORT.txt)";; esac
+case "$RBS" in PHONE1) RBPHONE=1;; PHONE2) RBPHONE=2;; *)
+	# a dump outside testdev-* (OneUI 9 port dumps in /mnt/B1/...): its getprop.txt names the phone
+	RBD=$(sed -n '1s/.* dump=\([^ ]*\) .*/\1/p' "$RB/REPORT.txt")
+	case "$(sed -n 's/^\[ro.serialno\]: \[\(.*\)\]/\1/p' "$RBD/getprop.txt" 2>/dev/null)" in PHONE1) RBPHONE=1;; PHONE2) RBPHONE=2;;
+	*) [ -n "${RB_PHONE:-}" ] || fail "cannot tell which phone $RB was built for (dump= in its REPORT.txt / its getprop.txt): set RB_PHONE=1|2"
+	   RBPHONE=$RB_PHONE; echo "RB_PHONE=$RB_PHONE given: $RB's dump ($RBD) is from another phone of the same bootloader";; esac;; esac
+# test fstabs: LineageOS (ext4 vendor) or the OneUI 9 port (EROFS system/vendor/product/odm + prism/optics/carrier/spu)
+TFS=$AB/out/los1
+grep -qP '^vendor\s+/vendor\s+erofs' "$RB/work/rom-vr/first_stage_ramdisk/fstab.qcom" 2>/dev/null && TFS=$HERE/rehearsal/oneui9
+echo "test fstabs from $TFS"
 [ -f "$TOP/$HIMG" ] || fail "no harness image $HIMG for phone $PHONE"
-for f in "$BRINGUP" "$TESTGUARD" "$AB/out/los1/fstab.first" "$AB/out/los1/fstab.second" "$AB/adb_debug.prop"; do [ -f "$f" ] || fail "missing $f"; done
-grep -q 'by-name/userdata' "$AB/out/los1/fstab.second" && fail "test fstab names userdata"
-grep -E 'formattable' "$AB/out/los1/fstab.second" | grep -v zram && fail "a real partition is formattable in the test fstab"
-[ -n "$(grep -Ev 'logical' "$AB/out/los1/fstab.first")" ] && fail "first-stage test fstab has a non-logical entry"
+for f in "$BRINGUP" "$TESTGUARD" "$TFS/fstab.first" "$TFS/fstab.second" "$AB/adb_debug.prop"; do [ -f "$f" ] || fail "missing $f"; done
+grep -q 'by-name/userdata' "$TFS/fstab.second" && fail "test fstab names userdata"
+grep -E 'formattable' "$TFS/fstab.second" | grep -v zram && fail "a real partition is formattable in the test fstab"
+[ -n "$(grep -Ev 'logical' "$TFS/fstab.first")" ] && fail "first-stage test fstab has a non-logical entry"
 rm -rf "$O"; mkdir -p "$W"
 : > "$O/REPORT.txt"
 say "real-boot rehearsal $NAME = $RBNAME ($V, $KREL$( [ "$RBMODEM" = 1 ] && echo ', MODEM=1')), $(date '+%F %T'); NOTHING is flashed; kexec test path only"
@@ -163,8 +174,25 @@ cp "$R/helper-rh.sh" "$OV/a52/helper.sh"; cp "$R/helper2-rh.sh" "$OV/a52/helper2
 cp "$R/rh-checks.sh" "$OV/a52/rh/rh-checks.sh"
 if [ "$RBMODEM" = 1 ]; then cp "$EFSDUMP" "$OV/a52/rh/efsdump"; chmod 755 "$OV/a52/rh/efsdump"; cp "$RB/modem-devnodes.txt" "$OV/a52/rh/modem-devnodes.txt"; fi
 chmod 755 "$OV/init" "$OV/init.android" "$OV/a52/helper.sh" "$OV/a52/helper2.sh" "$OV/a52/leave" "$OV/a52/a52bind" "$OV/a52/a52ovl" "$OV/a52/rh/rh-checks.sh"
-cp "$AB/out/los1/fstab.second" "$OV/a52/bind/fstab.qcom"
-cp "$AB/out/los1/fstab.first" "$OV/first_stage_ramdisk/fstab.qcom"; cp "$AB/out/los1/fstab.first" "$OV/fstab.qcom"
+cp "$TFS/fstab.second" "$OV/a52/bind/fstab.qcom"
+# OneUI 9 port: pre-formatted zram images (its policy refuses mke2fs on ram_device): the helper writes them
+if [ "$TFS" = "$HERE/rehearsal/oneui9" ]; then
+	# /data gets the PC's adb key (/data/misc/adb/adb_keys, adb_keys_file, 0640 system:shell; labels by e2fsdroid
+	# from the ROM's file_contexts): OneUI shows no authorization prompt in the setup wizard, so without the key the
+	# test Android is unreachable (rhou2b)
+	HB=$HOME/git/android/out/host/linux-x86/bin; MR=$HOME/git/MonsterROM/out/target/a52sxq/work_dir
+	[ -x "$HB/e2fsdroid" ] && [ -f "$HOME/.android/adbkey.pub" ] && [ -f "$MR/system/system/etc/selinux/plat_file_contexts" ] || fail "OneUI: need $HB/e2fsdroid, ~/.android/adbkey.pub and $MR file_contexts"
+	rm -rf "$W/zr"; mkdir -p "$W/zr/root/misc/adb"; cp "$HOME/.android/adbkey.pub" "$W/zr/root/misc/adb/adb_keys"
+	printf ' 1000 1000 0771\ndata 1000 1000 0771\ndata/misc 1000 9998 01771\ndata/misc/adb 1000 2000 02750\ndata/misc/adb/adb_keys 1000 2000 0640\n' > "$W/zr/fs_config"
+	cat "$MR/system/system/etc/selinux/plat_file_contexts" "$MR/vendor/etc/selinux/vendor_file_contexts" > "$W/zr/fc"
+	for z in 1:3221225472 2:134217728; do n=${z%%:*}; sz=${z#*:}
+		rm -f "$W/zram$n.ext4"; truncate -s "$sz" "$W/zram$n.ext4"
+		"$HB/mke2fs" -q -F -t ext4 -b 4096 -E lazy_itable_init=1,lazy_journal_init=1 "$W/zram$n.ext4" >/dev/null
+		[ "$n" = 1 ] && { "$HB/e2fsdroid" -e -T 0 -S "$W/zr/fc" -C "$W/zr/fs_config" -a /data -f "$W/zr/root" "$W/zram1.ext4" > "$W/zr/e2fsdroid.log" 2>&1 || fail "e2fsdroid"; }
+		gzip -9c "$W/zram$n.ext4" > "$OV/a52/rh/zram$n.ext4.gz"; rm -f "$W/zram$n.ext4"; done
+	say "OneUI: zram1/zram2 pre-formatted ext4 images ($(du -ch "$OV"/a52/rh/zram*.ext4.gz | tail -1 | cut -f1) gz) for the helper"
+fi
+cp "$TFS/fstab.first" "$OV/first_stage_ramdisk/fstab.qcom"; cp "$TFS/fstab.first" "$OV/fstab.qcom"
 : > "$OV/force_debuggable"
 sed "s/^ro.bpf.kver_override=.*/ro.bpf.kver_override=${KREL%%-*}/" "$AB/adb_debug.prop" > "$OV/adb_debug.prop"
 grep -q "^ro.bpf.kver_override=${KREL%%-*}$" "$OV/adb_debug.prop" || fail "adb_debug.prop kver"
@@ -233,13 +261,18 @@ cat "$W/1-boot.cpio" "$W/2-tools.cpio" "$W/3-vendor.cpio" "$W/4-overlay.cpio" | 
 F=$W/final; python3 -I "$HERE/tools/cpiox.py" "$O/rd.cpio.gz" "$F" > "$W/final.txt"
 cmp -s "$F/init" "$OV/init" || fail "/init is not a52init"
 cmp -s "$F/init.android" "$W/rom/init" || fail "/init.android is not the ROM's init"
-for f in first_stage_ramdisk/fstab.qcom fstab.qcom; do cmp -s "$F/$f" "$AB/out/los1/fstab.first" || fail "/$f is not the logical-only test fstab"; done
+for f in first_stage_ramdisk/fstab.qcom fstab.qcom; do cmp -s "$F/$f" "$TFS/fstab.first" || fail "/$f is not the logical-only test fstab"; done
 cmp -s "$F/lib/modules/modules.load" "$RB/first-stage.modules.load" || fail "/lib/modules/modules.load"
 grep -qx 'options sec_battery async_probe=1' "$F/lib/modules/modules.options" || fail "modules.options lacks sec_battery async_probe=1"
 diff <(cd "$VR/lib/modules" && ls) <(cd "$F/lib/modules" && ls | grep -vx hhwdt.ko) > /dev/null || fail "/lib/modules is not exactly the vendor_boot set + hhwdt.ko"
-for f in "$VR"/lib/modules/*; do cmp -s "$f" "$F/lib/modules/${f##*/}" || fail "${f##*/} differs from the vendor ramdisk"; done
+for f in "$VR"/lib/modules/*; do [ -f "$f" ] || continue; cmp -s "$f" "$F/lib/modules/${f##*/}" || fail "${f##*/} differs from the vendor ramdisk"; done
 [ -n "$(find "$F" \( -iname '*.mdt' -o -iname '*.mbn' -o -iregex '.*\.b[0-9][0-9]' \))" ] && fail "firmware image in the ramdisk: refused (2026-11-13 rule)"
-for k in $(find "$F" -name '*.ko'); do vermagic "$k"; done
+# every module the first stage loads (+ the harness ones) must be this kernel's; the OneUI 9 port's ROM vendor ramdisk
+# also carries its 5.4 .ko files, which nothing references (modules.load/dep are ours)
+for k in $(find "$F" -name '*.ko'); do
+	b=${k##*/}; if [ "${k#$F/lib/modules/}" = "$b" ] && ! grep -qx "$b" "$RB/first-stage.modules.load" && [ "$b" != hhwdt.ko ] && [ -f "$RB/work/rom-vr/lib/modules/$b" ]; then
+		grep -q "^$b:\|[ /]$b\b" "$F/lib/modules/modules.dep" && fail "5.4 module $b is referenced by modules.dep"; continue; fi
+	vermagic "$k"; done
 # SD/MMC host driver (phone 1 has a microSD = mmcblk1 that nothing may format): the Qualcomm SDHC
 # driver is a module and never built in (mmc_core/mmc_block/sdhci/sdhci-pltfm built in bind nothing
 # without it). SDCARD=0 builds: in no set, blocklisted. SDCARD=1 builds: cqhci + sdhci-msm in the

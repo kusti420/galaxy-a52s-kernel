@@ -58,6 +58,7 @@
 #include <linux/mfd/sm/sm5714/sm5714.h>
 #include <linux/mfd/sm/sm5714/sm5714-private.h>
 #include <linux/muic/sm/sm5714/sm5714-muic.h>
+#include "a52_afc_param.h"
 
 #if IS_ENABLED(CONFIG_CP_UART_NOTI)
 #include <soc/samsung/exynos-modem-ctrl.h>
@@ -682,6 +683,9 @@ static ssize_t sm5714_muic_set_afc_disable(struct device *dev,
 	pr_err("%s:set_param is NOT supported!\n", __func__);
 #endif
 #endif
+
+	if (!strncasecmp(buf, "1", 1) || !strncasecmp(buf, "0", 1))
+		a52_afc_param_store(pdata->afc_disable);	/* a52sxq: 5.4 sec_set_param() */
 
 #if IS_ENABLED(CONFIG_BATTERY_SAMSUNG)
 	psy_val.intval = param_val;
@@ -2511,6 +2515,7 @@ static void sm5714_muic_remove(struct platform_device *pdev)
 
 		cancel_delayed_work_sync(&muic_data->muic_debug_work);
 		cancel_delayed_work_sync(&muic_data->muic_U200_work);
+		flush_work(&a52_afc_param_work);
 		disable_irq_wake(muic_data->i2c->irq);
 		sm5714_muic_free_irqs(muic_data);
 #if IS_ENABLED(CONFIG_VBUS_NOTIFIER)
@@ -2537,6 +2542,7 @@ static void sm5714_muic_shutdown(struct platform_device *pdev)
 
 	muic_data->shut_down = 1;
 
+	flush_work(&a52_afc_param_work);
 	cancel_delayed_work_sync(&muic_data->muic_debug_work);
 	cancel_delayed_work_sync(&muic_data->muic_U200_work);
 

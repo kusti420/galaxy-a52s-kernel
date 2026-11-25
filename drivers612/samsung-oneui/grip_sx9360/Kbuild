@@ -1,0 +1,12 @@
+# Samsung SX9360 grip (SAR) sensor, 5.4 drivers/sensors/sx9360.c (built there by CONFIG_SENSORS_SX9364=y
+# in lineage-a52sxq_defconfig) for the a52sxq 6.12 kernel line. One module: sx9360.ko.
+# Config switches as the 5.4 build: PDIC + USB Type-C manager notifier (cable attach -> recalibration,
+# needs usb_typec_manager.ko, first.load line 166), MUIC notifier (reset work), flip-cover cert path.
+# GRIP_PDIC=0 builds without the usb_typec_manager dependency.
+GRIP_PDIC ?= 1
+obj-m := sx9360.o
+ccflags-y += -I$(src) -DCONFIG_FLIP_COVER_DETECTOR_FACTORY=1 -DCONFIG_MUIC_NOTIFIER=1
+ifeq ($(GRIP_PDIC),1)
+ccflags-y += -DCONFIG_PDIC_NOTIFIER=1 -DCONFIG_USB_TYPEC_MANAGER_NOTIFIER=1 -I$(src)/../../power/include
+endif
+ccflags-y += -Wno-unused-function -Wno-missing-prototypes

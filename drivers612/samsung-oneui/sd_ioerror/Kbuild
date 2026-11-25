@@ -1,0 +1,1 @@
+obj-m := a52sxq_sd_ioerror.o

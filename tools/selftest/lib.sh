@@ -1,9 +1,11 @@
 # tools/selftest/lib.sh: helpers for run.sh and tests/*.sh (sourced, not run).
+# Root through su: SUSH is the su invocation that reads the script from stdin: 'su 0 sh' (Magisk-style, KernelSU-Next) or
+# 'su -c sh' (ReSukiSU / OneUI 9 port, context u:r:ksu:s0); run.sh probes which one answers.
 # Device access:  A = adb shell as adbd's uid; X = highest privilege available (root when the phone has it,
 # else shell); R = root only (fails when there is none); U = shell uid (app_process tools need the shell
 # package identity; on root adbd they go through `su shell`).
 A() { timeout "${TMO:-60}" adb -s "$S" shell "$@" 2>&1 | tr -d '\r'; }
-R() { case "$ROOT" in adbd) A "$@";; su) printf '%s\n' "$*" | timeout "${TMO:-60}" adb -s "$S" shell 'su 0 sh' 2>&1 | tr -d '\r';; *) return 1;; esac; }
+R() { case "$ROOT" in adbd) A "$@";; su) printf '%s\n' "$*" | timeout "${TMO:-60}" adb -s "$S" shell "${SUSH:-su 0 sh}" 2>&1 | tr -d '\r';; *) return 1;; esac; }
 X() { if [ "$ROOT" = su ]; then R "$@"; else A "$@"; fi; }
 U() { if [ "$ROOT" = adbd ]; then printf '%s\n' "$*" | timeout "${TMO:-60}" adb -s "$S" shell "${USH:-su shell sh}" 2>&1 | tr -d '\r'; else A "$@"; fi; }
 have_root() { [ "$ROOT" != none ]; }

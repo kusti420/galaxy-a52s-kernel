@@ -1,0 +1,117 @@
+--- orig/gh_virt_wdt.c	2026-11-24 19:31:51.470835492 +0200
++++ gh_virt_wdt.c	2026-11-24 19:32:43.690338240 +0200
+@@ -156,6 +156,14 @@
+  *
+  *  return: 0 on success, negative errno on failure.
+  */
++/* a52: 1 = armed in the hypervisor, 0 = disarmed, -1 = STATUS failed (a1 bit 0, as gh_show_wdt_status reads it) */
++static int gh_wdt_armed(void)
++{
++	struct arm_smccc_res res = gh_wdt_call(VIRT_WDT_STATUS, 0, 0, 0);
++
++	return res.a0 ? -1 : (int)(res.a1 & 1);
++}
++
+ static int gh_enable_wdt(u32 state, struct msm_watchdog_data *wdog_dd)
+ {
+ 	struct arm_smccc_res res;
+@@ -165,10 +173,21 @@
+ 		dev_err(wdog_dd->dev, "vWDT already enabled\n");
+ 		return 0;
+ 	}
++	/*
++	 * a52: a watchdog that is already armed (bootloader, kexec) is adopted. The stock code
++	 * asked the hypervisor to enable it again, got the documented error, failed the probe
++	 * and left an armed watchdog (bark time already rewritten) that nobody pets.
++	 */
++	if (gh_wdt_armed() == 1) {
++		dev_info(wdog_dd->dev, "vWDT already armed: adopted\n");
++		return 0;
++	}
+ 	res = gh_wdt_call(VIRT_WDT_CONTROL, 3, 0, 0);
+ 	hret = res.a0;
+ 	ret = gh_remap_error(hret);
+ 	if (hret) {
++		if (gh_wdt_armed() == 1)
++			return 0;
+ 		dev_err(wdog_dd->dev, "failed enabling vWDOG, hret = %d ret = %d\n",
+ 			hret, ret);
+ 	}
+@@ -204,6 +223,14 @@
+ 	res = gh_wdt_call(VIRT_WDT_CONTROL, 2, 0, 0);
+ 	hret = res.a0;
+ 	ret = gh_remap_error(hret);
++	/* a52: the result is what STATUS says afterwards (the core refuses to suspend on an error) */
++	switch (gh_wdt_armed()) {
++	case 0:
++		return 0;
++	case 1:
++		dev_err(wdog_dd->dev, "vWDOG still armed after disable, hret = %d\n", hret);
++		return ret ? ret : -EIO;
++	}
+ 	if (hret) {
+ 		dev_err(wdog_dd->dev, "failed disabling VDOG, hret = %d ret = %d\n",
+ 			hret, ret);
+@@ -250,16 +277,45 @@
+ 	.show_wdt_status = gh_show_wdt_status
+ };
+ 
++/* a52: gh_virt_wdt.enable=0 on the kernel command line = no watchdog for this boot (and a disarmed one) */
++static bool enable = true;
++module_param(enable, bool, 0444);
++
++static ssize_t vwdt_status_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct arm_smccc_res res = gh_wdt_call(VIRT_WDT_STATUS, 0, 0, 0);
++
++	return scnprintf(buf, PAGE_SIZE, "a0=%ld armed=%lu expired=%lu since_pet=%lu a1=%#lx\n",
++			 (long)res.a0, res.a1 & 1, (res.a1 >> 31) & 1, res.a2, res.a1);
++}
++static DEVICE_ATTR_RO(vwdt_status);
++
+ static int gh_wdt_probe(struct platform_device *pdev)
+ {
+ 	struct msm_watchdog_data *wdog_dd;
++	int ret;
+ 
++	if (!enable) {
++		if (gh_wdt_armed() == 1)
++			gh_wdt_call(VIRT_WDT_CONTROL, 2, 0, 0);
++		dev_warn(&pdev->dev, "gh_virt_wdt.enable=0: watchdog not used (armed now: %d)\n", gh_wdt_armed());
++		return -ENODEV;
++	}
+ 	wdog_dd = devm_kzalloc(&pdev->dev, sizeof(*wdog_dd), GFP_KERNEL);
+ 	if (!wdog_dd)
+ 		return -ENOMEM;
+ 	wdog_dd->ops = &gh_wdt_ops;
+ 
+-	return qcom_wdt_register(pdev, wdog_dd, "gh-watchdog");
++	ret = qcom_wdt_register(pdev, wdog_dd, "gh-watchdog");
++	if (!ret)
++		device_create_file(&pdev->dev, &dev_attr_vwdt_status);
++	return ret;
++}
++
++static void gh_wdt_remove(struct platform_device *pdev)
++{
++	device_remove_file(&pdev->dev, &dev_attr_vwdt_status);
++	qcom_wdt_remove(pdev);
+ }
+ 
+ static const struct dev_pm_ops gh_wdt_dev_pm_ops = {
+@@ -279,7 +335,7 @@
+ 
+ static struct platform_driver gh_wdt_driver = {
+ 	.probe = gh_wdt_probe,
+-	.remove = qcom_wdt_remove,
++	.remove = gh_wdt_remove,
+ 	.driver = {
+ 		.name = "gh-watchdog",
+ 		.pm = &gh_wdt_dev_pm_ops,
+@@ -303,5 +359,5 @@
+ 	platform_driver_unregister(&gh_wdt_driver);
+ }
+ module_exit(exit_watchdog);
+-MODULE_DESCRIPTION("QCOM Gunyah Watchdog Driver");
++MODULE_DESCRIPTION("QCOM Gunyah Watchdog Driver (a52sxq OneUI variant)");
+ MODULE_LICENSE("GPL");

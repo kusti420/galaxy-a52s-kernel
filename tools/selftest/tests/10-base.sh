@@ -50,10 +50,10 @@ PY
 	for i in $(seq 1 20); do grep -q '^RESULT' "$L.disp.out" 2>/dev/null && break; sleep 1; done
 	# 2. real vsync rate at each refresh rate
 	local hz m
-	for hz in 60 120; do ps system min_refresh_rate $hz.0; ps system peak_refresh_rate $hz.0; sleep 1.5
+	for hz in 60 120; do if [ "${ONEUI:-0}" = 1 ]; then ps secure refresh_rate_mode $([ $hz = 60 ] && echo 0 || echo 2); else ps system min_refresh_rate $hz.0; ps system peak_refresh_rate $hz.0; fi; sleep 1.5   # One UI: secure refresh_rate_mode 0 = Standard 60, 2 = High 120
 		o=$(st vsync 3); echo "$o"; m=$(echo "$o" | awk '$1=="METRIC" && $2=="vsync_hz"{print int($3+0.5)}')
 		if [ -z "$m" ]; then skip "vsync count at $hz Hz (needs St vsync)"; else metric vsync_hz_at_$hz "$m"; if [ "$m" -ge $((hz-3)) ] && [ "$m" -le $((hz+3)) ]; then ok "measured ${m} Hz vsync at ${hz} Hz mode"; else fail "asked ${hz} Hz, measured ${m} Hz vsync"; fi; fi
-	done; restore_one system min_refresh_rate; restore_one system peak_refresh_rate
+	done; restore_one system min_refresh_rate; restore_one system peak_refresh_rate; restore_one secure refresh_rate_mode
 	# 3. off/on x10: measured by composition state + a non-black screencap after each wake
 	local n=10 good=0 mean; [ "$QUICK" = 1 ] && n=3
 	for i in $(seq 1 $n); do A 'input keyevent KEYCODE_SLEEP' >/dev/null; sleep 1.5; local off; off=$(A dumpsys power | grep -m1 -o 'mWakefulness=[A-Za-z]*')

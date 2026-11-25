@@ -4,6 +4,7 @@
 // Commands: sensors [secs] | gl [secs] | glalloc [mb] | cam | camrec [id] [secs] | enc <mime> <out> [codec]
 //           | dec <file> [codec|-] [expectedFrames] [nopattern] | vsync [secs] | disp [secs] | ble [secs]
 //           | loop <media|ll|voice> [freq] [MIC|CAMCORDER|UNPROCESSED] [unmute] | keystore | drm | offload
+//           | wv [provision] | secdec [avc|hevc|vp9] [clip|-] [secs]
 // PASS only when the feature was driven end to end and measured; numbers also as "METRIC <name> <number>".
 // Every command prints "st: ..." detail lines and exactly one final "RESULT <cmd> PASS|FAIL|SKIP <detail>".
 // Build: tools/selftest/java/build.sh
@@ -68,9 +69,9 @@ public class St {
     static Handler bg(String n) { HandlerThread t = new HandlerThread(n); t.start(); return new Handler(t.getLooper()); }
 
     public static void main(String[] a) {
-        if (a.length == 0) { System.out.println("usage: St sensors|gl|glalloc|cam|camrec|enc|keystore|drm|offload"); return; }
+        if (a.length == 0) { System.out.println("usage: St sensors|gl|glalloc|cam|camrec|enc|keystore|drm|offload|caminfo|codecs"); return; }
         cmd = a[0];
-        long to = cmd.equals("glalloc") ? 180 : cmd.equals("cam") ? 120 : cmd.equals("drm") ? 30 : 90;
+        long to = cmd.equals("glalloc") ? 180 : cmd.equals("cam") ? 120 : cmd.equals("drm") ? 30 : cmd.equals("wv") ? 60 : 90;
         if ((cmd.equals("sensors") || cmd.equals("gl") || cmd.equals("camrec") || cmd.equals("vsync") || cmd.equals("disp") || cmd.equals("ble")) && a.length > 1) to += Long.parseLong(a[a.length - 1]);
         final long tms = to * 1000;
         Thread w = new Thread(() -> { try { Thread.sleep(tms); } catch (Exception e) {} result("FAIL", "timeout after " + tms / 1000 + " s"); });
@@ -92,6 +93,11 @@ public class St {
                 case "keystore": keystore(); break;
                 case "drm": drm(); break;
                 case "offload": offload(); break;
+                case "caminfo": caminfo(); break;
+                case "codecs": codecs(); break;
+                case "secdec": secdec(a.length > 1 ? a[1] : "avc", a.length > 2 && !a[2].equals("-") ? a[2] : null, a.length > 3 ? Integer.parseInt(a[3]) : 30); break;
+                case "wv": wv(a.length > 1 && a[1].equals("provision")); break;
+                case "stmodel": stmodel(a.length > 1 ? a[1] : "samsung", a.length > 2 && a[2].equals("start")); break;
                 default: result("FAIL", "unknown command");
             }
         } catch (Throwable t) {
@@ -100,6 +106,98 @@ public class St {
             result("FAIL", "exception " + c);
         }
         result("FAIL", "no result");
+    }
+
+    // ---------------------------------------------------------------- stmodel (sound trigger HAL model load)
+    // Hands a DUMMY sound model to the vendor sound trigger HAL through the framework middleware (binder
+    // "soundtrigger_middleware"), all by reflection (hidden AIDL classes). A rejection by the HAL/ADSP is fine: the
+    // point is that loadModel reaches sound_trigger.primary.lahaina.so, which then drives the Listen PCM with its
+    // SNDRV_LSM_* ioctls. Run as root (uid 0) or system; the middleware checks RECORD_AUDIO + CAPTURE_AUDIO_HOTWORD.
+    static String ex1(Throwable t, boolean code) {
+        Throwable c = t; while (c.getCause() != null && c instanceof java.lang.reflect.InvocationTargetException) c = c.getCause();
+        String s = c.getClass().getSimpleName() + ": " + c.getMessage();
+        try { java.lang.reflect.Field f = c.getClass().getField("errorCode"); s += " (errorCode " + f.getInt(c) + ")"; } catch (Throwable e) {}
+        return s;
+    }
+    static java.lang.reflect.Method meth(Object o, String name) {
+        for (java.lang.reflect.Method m : o.getClass().getMethods()) if (m.getName().equals(name)) return m;
+        throw new RuntimeException("no method " + name + " on " + o.getClass().getName());
+    }
+    static void setF(Object o, String f, Object v) throws Exception { o.getClass().getField(f).set(o, v); }
+    static void stmodel(String vendor, boolean start) throws Exception {
+        final String vu = vendor.equals("google") ? "7038ddc8-30f2-11e6-b0ac-40a8f03d3f15" : "a1757552-af10-11e7-985a-a3754010baa2";
+        int uid = android.os.Process.myUid();
+        p("stmodel: uid " + uid + " pid " + android.os.Process.myPid() + " vendorUuid " + vu + " (" + vendor + ")" + (start ? " + startRecognition" : ""));
+        // app_process (non-zygote) starts the binder thread pool itself (app_main onStarted): the oneway callbacks arrive
+        android.os.IBinder b = (android.os.IBinder) Class.forName("android.os.ServiceManager").getMethod("getService", String.class).invoke(null, "soundtrigger_middleware");
+        if (b == null) { result("FAIL", "no soundtrigger_middleware service"); return; }
+        Object svc = Class.forName("android.media.soundtrigger_middleware.ISoundTriggerMiddlewareService$Stub").getMethod("asInterface", android.os.IBinder.class).invoke(null, b);
+        Object id = Class.forName("android.media.permission.Identity").getDeclaredConstructor().newInstance();
+        setF(id, "uid", uid); setF(id, "pid", android.os.Process.myPid());
+        setF(id, "packageName", uid == 0 ? "root" : uid == 1000 ? "android" : "com.android.shell");
+        Object[] mods;
+        try { mods = (Object[]) meth(svc, "listModulesAsOriginator").invoke(svc, id); }
+        catch (Throwable t) { result("FAIL", "listModulesAsOriginator: " + ex1(t, true)); return; }
+        p("stmodel: modules " + mods.length);
+        int handle = -1; String halUuid = "?";
+        for (Object m : mods) {
+            int h = m.getClass().getField("handle").getInt(m); Object pr = m.getClass().getField("properties").get(m);
+            StringBuilder sb = new StringBuilder();
+            for (java.lang.reflect.Field f : pr.getClass().getFields()) { if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) continue; sb.append(f.getName()).append('=').append(f.get(pr)).append(' '); }
+            p("stmodel: module handle " + h + ": " + sb.toString().trim());
+            if (handle < 0) { handle = h; try { halUuid = String.valueOf(pr.getClass().getField("uuid").get(pr)); } catch (Throwable t) {} }
+        }
+        if (handle < 0) { result("FAIL", "middleware lists no sound trigger module (HAL not connected)"); return; }
+        // callback: a java.lang.reflect.Proxy for the AIDL interface whose asBinder() is a local Binder that logs
+        final Class<?> cbI = Class.forName("android.media.soundtrigger_middleware.ISoundTriggerCallback");
+        final android.os.Binder cbB = new android.os.Binder() {
+            @Override protected boolean onTransact(int code, android.os.Parcel data, android.os.Parcel reply, int flags) throws android.os.RemoteException {
+                if (code >= 1 && code <= 16) { p("stmodel: callback transaction " + code + " (1 onRecognition 2 onPhraseRecognition 3 onResourcesAvailable 4 onModelUnloaded 5 onModuleDied), " + data.dataSize() + " bytes"); return true; }
+                return super.onTransact(code, data, reply, flags);
+            }
+        };
+        try { cbB.attachInterface(null, "android.media.soundtrigger_middleware.ISoundTriggerCallback"); } catch (Throwable t) {}
+        Object cb = java.lang.reflect.Proxy.newProxyInstance(St.class.getClassLoader(), new Class<?>[]{cbI}, (pxy, m, args) -> {
+            if (m.getName().equals("asBinder")) return cbB;
+            if (m.getName().equals("hashCode")) return System.identityHashCode(pxy);
+            if (m.getName().equals("equals")) return pxy == args[0];
+            if (m.getName().equals("toString")) return "StCallback";
+            p("stmodel: callback " + m.getName()); return null; });
+        Object mod;
+        try { java.lang.reflect.Method at = meth(svc, "attachAsOriginator"); int n = at.getParameterTypes().length;
+            mod = n == 3 ? at.invoke(svc, handle, id, cb) : at.invoke(svc, handle, id, cb, Boolean.FALSE); }
+        catch (Throwable t) { result("FAIL", "attachAsOriginator: " + ex1(t, true)); return; }
+        p("stmodel: attached to module " + handle + ": " + mod);
+        // SoundModel{type GENERIC, uuid random, vendorUuid, data = 4 KiB shared memory of zeros}
+        final int size = 4096;
+        android.os.SharedMemory shm = android.os.SharedMemory.create("st-model", size);
+        android.os.ParcelFileDescriptor pfd;
+        try { pfd = (android.os.ParcelFileDescriptor) android.os.SharedMemory.class.getMethod("getFdDup").invoke(shm); }
+        catch (Throwable t) { java.io.FileDescriptor fd = (java.io.FileDescriptor) android.os.SharedMemory.class.getMethod("getFileDescriptor").invoke(shm); pfd = android.os.ParcelFileDescriptor.dup(fd); }
+        Object sm = Class.forName("android.media.soundtrigger.SoundModel").getDeclaredConstructor().newInstance();
+        setF(sm, "type", 1); setF(sm, "uuid", java.util.UUID.randomUUID().toString()); setF(sm, "vendorUuid", vu);
+        setF(sm, "data", pfd); setF(sm, "dataSize", size);
+        int mh = -1; String loadErr = null;
+        try { mh = (Integer) meth(mod, "loadModel").invoke(mod, sm); p("stmodel: loadModel -> model handle " + mh); }
+        catch (Throwable t) { loadErr = ex1(t, true); p("stmodel: loadModel failed: " + loadErr); }
+        String startRes = "";
+        if (mh >= 0 && start) {
+            try { Object rc = Class.forName("android.media.soundtrigger.RecognitionConfig").getDeclaredConstructor().newInstance();
+                setF(rc, "captureRequested", false);
+                setF(rc, "phraseRecognitionExtras", java.lang.reflect.Array.newInstance(Class.forName("android.media.soundtrigger.PhraseRecognitionExtra"), 0));
+                setF(rc, "audioCapabilities", 0); setF(rc, "data", new byte[0]);
+                Object tok = meth(mod, "startRecognition").invoke(mod, mh, rc);
+                p("stmodel: startRecognition ok, token " + tok); startRes = " start ok";
+                Thread.sleep(2000);
+                try { meth(mod, "stopRecognition").invoke(mod, mh); p("stmodel: stopRecognition ok"); } catch (Throwable t) { p("stmodel: stopRecognition failed: " + ex1(t, true)); }
+            } catch (Throwable t) { startRes = " start failed: " + ex1(t, true); p("stmodel: startRecognition failed: " + ex1(t, true)); }
+        }
+        if (mh >= 0) try { meth(mod, "unloadModel").invoke(mod, mh); p("stmodel: unloadModel ok"); } catch (Throwable t) { p("stmodel: unloadModel failed: " + ex1(t, true)); }
+        try { meth(mod, "detach").invoke(mod); p("stmodel: detach ok"); } catch (Throwable t) { p("stmodel: detach failed: " + ex1(t, true)); }
+        try { pfd.close(); shm.close(); } catch (Throwable t) {}
+        // a dummy model that the HAL/ADSP rejects still proves the path: PASS = HAL took it, SKIP = HAL reached and refused
+        if (mh >= 0) result("PASS", "HAL " + halUuid + " loaded the dummy " + vendor + " model (handle " + mh + ")" + startRes);
+        else result("SKIP", "HAL " + halUuid + " listed, loadModel refused: " + loadErr + " (dummy model: check logcat sound_trigger_hw + dmesg for the LSM ioctls)");
     }
 
     // ---------------------------------------------------------------- sensors
@@ -707,17 +805,285 @@ public class St {
         p("querying schemes"); boolean wvs = MediaDrm.isCryptoSchemeSupported(wv); p("widevine " + wvs); boolean cks = MediaDrm.isCryptoSchemeSupported(ck);
         p("Widevine supported " + wvs + ", ClearKey supported " + cks);
         if (!wvs) { result("FAIL", "Widevine scheme not supported (ClearKey " + cks + ")"); return; }
-        p("opening Widevine"); MediaDrm d = new MediaDrm(wv); p("opened"); StringBuilder sb = new StringBuilder();
-        for (String k : new String[]{"vendor", "version", "securityLevel", "systemId", "hdcpLevel", "maxHdcpLevel", "algorithms", "oemCryptoApiVersion", "usageReportingSupport"}) {
+        // One UI: MediaDrm.<init> binds com.samsung.drmboost through the process's Application; app_process has no
+        // IApplicationThread registered with the activity manager, so the bind throws SecurityException before the plugin
+        // is ever asked. Fallback: allocate the object without its constructor and call native_setup() directly: the
+        // HAL/TEE path is the same, only the Samsung "boost" service is skipped.
+        p("opening Widevine"); MediaDrm d; String how = "";
+        try { d = new MediaDrm(wv); p("opened"); }
+        catch (Throwable t0) { Throwable c0 = t0; while (c0.getCause() != null) c0 = c0.getCause();
+            p("constructor failed (" + c0.getClass().getSimpleName() + ": " + String.valueOf(c0.getMessage()).replaceAll("\\s+", " ").substring(0, Math.min(120, String.valueOf(c0.getMessage()).length())) + "), trying native_setup");
+            d = drmRaw(wv); how = "(opened by native_setup: constructor threw " + c0.getClass().getSimpleName() + ") "; p("opened raw"); }
+        StringBuilder sb = new StringBuilder();
+        for (String k : new String[]{"vendor", "version", "securityLevel", "systemId", "hdcpLevel", "maxHdcpLevel", "algorithms", "oemCryptoApiVersion", "oemCryptoBuildInformation", "usageReportingSupport", "provisioningModel", "resourceRatingTier", "maxNumberOfSessions", "analogOutputCapabilities"}) {
             String v; try { v = d.getPropertyString(k); } catch (Throwable t) { v = "(" + t.getClass().getSimpleName() + ")"; }
-            p("widevine " + k + " = " + v); if (k.equals("version") || k.equals("securityLevel") || k.equals("systemId") || k.equals("maxHdcpLevel")) sb.append(k).append('=').append(v).append(' ');
+            // systemId identifies the keybox family, not the unit; anything else numeric and long is masked by the host
+            p("widevine " + k + " = " + v); if (k.equals("version") || k.equals("securityLevel") || k.equals("systemId") || k.equals("maxHdcpLevel") || k.equals("oemCryptoApiVersion") || k.equals("provisioningModel") || k.equals("resourceRatingTier")) sb.append(k).append('=').append(String.valueOf(v).replace(' ', '_')).append(' ');
         }
         String sess;
-        try { byte[] sid = d.openSession(); sess = "session ok level " + d.getSecurityLevel(sid); d.closeSession(sid); } catch (Throwable t) { sess = "openSession: " + t; }
+        try { byte[] sid;
+            if (how.isEmpty()) sid = d.openSession();
+            else { java.lang.reflect.Method m = MediaDrm.class.getDeclaredMethod("openSessionNative", int.class); m.setAccessible(true); sid = (byte[]) m.invoke(d, MediaDrm.getMaxSecurityLevel()); }
+            sess = "session ok level " + d.getSecurityLevel(sid);
+            try { p("secure decoder required: avc " + d.requiresSecureDecoder("video/avc") + " hevc " + d.requiresSecureDecoder("video/hevc")); } catch (Throwable t) {}
+            if (how.isEmpty()) d.closeSession(sid);
+            else { java.lang.reflect.Method m = MediaDrm.class.getDeclaredMethod("closeSessionNative", byte[].class); m.setAccessible(true); m.invoke(d, (Object) sid); }
+        } catch (Throwable t) { Throwable c = t; while (c.getCause() != null && c instanceof java.lang.reflect.InvocationTargetException) c = c.getCause();
+            // NotProvisionedException = the plugin works but this unit has no certificate yet (L3 or factory-reset L1): not a kernel fault
+            sess = "openSession: " + c.getClass().getSimpleName() + " " + c.getMessage(); }
         p(sess);
         try { p("connected HDCP " + d.getConnectedHdcpLevel() + " max " + d.getMaxHdcpLevel()); } catch (Throwable t) {}
-        d.close();
-        result("PASS", "Widevine " + sb + "ClearKey " + cks + " " + sess);
+        try { if (how.isEmpty()) d.close(); else MediaDrm.class.getMethod("native_release").invoke(d); } catch (Throwable t) {}
+        // secure decoders the codec list offers (what a Widevine L1 stream needs from the video driver)
+        StringBuilder sec = new StringBuilder();
+        try { for (MediaCodecInfo ci : new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos()) if (!ci.isEncoder() && ci.getName().endsWith(".secure")) sec.append(ci.getName()).append(',');
+        } catch (Throwable t) { sec.append("(codec list: ").append(t.getClass().getSimpleName()).append(')'); }
+        p("secure decoders: " + sec);
+        result("PASS", "Widevine " + sb + how + "ClearKey " + cks + " " + sess + " secure_decoders=" + sec.toString().split(",").length * (sec.length() > 0 ? 1 : 0));
+    }
+    static final UUID WV = new UUID(0xedef8ba979d64aceL, 0xa3c827dcd51d21edL);
+    static String ex1(Throwable t) { Throwable c = t; while (c.getCause() != null && c instanceof java.lang.reflect.InvocationTargetException) c = c.getCause();
+        String m = String.valueOf(c.getMessage()).replaceAll("\\s+", " "); return c.getClass().getSimpleName() + ": " + m.substring(0, Math.min(160, m.length())); }
+    /** wv [provision]: Widevine properties, an L1 session open, and (only with "provision": needs network) the certificate
+     *  provisioning round trip (getProvisionRequest -> POST defaultUrl&signedRequest=... -> provideProvisionResponse). */
+    static void wv(boolean provision) throws Exception {
+        ctx();
+        if (!MediaDrm.isCryptoSchemeSupported(WV)) { result("FAIL", "Widevine scheme not supported"); return; }
+        MediaDrm d; try { d = new MediaDrm(WV); } catch (Throwable t) { p("constructor failed (" + ex1(t) + "), native_setup"); d = drmRaw(WV); }
+        StringBuilder sb = new StringBuilder();
+        for (String k : new String[]{"securityLevel", "systemId", "provisioningModel", "oemCryptoApiVersion", "maxHdcpLevel", "hdcpLevel", "version", "oemCryptoBuildInformation", "maxNumberOfSessions", "numberOfOpenSessions"}) {
+            String v; try { v = d.getPropertyString(k); } catch (Throwable t) { v = "(" + t.getClass().getSimpleName() + ")"; }
+            p("widevine " + k + " = " + v); if (!k.equals("oemCryptoBuildInformation") && !k.equals("version")) sb.append(k).append('=').append(String.valueOf(v).replace(' ', '_')).append(' ');
+        }
+        try { p("sessions open " + d.getOpenSessionCount() + " max " + d.getMaxSessionCount() + ", max security level const " + MediaDrm.getMaxSecurityLevel()); } catch (Throwable t) { p("session counts: " + ex1(t)); }
+        String sess = null; boolean ok = false, notProv = false;
+        for (int round = 0; round < 2 && !ok; round++) {
+            try { byte[] sid = d.openSession(); int lv = d.getSecurityLevel(sid);
+                // MediaDrm.SECURITY_LEVEL_HW_SECURE_ALL = 5 (L1), HW_SECURE_CRYPTO 3 (L2), SW_SECURE_CRYPTO 1 (L3)
+                sess = "session ok level " + lv + (lv == 5 ? " (L1)" : lv == 1 ? " (L3)" : ""); ok = true;
+                try { p("open sessions now " + d.getOpenSessionCount()); } catch (Throwable t) {}
+                try { p("secure decoder required: avc " + d.requiresSecureDecoder("video/avc") + " hevc " + d.requiresSecureDecoder("video/hevc")); } catch (Throwable t) { p("requiresSecureDecoder: " + ex1(t)); }
+                d.closeSession(sid);
+            } catch (NotProvisionedException e) { notProv = true; sess = "openSession: NotProvisionedException " + e.getMessage(); p(sess);
+                MediaDrm.ProvisionRequest rq;
+                try { rq = d.getProvisionRequest(); } catch (Throwable t) { sess += "; getProvisionRequest " + ex1(t); p(sess); break; }
+                p("provision request: url " + rq.getDefaultUrl() + " data " + rq.getData().length + " bytes");
+                if (!provision || round > 0) { sess += " (provision request " + rq.getData().length + " bytes ready; run `St wv provision` with network)"; break; }
+                try {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(rq.getDefaultUrl() + "&signedRequest=" + new String(rq.getData(), "UTF-8")).openConnection();
+                    c.setRequestMethod("POST"); c.setDoOutput(true); c.setConnectTimeout(8000); c.setReadTimeout(12000);
+                    c.setRequestProperty("Accept", "*/*"); c.setRequestProperty("User-Agent", "Widevine CDM v1.0"); c.setRequestProperty("Content-Type", "application/json");
+                    c.getOutputStream().close(); int code = c.getResponseCode(); p("provisioning server HTTP " + code);
+                    java.io.InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream(); java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream(); byte[] buf = new byte[8192]; int n;
+                    if (in != null) while ((n = in.read(buf)) > 0) bo.write(buf, 0, n);
+                    p("provisioning response " + bo.size() + " bytes"); if (code != 200) { sess += "; provisioning server HTTP " + code; break; }
+                    d.provideProvisionResponse(bo.toByteArray()); p("provideProvisionResponse accepted"); sess = "provisioned now; ";
+                } catch (Throwable t) { sess += "; provisioning failed " + ex1(t); p(sess); break; }
+            } catch (Throwable t) { sess = "openSession: " + ex1(t); break; }
+        }
+        p(sess);
+        try { p("connected HDCP " + d.getConnectedHdcpLevel() + " max " + d.getMaxHdcpLevel()); } catch (Throwable t) {}
+        try { d.close(); } catch (Throwable t) {}
+        // PASS = a session opened. Not provisioned = SKIP (the TA and HAL answer; the certificate needs the network), anything else FAIL.
+        result(ok ? "PASS" : notProv ? "SKIP" : "FAIL", "Widevine " + sb + sess);
+    }
+    /** secdec [avc|hevc|vp9] [clip|-] [secs]: c2.qti.<x>.decoder.secure on a protected ImageReader surface. With a clip AND a
+     *  Widevine session (MediaCrypto) the clear samples go in through queueSecureInputBuffer in CRYPTO_MODE_UNENCRYPTED: the
+     *  CDM copies them into the secure input buffer (OEMCrypto_CopyBuffer, no licence needed), so the video core runs a real
+     *  secure session (secure bitstream in, internal buffers from qcom,secure-bitstream, secure pixels out). Without a
+     *  session nothing can be written into a secure input buffer: then only configure + start are driven. */
+    static void secdec(String kind, String file, int secs) throws Exception {
+        ctx();
+        String mime = kind.equals("hevc") ? "video/hevc" : kind.equals("vp9") ? "video/x-vnd.on2.vp9" : "video/avc", name = "c2.qti." + kind + ".decoder.secure";
+        MediaExtractor ex = null; MediaFormat fmt = null;
+        if (file != null) { ex = new MediaExtractor(); ex.setDataSource(file);
+            for (int i = 0; i < ex.getTrackCount(); i++) { MediaFormat f = ex.getTrackFormat(i); if (mime.equals(f.getString(MediaFormat.KEY_MIME))) { ex.selectTrack(i); fmt = f; break; } }
+            if (fmt == null) { result("FAIL", "no " + mime + " track in " + file); return; } }
+        if (fmt == null) fmt = MediaFormat.createVideoFormat(mime, 1280, 720);
+        int w = fmt.getInteger(MediaFormat.KEY_WIDTH), h = fmt.getInteger(MediaFormat.KEY_HEIGHT); p("codec " + name + " " + w + "x" + h + (file != null ? " clip " + file : " no clip"));
+        MediaDrm d = null; byte[] sid = null; MediaCrypto crypto = null; String drmS;
+        try { d = new MediaDrm(WV); sid = d.openSession(); crypto = new MediaCrypto(WV, sid); drmS = "widevine session level " + d.getSecurityLevel(sid) + ", MediaCrypto ok, requiresSecureDecoderComponent " + crypto.requiresSecureDecoderComponent(mime); }
+        catch (Throwable t) { drmS = "no MediaCrypto (" + ex1(t) + ")"; crypto = null; }
+        p(drmS);
+        MediaCodec c; try { c = MediaCodec.createByCodecName(name); } catch (Throwable t) { result("FAIL", "createByCodecName " + name + ": " + ex1(t)); return; }
+        p("created " + c.getName());
+        ImageReader ir = null; Surface sf = null; String surf = "none";
+        try { ir = ImageReader.newInstance(w, h, ImageFormat.PRIVATE, 4, android.hardware.HardwareBuffer.USAGE_PROTECTED_CONTENT | android.hardware.HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE); sf = ir.getSurface(); surf = "protected ImageReader"; }
+        catch (Throwable t) { p("protected ImageReader: " + ex1(t));
+            try { ir = ImageReader.newInstance(w, h, ImageFormat.PRIVATE, 4); sf = ir.getSurface(); surf = "plain ImageReader"; } catch (Throwable t2) { p("ImageReader: " + ex1(t2)); } }
+        boolean conf = false; String cerr = "";
+        for (int tr = 0; tr < 3 && !conf; tr++) {   // 0: surface + crypto, 1: surface, no crypto, 2: no surface, no crypto
+            Surface s = tr < 2 ? sf : null; MediaCrypto mc = tr == 0 ? crypto : null; if (tr == 1 && crypto == null) continue; if (tr == 2 && sf == null && crypto == null) { }
+            try { c.configure(fmt, s, mc, 0); conf = true; if (mc == null) crypto = null; if (s == null) surf = "none (ByteBuffer)"; p("configured: surface " + surf + ", crypto " + (mc != null)); }
+            catch (Throwable t) { cerr += " [" + tr + "] " + ex1(t); p("configure try " + tr + ": " + ex1(t)); try { c.reset(); } catch (Throwable t2) {} } }
+        if (!conf) { c.release(); result("FAIL", "configure failed:" + cerr + "; " + drmS); return; }
+        try { c.start(); } catch (Throwable t) { c.release(); result("FAIL", "start: " + ex1(t) + "; surface " + surf + "; " + drmS); return; }
+        p("started");
+        final int[] imgs = {0};
+        if (ir != null) ir.setOnImageAvailableListener(r -> { try { Image im = r.acquireLatestImage(); if (im != null) { imgs[0]++; im.close(); } } catch (Throwable t) { imgs[0]++; } }, bg("secdec-ir"));
+        int fed = 0, out = 0; String err = null, note = ""; boolean eosIn = ex == null, eosOut = false, fmtCh = false;
+        MediaCodec.BufferInfo bi = new MediaCodec.BufferInfo(); ByteBuffer tmp = ByteBuffer.allocate(4 << 20);
+        long end = System.currentTimeMillis() + secs * 1000L, t2s = System.currentTimeMillis() + 2000;
+        try {
+            while (System.currentTimeMillis() < end && !eosOut && !(ex == null && System.currentTimeMillis() > t2s)) {
+                if (!eosIn) { int ix = c.dequeueInputBuffer(20000);
+                    if (ix >= 0) { tmp.clear(); int n = ex.readSampleData(tmp, 0);
+                        if (n < 0) { if (crypto != null) { MediaCodec.CryptoInfo ci = new MediaCodec.CryptoInfo(); ci.set(1, new int[]{0}, new int[]{0}, new byte[16], new byte[16], MediaCodec.CRYPTO_MODE_UNENCRYPTED); }
+                            c.queueInputBuffer(ix, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); eosIn = true; p("input EOS after " + fed + " samples"); }
+                        else { ByteBuffer ib = null; try { ib = c.getInputBuffer(ix); } catch (Throwable t) { note = "getInputBuffer " + ex1(t); }
+                            if (crypto != null && ib != null) { ib.clear(); ib.put(tmp); MediaCodec.CryptoInfo ci = new MediaCodec.CryptoInfo();
+                                ci.set(1, new int[]{n}, new int[]{0}, new byte[16], new byte[16], MediaCodec.CRYPTO_MODE_UNENCRYPTED);
+                                c.queueSecureInputBuffer(ix, 0, ci, ex.getSampleTime(), 0); fed++; ex.advance(); }
+                            else if (ib != null) { ib.clear(); ib.put(tmp); c.queueInputBuffer(ix, 0, n, ex.getSampleTime(), 0); fed++; ex.advance(); if (fed == 1) note = "clear queueInputBuffer accepted by a secure codec without MediaCrypto"; }
+                            else { note = "secure input buffer is not writable without a MediaCrypto (" + drmS + "): nothing fed" + (note.isEmpty() ? "" : "; " + note); p(note); eosIn = true; ex = null; t2s = System.currentTimeMillis() + 2000; }
+                            if (fed == 1) p("first sample queued (" + n + " bytes, " + (crypto != null ? "secure, clear mode" : "clear") + ")"); } } }
+                int ox = c.dequeueOutputBuffer(bi, 20000);
+                if (ox >= 0) { if (bi.size > 0 || sf != null) out++; if ((bi.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) eosOut = true; c.releaseOutputBuffer(ox, sf != null && (bi.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) == 0); if (out == 1) p("first output frame"); }
+                else if (ox == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { fmtCh = true; p("output format " + c.getOutputFormat()); }
+            }
+        } catch (Throwable t) { err = ex1(t); if (t instanceof MediaCodec.CodecException) err += " diag " + ((MediaCodec.CodecException) t).getDiagnosticInfo(); p("error: " + err); }
+        try { c.stop(); p("stopped"); } catch (Throwable t) { if (err == null) err = "stop: " + ex1(t); }
+        try { c.release(); } catch (Throwable t) {}
+        try { if (crypto != null) crypto.release(); if (d != null) { if (sid != null) d.closeSession(sid); d.close(); } } catch (Throwable t) {}
+        metric("secdec_fed", fed); metric("secdec_frames", out); metric("secdec_images", imgs[0]);
+        String det = name + " surface " + surf + ", " + drmS + ", fed " + fed + " frames out " + out + " images " + imgs[0] + (fmtCh ? " format-changed" : "") + (note.isEmpty() ? "" : ", " + note) + (err != null ? ", ERROR " + err : "");
+        // PASS: decoded frames came out of a fed secure session. SKIP: configure + start worked but no secure input could be fed
+        // (no Widevine session / no clip): the video core may not even have been started by the HAL. FAIL: any codec error.
+        result(err != null ? "FAIL" : fed > 0 && out > 0 ? "PASS" : fed > 0 ? "FAIL" : "SKIP", det);
+    }
+    /** MediaDrm without its constructor (see drm()): Unsafe.allocateInstance + the private native_setup(weak this, uuid, package). */
+    static MediaDrm drmRaw(UUID u) throws Exception {
+        Class<?> uc = Class.forName("sun.misc.Unsafe"); java.lang.reflect.Field tf = uc.getDeclaredField("theUnsafe"); tf.setAccessible(true);
+        MediaDrm d = (MediaDrm) uc.getMethod("allocateInstance", Class.class).invoke(tf.get(null), MediaDrm.class);
+        byte[] ub = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN).putLong(u.getMostSignificantBits()).putLong(u.getLeastSignificantBits()).array();
+        java.lang.reflect.Method setup = null;
+        for (java.lang.reflect.Method m : MediaDrm.class.getDeclaredMethods()) if (m.getName().equals("native_setup")) setup = m;
+        if (setup == null) throw new NoSuchMethodException("MediaDrm.native_setup");
+        setup.setAccessible(true); Class<?>[] pt = setup.getParameterTypes(); Object[] args = new Object[pt.length];
+        for (int i = 0; i < pt.length; i++) args[i] = pt[i] == byte[].class ? ub : pt[i] == String.class ? "com.android.shell" : pt[i] == Object.class ? new java.lang.ref.WeakReference<MediaDrm>(d) : null;
+        setup.invoke(d, args);
+        try { java.lang.reflect.Field f = MediaDrm.class.getDeclaredField("mAppPackageName"); f.setAccessible(true); f.set(d, "com.android.shell"); } catch (Throwable t) {}
+        return d;
+    }
+
+
+    // ---------------------------------------------------------------- spec rows (silent, read-only): camera characteristics, codec list
+    // Both print rows in the OneUI sweep format (CHECK <id> <status> <owner> <stable> <detail>, TAB separated): "set:" tokens
+    // have no spaces, so tools/selftest/oneui/report.py names every token that is missing or extra on the other kernel.
+    static void check(String id, String st, String owner, String stable, String detail) {
+        System.out.println("CHECK\t" + id + "\t" + st + "\t" + owner + "\t" + stable.replaceAll("[\\t\\r\\n]", " ") + "\t" + detail.replaceAll("[\\t\\r\\n]", " ")); System.out.flush(); }
+    static String sz(Size s) { return s == null ? "none" : s.getWidth() + "x" + s.getHeight(); }
+    static Size maxSize(Size[] a) { Size b = null; if (a != null) for (Size s : a) if (b == null || (long) s.getWidth() * s.getHeight() > (long) b.getWidth() * b.getHeight()) b = s; return b; }
+    @SuppressWarnings("unchecked")
+    static <T> T chGet(CameraCharacteristics ch, String field) { try { return (T) ch.get((CameraCharacteristics.Key<T>) CameraCharacteristics.class.getField(field).get(null)); } catch (Throwable t) { return null; } }
+    /** No camera is opened, nothing is captured: CameraManager.getCameraCharacteristics() only (static metadata the HAL built from the sensor probe). */
+    static void caminfo() throws Exception {
+        CameraManager cm; String[] ids;
+        try { cm = (CameraManager) ctx().getSystemService(Context.CAMERA_SERVICE); ids = cm.getCameraIdList(); }
+        catch (Throwable t) { check("camera.char.ids", "SKIP", "kernel+ROM", "no camera service access", String.valueOf(t)); result("SKIP", "needs camera service access as shell: " + t); return; }
+        String[] capN = {"BACKWARD_COMPATIBLE", "MANUAL_SENSOR", "MANUAL_POST_PROCESSING", "RAW", "PRIVATE_REPROCESSING", "READ_SENSOR_SETTINGS", "BURST_CAPTURE", "YUV_REPROCESSING", "DEPTH_OUTPUT", "HIGH_SPEED_VIDEO", "MOTION_TRACKING", "LOGICAL_MULTI_CAMERA", "MONOCHROME", "SECURE_IMAGE_DATA", "SYSTEM_CAMERA", "OFFLINE_PROCESSING", "ULTRA_HIGH_RESOLUTION_SENSOR", "REMOSAIC_REPROCESSING", "DYNAMIC_RANGE_TEN_BIT", "STREAM_USE_CASE", "COLOR_SPACE_PROFILES"};
+        StringBuilder idset = new StringBuilder("set:"); int ok = 0;
+        for (String id : ids) {
+            try {
+                CameraCharacteristics ch = cm.getCameraCharacteristics(id); List<String> t = new ArrayList<>();
+                Integer fc = ch.get(CameraCharacteristics.LENS_FACING); String facing = fc == null ? "?" : fc == 0 ? "front" : fc == 1 ? "back" : "external";
+                Integer lv = ch.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+                String level = lv == null ? "?" : lv == 0 ? "LIMITED" : lv == 1 ? "FULL" : lv == 2 ? "LEGACY" : lv == 3 ? "LEVEL_3" : lv == 4 ? "EXTERNAL" : "L" + lv;
+                idset.append(' ').append(id).append(':').append(facing).append(':').append(level);
+                t.add("facing=" + facing); t.add("level=" + level);
+                int[] caps = ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES); boolean hs = false;
+                if (caps != null) for (int c : caps) { t.add("cap=" + (c >= 0 && c < capN.length ? capN[c] : String.valueOf(c))); if (c == 9) hs = true; }
+                StreamConfigurationMap map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+                if (map != null) {
+                    t.add("jpeg_max=" + sz(maxSize(map.getOutputSizes(ImageFormat.JPEG)))); t.add("yuv_max=" + sz(maxSize(map.getOutputSizes(ImageFormat.YUV_420_888))));
+                    Size[] raw = null; try { raw = map.getOutputSizes(ImageFormat.RAW_SENSOR); } catch (Throwable e) {} if (raw != null && raw.length > 0) t.add("raw_max=" + sz(maxSize(raw)));
+                    try { Size[] he = map.getOutputSizes(ImageFormat.HEIC); if (he != null && he.length > 0) t.add("heic_max=" + sz(maxSize(he))); } catch (Throwable e) {}
+                    try { Size[] dp = map.getOutputSizes(ImageFormat.DEPTH16); if (dp != null && dp.length > 0) t.add("depth16_max=" + sz(maxSize(dp))); } catch (Throwable e) {}
+                    try { Size[] hr = map.getHighResolutionOutputSizes(ImageFormat.JPEG); if (hr != null && hr.length > 0) t.add("jpeg_highres_max=" + sz(maxSize(hr))); } catch (Throwable e) {}
+                    // recording-class stream: every PRIVATE size from 720p up with the best frame rate the HAL promises for it
+                    Size[] pv = map.getOutputSizes(android.graphics.SurfaceTexture.class); t.add("priv_sizes=" + (pv == null ? 0 : pv.length));
+                    if (pv != null) for (Size s : pv) { if ((long) s.getWidth() * s.getHeight() < 1280L * 720) continue; long d = 0; try { d = map.getOutputMinFrameDuration(android.graphics.SurfaceTexture.class, s); } catch (Throwable e) {}
+                        t.add("priv=" + sz(s) + "@" + (d > 0 ? Math.round(1e9 / d) : 0)); }
+                    if (hs) try { for (Size s : map.getHighSpeedVideoSizes()) for (android.util.Range<Integer> r : map.getHighSpeedVideoFpsRangesFor(s)) t.add("highspeed=" + sz(s) + "@" + r.getLower() + "-" + r.getUpper()); } catch (Throwable e) { t.add("highspeed=error"); }
+                    try { int[] inf = map.getInputFormats(); if (inf != null && inf.length > 0) t.add("reprocess_inputs=" + inf.length); } catch (Throwable e) {}
+                } else t.add("no_stream_map");
+                StreamConfigurationMap mr = chGet(ch, "SCALER_STREAM_CONFIGURATION_MAP_MAXIMUM_RESOLUTION");
+                if (mr != null) try { t.add("maxres_jpeg=" + sz(maxSize(mr.getOutputSizes(ImageFormat.JPEG)))); t.add("maxres_yuv=" + sz(maxSize(mr.getOutputSizes(ImageFormat.YUV_420_888)))); } catch (Throwable e) {}
+                android.util.Range<Integer>[] fr = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES); if (fr != null) for (android.util.Range<Integer> r : fr) t.add("aefps=" + r.getLower() + "-" + r.getUpper());
+                int[] ois = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION); boolean hasOis = false; if (ois != null) for (int o : ois) if (o == 1) hasOis = true; t.add("ois=" + (hasOis ? 1 : 0));
+                int[] vs = ch.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES); if (vs != null) { StringBuilder b = new StringBuilder(); for (int v : vs) b.append(b.length() > 0 ? "," : "").append(v); t.add("video_stab_modes=" + b); }
+                Float mf = ch.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE); t.add("af=" + (mf != null && mf > 0 ? 1 : 0));
+                int[] afm = ch.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES); if (afm != null) t.add("af_modes=" + afm.length);
+                Boolean fl = ch.get(CameraCharacteristics.FLASH_INFO_AVAILABLE); t.add("flash=" + (fl != null && fl ? 1 : 0));
+                Integer tmax = chGet(ch, "FLASH_INFO_STRENGTH_MAXIMUM_LEVEL"), tdef = chGet(ch, "FLASH_INFO_STRENGTH_DEFAULT_LEVEL"); if (tmax != null) t.add("torch_levels=" + tmax + "/default" + tdef);
+                float[] fo = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS); if (fo != null && fo.length > 0) t.add(String.format(Locale.US, "focal=%.2f", fo[0]));
+                float[] ap = ch.get(CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES); if (ap != null && ap.length > 0) t.add(String.format(Locale.US, "aperture=%.1f", ap[0]));
+                Size pa = ch.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE); t.add("pixel_array=" + sz(pa));
+                Size pam = chGet(ch, "SENSOR_INFO_PIXEL_ARRAY_SIZE_MAXIMUM_RESOLUTION"); if (pam != null) t.add("pixel_array_maxres=" + sz(pam));
+                android.util.Range<Integer> iso = ch.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE); if (iso != null) t.add("iso=" + iso.getLower() + "-" + iso.getUpper());
+                android.util.Range<Long> ex = ch.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE); if (ex != null) t.add("exposure_ns=" + ex.getLower() + "-" + ex.getUpper());
+                Integer ts = ch.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE); t.add("timestamp_source=" + (ts == null ? "?" : ts == 1 ? "REALTIME" : "UNKNOWN"));
+                Integer so = ch.get(CameraCharacteristics.SENSOR_ORIENTATION); t.add("orientation=" + so);
+                Float zm = ch.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM); if (zm != null) t.add(String.format(Locale.US, "zoom_max=%.1f", zm));
+                int[] fd = ch.get(CameraCharacteristics.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES); if (fd != null) t.add("face_detect_modes=" + fd.length);
+                Integer mfc = ch.get(CameraCharacteristics.STATISTICS_INFO_MAX_FACE_COUNT); if (mfc != null) t.add("max_faces=" + mfc);
+                int[] sm = ch.get(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES); if (sm != null) { boolean hdr = false; for (int x : sm) if (x == 18) hdr = true; t.add("scene_modes=" + sm.length); t.add("scene_hdr=" + (hdr ? 1 : 0)); }
+                int[] nr = ch.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES); if (nr != null) { boolean zsl = false; for (int x : nr) if (x == 4) zsl = true; t.add("zsl_nr=" + (zsl ? 1 : 0)); }
+                Integer pmax = ch.get(CameraCharacteristics.REQUEST_MAX_NUM_OUTPUT_PROC), rmax = ch.get(CameraCharacteristics.REQUEST_MAX_NUM_OUTPUT_RAW); t.add("max_streams=proc" + pmax + "/raw" + rmax);
+                Byte pd = ch.get(CameraCharacteristics.REQUEST_PIPELINE_MAX_DEPTH); if (pd != null) t.add("pipeline_depth=" + pd);
+                try { Set<String> ph = ch.getPhysicalCameraIds(); if (ph != null && !ph.isEmpty()) { List<String> l = new ArrayList<>(ph); Collections.sort(l); t.add("physical=" + String.join("+", l)); } } catch (Throwable e) {}
+                Object drp = chGet(ch, "REQUEST_AVAILABLE_DYNAMIC_RANGE_PROFILES"); if (drp != null) try { Set<Long> ps = (Set<Long>) drp.getClass().getMethod("getSupportedProfiles").invoke(drp); List<Long> l = new ArrayList<>(ps); Collections.sort(l); StringBuilder b = new StringBuilder(); for (Long x : l) b.append(b.length() > 0 ? "," : "").append(x); t.add("dynamic_range_profiles=" + b); } catch (Throwable e) {}
+                int vendorKeys = 0; try { for (CameraCharacteristics.Key<?> k : ch.getKeys()) if (!k.getName().startsWith("android.")) vendorKeys++; t.add("keys=" + ch.getKeys().size()); } catch (Throwable e) {}
+                Collections.sort(t); check("camera.char." + id, "PASS", "kernel+ROM", "set: " + String.join(" ", t), t.size() + " facts, " + vendorKeys + " vendor keys; static metadata only, no camera opened"); ok++;
+                p("camera " + id + " " + t);
+            } catch (Throwable e) { check("camera.char." + id, "FAIL", "kernel+ROM", "characteristics unreadable", String.valueOf(e)); idset.append(' ').append(id).append(":error"); }
+        }
+        check("camera.char.ids", ids.length >= 2 && ok == ids.length ? "PASS" : "FAIL", "kernel+ROM", idset.toString(), ids.length + " ids visible to the camera2 API (as com.android.shell; the HAL device list is the camera.provider_devices row)");
+        metric("camera_api_ids", ids.length);
+        result(ids.length >= 2 && ok == ids.length ? "PASS" : "FAIL", ok + "/" + ids.length + " camera ids described");
+    }
+
+    /** MediaCodecList only: no codec instance is created. With Codec2 the limits of the hardware codecs are queried from the HAL, which asks the video driver. */
+    static void codecs() throws Exception {
+        MediaCodecInfo[] all = new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos();
+        List<String> hwDec = new ArrayList<>(), hwEnc = new ArrayList<>(), sw = new ArrayList<>(), aud = new ArrayList<>(), sec = new ArrayList<>(); int n = 0;
+        for (MediaCodecInfo ci : all) {
+            if (ci.isAlias()) continue;
+            for (String type : ci.getSupportedTypes()) {
+                n++; MediaCodecInfo.CodecCapabilities cc; try { cc = ci.getCapabilitiesForType(type); } catch (Throwable t) { sw.add(ci.getName() + "(" + type + ",caps_error)"); continue; }
+                MediaCodecInfo.VideoCapabilities vc = cc.getVideoCapabilities();
+                if (vc == null) { aud.add(ci.getName() + "(" + type + (ci.isEncoder() ? ",enc" : ",dec") + (ci.isHardwareAccelerated() ? ",hw" : "") + ")"); continue; }
+                StringBuilder b = new StringBuilder(ci.getName()).append('(').append(type);
+                int mw = vc.getSupportedWidths().getUpper(), mh = vc.getSupportedHeights().getUpper(); b.append(",max=").append(mw).append('x').append(mh);
+                int[][] probe = {{1280, 720}, {1920, 1080}, {3840, 2160}};
+                for (int[] q : probe) { try { if (vc.isSizeSupported(q[0], q[1])) b.append(',').append(q[1]).append("p@").append(Math.round(vc.getSupportedFrameRatesFor(q[0], q[1]).getUpper())); } catch (Throwable t) {} }
+                b.append(",br=").append(vc.getBitrateRange().getUpper() / 1000000).append('M');
+                StringBuilder f = new StringBuilder();
+                for (String ft : new String[]{"adaptive-playback", "secure-playback", "tunneled-playback", "low-latency", "partial-frame", "multiple-frames", "dynamic-timestamp", "intra-refresh", "hdr-editing", "encoding-statistics", "detached-surface", "dynamic-color-aspects", "region-of-interest", "hlg-editing"}) {
+                    try { if (cc.isFeatureSupported(ft)) f.append(f.length() > 0 ? "+" : "").append(ft); } catch (Throwable t) {} }
+                if (f.length() > 0) b.append(",feat=").append(f);
+                boolean p010 = false; for (int cf : cc.colorFormats) if (cf == 54) p010 = true; if (p010) b.append(",p010");
+                Set<String> prof = new TreeSet<>();
+                for (MediaCodecInfo.CodecProfileLevel pl : cc.profileLevels) {
+                    if (type.equals("video/hevc")) { if (pl.profile == 2) prof.add("main10"); if (pl.profile == 4096) prof.add("hdr10"); if (pl.profile == 8192) prof.add("hdr10plus"); }
+                    if (type.equals("video/x-vnd.on2.vp9")) { if (pl.profile == 4) prof.add("p2"); if (pl.profile == 4096) prof.add("hdr10"); if (pl.profile == 16384) prof.add("hdr10plus"); }
+                    if (type.equals("video/avc")) { if (pl.profile == 8) prof.add("high"); if (pl.profile == 16) prof.add("high10"); }
+                    if (type.equals("video/av01")) { if (pl.profile == 2) prof.add("main10"); if (pl.profile == 4096) prof.add("hdr10"); } }
+                if (!prof.isEmpty()) b.append(",prof=").append(String.join("+", prof));
+                b.append(",levels=").append(cc.profileLevels.length).append(",inst=").append(cc.getMaxSupportedInstances()).append(')');
+                String tok = b.toString().replace(' ', '_');
+                if (ci.getName().endsWith(".secure")) sec.add(tok);
+                if (!ci.isHardwareAccelerated()) sw.add(ci.getName() + "(" + type + (ci.isEncoder() ? ",enc" : ",dec") + ",max=" + mw + "x" + mh + ")"); else if (ci.isEncoder()) hwEnc.add(tok); else hwDec.add(tok);
+            }
+        }
+        Collections.sort(hwDec); Collections.sort(hwEnc); Collections.sort(sw); Collections.sort(aud); Collections.sort(sec);
+        check("codec.hw_decoders", hwDec.size() >= 3 ? "PASS" : "FAIL", "kernel+ROM", "set: " + String.join(" ", hwDec), hwDec.size() + " hardware video decoder types (name, type, max size, best fps at 720p/1080p/2160p, max bitrate, features, 10-bit)");
+        check("codec.hw_encoders", hwEnc.size() >= 2 ? "PASS" : "FAIL", "kernel+ROM", "set: " + String.join(" ", hwEnc), hwEnc.size() + " hardware video encoder types");
+        check("codec.secure_decoders", sec.isEmpty() ? "FAIL" : "PASS", "kernel+ROM", sec.size() + " secure decoders", "Widevine L1 playback needs them: " + String.join(" ", sec));
+        check("codec.sw_video", "PASS", "ROM", "set: " + String.join(" ", sw), sw.size() + " software video codec types");
+        check("codec.audio", "PASS", "ROM", "set: " + String.join(" ", aud), aud.size() + " audio codec types");
+        metric("codec_hw_decoders", hwDec.size()); metric("codec_hw_encoders", hwEnc.size()); metric("codec_secure_decoders", sec.size()); metric("codec_types_total", n);
+        result(hwDec.size() >= 3 && hwEnc.size() >= 2 ? "PASS" : "FAIL", hwDec.size() + " hw decoders, " + hwEnc.size() + " hw encoders, " + sec.size() + " secure, " + sw.size() + " software video, " + aud.size() + " audio");
     }
 
     // ---------------------------------------------------------------- compress offload

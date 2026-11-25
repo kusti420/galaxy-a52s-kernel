@@ -135,6 +135,7 @@
 		support_mis_calibration_test;
 		support_ear_detect_mode;
 		support_open_short_test;
+		support_dex_mode;	/* stock (bone 5.4) r00..r02 DT; LineageOS removed it: "sec_touchpad" input device (SPEC/05 P1-5) */
 		sec,firmware_name = "tsp_stm/fts5cu56a_a52sxq.bin";
 		sec,regulator_boot_on;
 		sec,unuse_dvdd_power;

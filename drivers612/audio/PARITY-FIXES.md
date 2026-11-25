@@ -175,6 +175,82 @@ card: phone check below.
   has always carried `qcom,wcn-bt = <1>`; honouring it would break every build that does not
   load the four BT/SLIMbus modules.
 
+### Prepared 2026-11-24 (offline, never run): sound trigger / voice ioctls with magic 'U'
+The sound trigger HAL (inside the 32-bit audio HAL process) drives LSM with `SNDRV_LSM_*` ioctls on the PCM
+fd, the voice HAL has `SNDRV_VOICE_IOCTL_LCH`. 5.4 passed magic-'U' PCM ioctls to the driver
+(`CONFIG_AUDIO_QGKI`); the GKI 6.12 PCM core answers -ENOTTY, so voice wake-up cannot work.
+- Kernel half (NOT applied, needs an image variant): `patches/kernel-needed/0001-ALSA-pcm-pass-vendor-U-
+  ioctls-to-the-driver.patch` (`sound/core/pcm_native.c`, `pcm_compat.c`; applies clean, compile-checked out of
+  tree, no symbol change).
+- Techpack half (applied in `audio-kernel/`, in every build of `platform_dlkm.ko` from now on):
+  `patches/audio-kernel/a52-lsm-compat-ioctl-gki.patch`: `msm_lsm_ioctl_compat` is built without
+  `CONFIG_AUDIO_QGKI` and `msm_lsm_ioctl` dispatches to it by `in_compat_syscall()`. Without the kernel half
+  only the standard PCM ioctls of a 32-bit caller take the compat handler (its default branch is the same
+  `msm_lsm_ioctl_shared`). Module: `out-lsm/platform_dlkm.ko`. `out-callfix/` predates it.
+
+### Done 2026-11-24 (offline, NOT on a phone yet): value counts of array controls, sidetone IIR type
+Found by comparing TYPE and VALUE COUNT of every control between the two live dumps
+(`logs/ichthys-1121/audio/tinymix-54.txt` vs `tinymix-612-rbich30.txt`): names are at parity (0 of the
+485 names the stock One UI HAL uses are missing only on 6.12), but 78 controls differ in shape.
+- 58 of them report 1 or 2 values on 6.12 instead of 3..128: the donor's private `SOC_SINGLE_MULTI_EXT`
+  in six files used `.info = snd_soc_info_volsw`, which ignores the count (5.4 had
+  `snd_soc_info_multi_ext` in the kernel). The HAL blobs write these as arrays (`mixer_ctl_set_array`) and
+  tinyalsa refuses an array longer than the control reports, so on 6.12 the writes fail silently on every
+  ROM: `App Type Config` (128), `App Type Gain` (4), `Audio Effect` (6), `Device PP Params` (3),
+  `Backend / Playback / Capture Device Channel Map` (33 / 32 / 32), `Listen App Type Config{, V2}` (128),
+  `EC Reference ChMixer Weights Ch1..8` (32), `MultiMedia1..3 EQ Band1..12` (5), `ASRC Config`,
+  `PLL config data`, `MCLK_SRC CFG`, `ASM Format`. Patch `patches/audio-kernel/a52-parity-multi-ext-count.patch`:
+  the six files (`msm-pcm-routing-v2.c`, `msm-dai-q6-v2.c`, `msm-qti-pp-config.c`, `msm-pcm-host-voice-v2.c`,
+  `msm-dai-q6-hdmi-v2.c`, `msm-pcm-voip-v2.c`) now use `sec_multi_ext.h` (the count-aware info that
+  `msm-pcm-voice-v2.c` already had). Static check against the 5.4 dump: 46 controls change to the 5.4 shape,
+  0 end up different (13 have symbolic counts, same expressions as 5.4).
+- `IIR0/IIR1 Band1..5` (sidetone filter coefficients) were BYTES x20 on 6.12 and INT x5 on 5.4. The HAL's
+  `mixer_paths.xml` writes integers (`id="0" value="268435456"`), which a BYTES control cut to the low byte:
+  all-zero coefficients = muted sidetone. Patch `patches/audio-kernel/a52-parity-iir-band-int.patch`
+  (`asoc/codecs/bolero/rx-macro.c`: INT x5 as 5.4, same coefficient writes).
+- `VOIP_SESSION_VSID` is a SIM-1 voice session on 5.4 (`dsp/q6voice.c:569`, in-call music into a VoIP
+  session): `patches/audio-kernel/a52-parity-voip-sub1-vsid.patch` (q6_dlkm).
+- Left as is: 8 voice-mixer switches that are stereo on one kernel and mono on the other (the put uses
+  value[0] only), `SLIM_7_RX Encoder Config` 216 vs 220 bytes (section above).
+`Module.symvers` byte-identical; changed modules `platform_dlkm.ko`, `rx_macro_dlkm.ko` (+ `q6_dlkm.ko` from
+the section below). Stripped set + candidate ramdisk (s99tb with the three modules swapped):
+`out-callfix/` (ramdisk c31a89f2...). This changes what the HAL can set on EVERY ROM (app type table,
+channel maps, speaker rotation `Device PP Params`, EQ): smoke-test playback, recording and one call before
+it goes to a daily phone. Check without sound: `tools/selftest/oneui/checks/65-bt-audio.sh` row
+`audio.ctl_shapes` (must equal the 5.4 run).
+
+### Done 2026-11-23 (offline, NOT on a phone yet): Samsung A2DP offload encoder formats SSC + SBC_SS
+Reported 11-23: Galaxy Buds have no audio on 6.12 under One UI. The stock One UI HAL
+(`/vendor/lib/liba2dpoffload.so`: `configure_ssc_enc_format`, `configure_sbc_ss_enc_format`) sends two
+Samsung encoder formats through `SLIM_7_RX Encoder Config` that only Samsung's 5.4 techpack knows:
+`ASM_MEDIA_FMT_SSC 0x00010BF3` (Samsung Scalable Codec, what Galaxy Buds negotiate) and
+`ASM_MEDIA_FMT_SBC_SS 0x00010BF5` (Samsung SBC with ABR). On 6.12 the put answered `-EINVAL` (unknown
+format), the HAL logs "Failed to set SSC encoder config" and the A2DP start fails: no audio.
+Ported from 5.4 (`include/dsp/apr_audio-v2.h:4487, 4567, 4883-4897`, `asoc/msm-dai-q6-v2.c:59-60, 3644,
+3694, 4514, 4568`, `dsp/q6afe.c:483, 6074, 6438, 6462, 6696-6713, 6743-6748, 7318`): patch
+`patches/audio-kernel/a52-parity-a2dp-ssc-sbcss.patch` (3 files):
+- formats + `struct asm_ss_sbc_enc_cfg_t`, `struct asm_custom_enc_cfg_ssc_t`;
+- encoder config put (`SLIM_7_RX Encoder Config`), decoder/ABR config get + put (`SLIM_7_TX Decoder Config`:
+  `abr_dec_cfg` for both formats);
+- q6afe: both formats accepted by `q6afe_send_enc_config`, LDAC-style block size (union minus ABR part),
+  ABR `BIT_RATE_LEVEL_MAP` + `DEC_TO_ENC_COMMUNICATION` from the format's own `abr_config`, depacketizer
+  `COP` (not `COP_V1`) on the feedback port, AVCS load of the depacketizer only.
+- NOT ported: `afe_q6_update_enc_format` (5.4 q6afe.c:2225: sends `AVS_PARAM_ID_ENC_FORMAT_ID` to
+  `AFE_PORT_ID_SECONDARY_MI2S_RX`, the BT port of Samsung's Broadcom phones; this phone never opens it), the
+  `SEC_MI2S_RX ...` encoder controls and `mtu` / `a2dp_suspend` of `struct afe_enc_config` (same reason; the
+  control blob is `format + codec struct` on both kernels, so the two fields do not shift the ABI).
+- CRCs: this kernel uses gendwarfksyms, so the two union members of 5.4's `union afe_enc_config_data`
+  are NOT added (they changed the CRC of afe_open / afe_port_start{,_v2,_v3}); the code reaches the two
+  layouts through a cast (`A52_SS_SBC_CFG` / `A52_SSC_CFG`), both fit (static_assert). `Module.symvers`
+  after the build is byte-identical to before: only `q6_dlkm.ko` and `platform_dlkm.ko` change.
+  Stripped copies: `out-a2dp-ssc/` (q6_dlkm 267f9724..., platform_dlkm 86ce73cf...).
+Test without a headset (silent): `tools/selftest/oneui/checks/65-bt-audio.sh` row `bta.encfmt`
+(`actl encfmt`: every format must be accepted; expected on the old modules: `ssc=EINVAL sbc_ss=EINVAL`).
+With a headset (needs hands): pair Galaxy Buds under One UI, play 30 s, `logcat | grep -E
+"a2dp|SSC"`: "Successfully updated SSC enc format", dmesg `afe_port_start`/`q6afe_send_enc_config` without
+"Unsuppported enc format"; then an SBC-only headset and an AAC one. Full work list:
+`drivers612/SPEC/02-audio-connectivity-telephony.md` section A2DP offload.
+
 ### Done 2026-11-21: `AFE Dynamic Bitrate` and `SBM Delay` (ramdisk s97b)
 Samsung's two A2DP-offload run-time controls of SLIMBUS_7_RX, ported from the ROM's 5.4 kernel
 (`asoc/msm-dai-q6-v2.c:3860-3905, 4170-4210, 4362-4373`, `dsp/q6afe.c:2044-2098, 2287-2345`,

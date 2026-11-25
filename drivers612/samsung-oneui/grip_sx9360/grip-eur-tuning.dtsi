@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * OPTIONAL, NOT APPLIED BY ANY BUILD. A separate decision (it changes the SAR proximity tuning).
+ *
+ * The SX9360 values in grip.dtsi / boarddt/a52sxq-sensors.dtsi are the KOR ones (a52sxq_kor_single_w00_r02),
+ * because both 5.4 kernels this port was taken from build only the kor_single dtbo: the LineageOS/IchthysOS
+ * kernel and the bone-machine One UI kernel (its zip's dtbo.img, all three revisions: proxthresh 0x22, hyst 0x15,
+ * regproxctrl3 0x0c). Samsung's EUR dtbo for the same board (a52sxq_eur_open_w00_r00..r02 in the bone tree, and
+ * the dtbo dumped from a stock-firmware SM-A528B: drivers612/boarddt/out/src-diff-stock1-r02.txt) has:
+ *
+ *   register            KOR (ours)                          EUR (stock SM-A528B)
+ *   PROXCTRL5 0x46      0x22 -> threshold 34^2/2 = 578      0x1d -> 29^2/2 = 420
+ *   PROXCTRL4 0x45      0x15 -> hysteresis +/-6 %           0x35 -> hysteresis +/-25 %   (close/far debounce same)
+ *   PROXCTRL3 0x44      0x0c -> AVGPOSFILT 4                0x0d -> AVGPOSFILT 5 (slower positive baseline filter)
+ *
+ * With 6 % hysteresis a hand/pocket signal that sits near the threshold toggles touch/release (one wake-up
+ * interrupt + 3 s grip_wake_lock each) far more often than with 25 %. This is NOT a 5.4 -> 6.12 difference
+ * (both use the KOR values); it is a difference between every custom kernel and stock firmware on EUR phones.
+ */
+&i2c_17 {
+	sx9360-i2c@28 {
+		sx9360,proxthresh_reg = <0x1d>;
+		sx9360,hyst_reg = <0x35>;
+		sx9360,regproxctrl3_reg = <0xd>;
+	};
+};

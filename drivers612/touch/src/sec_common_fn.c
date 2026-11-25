@@ -590,14 +590,22 @@ void sec_input_gesture_report(struct device *dev, int id, int x, int y)
 	pdata->gesture_x = x;
 	pdata->gesture_y = y;
 
+	/*
+	 * a52sxq (2026-11-23): as the 5.4 driver of this phone, report the gesture key for EVERY sponge
+	 * gesture (FOD press/release/out, AOD double tap, SPAY, single tap). OneUI's sysinput/framework reads
+	 * gesture_id/scrub_pos only after KEY_BLACK_UI_GESTURE; the newer tree this file came from reported it
+	 * for SINGLE_TAP only, so FOD presses never reached the fingerprint HAL under OneUI 9 (no mask circle,
+	 * no capture: HAL "nd cnt 0").
+	 */
+	input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 1);
+	input_sync(pdata->input_dev);
+	input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 0);
+	input_sync(pdata->input_dev);
+
 	if (id == SPONGE_EVENT_TYPE_SPAY) {
 		snprintf(buff, sizeof(buff), "SPAY");
 		pdata->hw_param.all_spay_count++;
 	} else if (id == SPONGE_EVENT_TYPE_SINGLE_TAP) {
-		input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 1);
-		input_sync(pdata->input_dev);
-		input_report_key(pdata->input_dev, KEY_BLACK_UI_GESTURE, 0);
-		input_sync(pdata->input_dev);
 		snprintf(buff, sizeof(buff), "SINGLE TAP");
 	} else if (id == SPONGE_EVENT_TYPE_AOD_DOUBLETAB) {
 		snprintf(buff, sizeof(buff), "AOD");

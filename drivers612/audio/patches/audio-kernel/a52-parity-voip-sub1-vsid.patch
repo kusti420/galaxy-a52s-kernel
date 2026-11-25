@@ -1,0 +1,12 @@
+diff --git a/drivers612/audio/audio-kernel/dsp/q6voice.c b/drivers612/audio/audio-kernel/dsp/q6voice.c
+index dda0688..2e117eb 100644
+--- a/drivers612/audio/audio-kernel/dsp/q6voice.c
++++ b/drivers612/audio/audio-kernel/dsp/q6voice.c
+@@ -566,6 +566,7 @@ static bool is_sub1_vsid(u32 session_id)
+ 	case VOLTE_SESSION_VSID:
+ 	case VOWLAN_SESSION_VSID:
+ 	case VOICEMMODE1_VSID:
++	case VOIP_SESSION_VSID:	/* a52sxq (5.4 parity, 5.4 q6voice.c:569): in-call music into a VoIP session */
+ 		ret = true;
+ 		break;
+ 	default:

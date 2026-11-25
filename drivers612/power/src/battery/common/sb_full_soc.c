@@ -20,6 +20,7 @@
 #include "sb_full_soc.h"
 #include "sec_battery.h"
 #include "battery_logger.h"
+#include "sb_oneui_attrs.h"
 
 struct sb_full_soc {
 	int full_capacity;
@@ -472,6 +473,10 @@ void sec_bat_check_full_capacity(struct sec_battery_info *battery)
 {
 	int now_full_capacity = get_full_capacity(battery->fs);
 	int rechg_capacity = now_full_capacity - DEF_RECHG_SOC_DIF;
+
+	/* "Pause USB Power Delivery": charger held off, status NOT_CHARGING (5.4 k4 0008) */
+	if (sb_oneui_pass_through_hold(battery))
+		return;
 
 	if (is_full_cap_event_highsoc(battery->fs) &&
 		(battery->capacity <= now_full_capacity)) {

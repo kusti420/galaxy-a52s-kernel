@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0
+# Samsung OneUI USB gadget functions for the A52s 6.12 line (module names as on the S26U vendor_dlkm)
+obj-m += usb_f_ss_mon_gadget.o
+usb_f_ss_mon_gadget-y := f_ss_mon_gadget.o
+obj-m += usb_f_ss_conn_gadget.o
+usb_f_ss_conn_gadget-y := f_conn_gadget.o

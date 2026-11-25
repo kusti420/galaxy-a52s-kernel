@@ -14694,7 +14694,13 @@
   */
  #ifndef _CAM_REQ_MGR_CORE_H_
  #define _CAM_REQ_MGR_CORE_H_
-@@ -19,7 +18,6 @@
+@@ -14,12 +13,11 @@
+ #define CAM_REQ_MGR_MAX_LINKED_DEV     16
+ #define MAX_REQ_SLOTS                  48
+ 
+-#define CAM_REQ_MGR_WATCHDOG_TIMEOUT          1000
++#define CAM_REQ_MGR_WATCHDOG_TIMEOUT          5000
+ #define CAM_REQ_MGR_WATCHDOG_TIMEOUT_DEFAULT  5000
  #define CAM_REQ_MGR_WATCHDOG_TIMEOUT_MAX      50000
  #define CAM_REQ_MGR_SCHED_REQ_TIMEOUT         1000
  #define CAM_REQ_MGR_SIMULATE_SCHED_REQ        30
@@ -26820,7 +26826,73 @@
  }
  
  static int cam_res_mgr_add_device(struct device *dev,
-@@ -578,9 +577,11 @@
+@@ -434,6 +433,56 @@
+ }
+ 
+ 
++
++/* a52sxq 6.12: free only GPIOs this driver requested successfully (see port612.py) */
++#include <linux/moduleparam.h>
++#define A52_GPIO_TRACK_MAX 96
++int cam_a52_gpio_request_one(unsigned int gpio, unsigned long flags, const char *label);
++void cam_a52_gpio_free(unsigned int gpio);
++static DEFINE_MUTEX(a52_gpio_lock);
++static unsigned int a52_gpio_req[A52_GPIO_TRACK_MAX];
++static int a52_gpio_nreq;
++static unsigned int a52_gpio_free_skipped;
++module_param_named(a52_gpio_free_skipped, a52_gpio_free_skipped, uint, 0444);
++module_param_named(a52_gpio_held, a52_gpio_nreq, int, 0444);
++
++int cam_a52_gpio_request_one(unsigned int gpio, unsigned long flags, const char *label)
++{
++	int rc = gpio_request_one(gpio, flags, label);
++
++	if (rc)
++		return rc;
++	mutex_lock(&a52_gpio_lock);
++	if (a52_gpio_nreq < A52_GPIO_TRACK_MAX)
++		a52_gpio_req[a52_gpio_nreq++] = gpio;
++	else
++		pr_warn_once("a52sxq-camera: gpio track table full, gpio %u stays requested\n", gpio);
++	mutex_unlock(&a52_gpio_lock);
++	return 0;
++}
++
++void cam_a52_gpio_free(unsigned int gpio)
++{
++	bool found = false;
++	int i;
++
++	mutex_lock(&a52_gpio_lock);
++	for (i = 0; i < a52_gpio_nreq; i++) {
++		if (a52_gpio_req[i] == gpio) {
++			a52_gpio_req[i] = a52_gpio_req[--a52_gpio_nreq];
++			found = true;
++			break;
++		}
++	}
++	if (!found)
++		a52_gpio_free_skipped++;
++	mutex_unlock(&a52_gpio_lock);
++	if (found)
++		(gpio_free)(gpio);	/* parenthesised: the edit below replaces the plain call text */
++	else
++		pr_info_once("a52sxq-camera: gpio %u not requested by the camera driver (request failed or freed twice): not freed\n", gpio);
++}
++
+ int cam_res_mgr_gpio_request(struct device *dev, uint gpio,
+ 		unsigned long flags, const char *label)
+ {
+@@ -461,7 +510,7 @@
+ 	 */
+ 	if (!gpio_found) {
+ 		CAM_DBG(CAM_RES, "gpio: %u not found in gpio_res list", gpio);
+-		rc = gpio_request_one(gpio, flags, label);
++		rc = cam_a52_gpio_request_one(gpio, flags, label);
+ 		if (rc) {
+ 			CAM_ERR(CAM_RES, "gpio %d:%s request fails rc = %d",
+ 				gpio, label, rc);
+@@ -578,9 +627,11 @@
  	bool                   need_free = true;
  	int                    dev_num = 0;
  	struct cam_gpio_res   *gpio_res = NULL;
@@ -26832,7 +26904,7 @@
  	is_shared_pctrl_gpio =
  			cam_res_mgr_gpio_is_in_shared_pctrl_gpio(gpio);
  
-@@ -633,12 +634,8 @@
+@@ -633,16 +684,12 @@
  			pctrl_idx =
  				cam_res_mgr_util_get_idx_from_shared_pctrl_gpio(
  					gpio);
@@ -26847,7 +26919,12 @@
  		}
  
  		CAM_DBG(CAM_RES, "freeing gpio: %u", gpio);
-@@ -763,7 +760,7 @@
+-		gpio_free(gpio);
++		cam_a52_gpio_free(gpio);
+ 	}
+ 
+ 	mutex_unlock(&cam_res->gpio_res_lock);
+@@ -763,7 +810,7 @@
  
  	of_node = dev->of_node;
  	dt->num_shared_gpio = of_property_count_u32_elems(of_node,
@@ -26856,7 +26933,7 @@
  
  	if (dt->num_shared_gpio <= 0) {
  		CAM_DBG(CAM_RES,
-@@ -779,7 +776,7 @@
+@@ -779,7 +826,7 @@
  		return -EINVAL;
  	}
  
@@ -26865,7 +26942,7 @@
  		dt->shared_gpio, dt->num_shared_gpio);
  	if (rc) {
  		CAM_ERR(CAM_RES, "Get shared gpio array failed.");
-@@ -799,7 +796,7 @@
+@@ -799,7 +846,7 @@
  
  	of_node = dev->of_node;
  	dt->num_shared_pctrl_gpio = of_property_count_u32_elems(of_node,
@@ -26874,7 +26951,7 @@
  
  	if (dt->num_shared_pctrl_gpio <= 0) {
  		CAM_DBG(CAM_RES,
-@@ -815,7 +812,7 @@
+@@ -815,7 +862,7 @@
  	}
  
  	pinctrl_name_nodes = of_property_count_strings(of_node,
@@ -26883,7 +26960,7 @@
  
  	if (pinctrl_name_nodes != dt->num_shared_pctrl_gpio) {
  		CAM_ERR(CAM_RES,
-@@ -828,7 +825,7 @@
+@@ -828,7 +875,7 @@
  	CAM_INFO(CAM_RES,
  		"number of pctrl_gpio: %d", dt->num_shared_pctrl_gpio);
  
@@ -26892,7 +26969,7 @@
  		dt->shared_pctrl_gpio, dt->num_shared_pctrl_gpio);
  	if (rc) {
  		CAM_ERR(CAM_RES, "Get shared pinctrl gpio array failed.");
-@@ -837,9 +834,9 @@
+@@ -837,9 +884,9 @@
  
  	for (i = 0; i < pinctrl_name_nodes; i++) {
  		rc = of_property_read_string_index(of_node,
@@ -26904,7 +26981,7 @@
  			i, dt->pctrl_name[i]);
  		if (rc) {
  			CAM_ERR(CAM_RES,
-@@ -962,17 +959,10 @@
+@@ -962,17 +1009,10 @@
  	return rc;
  }
  
@@ -35092,8 +35169,13 @@
  	uint8_t size = 0;
  	struct cam_soc_gpio_data *gpio_conf =
  			soc_info->gpio_data;
-@@ -1650,23 +1183,17 @@
- 			rc = gpio_request_one(gpio_tbl[i].gpio,
+@@ -1647,26 +1180,23 @@
+ 	}
+ 	if (gpio_en) {
+ 		for (i = 0; i < size; i++) {
+-			rc = gpio_request_one(gpio_tbl[i].gpio,
++			extern int cam_a52_gpio_request_one(unsigned int gpio, unsigned long flags, const char *label);
++			rc = cam_a52_gpio_request_one(gpio_tbl[i].gpio,
  				gpio_tbl[i].flags, gpio_tbl[i].label);
  			if (rc) {
 +				/*
@@ -35118,11 +35200,13 @@
  	} else {
 -		for (i = 0; i < size; i++)
 -			gpio_free(gpio_tbl[i].gpio);
-+		gpio_free_array(gpio_tbl, size);
++		extern void cam_a52_gpio_free(unsigned int gpio);
++		for (i = size - 1; i >= 0; i--)
++			cam_a52_gpio_free(gpio_tbl[i].gpio);
  	}
  
  	return rc;
-@@ -1808,9 +1335,21 @@
+@@ -1808,9 +1338,21 @@
  			soc_info->dev_name);
  		rc = 0;
  	} else {
@@ -35147,7 +35231,7 @@
  			return rc;
  		}
  	}
-@@ -2097,8 +1636,8 @@
+@@ -2097,8 +1639,8 @@
  			goto put_regulator;
  	}
  
@@ -35158,7 +35242,7 @@
  			handler, IRQF_TRIGGER_RISING,
  			soc_info->irq_name, irq_data);
  		if (rc) {
-@@ -2106,7 +1645,7 @@
+@@ -2106,7 +1648,7 @@
  			rc = -EBUSY;
  			goto put_regulator;
  		}
@@ -35167,7 +35251,7 @@
  		soc_info->irq_data = irq_data;
  	}
  
-@@ -2120,26 +1659,6 @@
+@@ -2120,26 +1662,6 @@
  			rc = -ENOENT;
  			goto put_clk;
  		}
@@ -35194,7 +35278,7 @@
  	}
  
  	rc = cam_soc_util_request_pinctrl(soc_info);
-@@ -2162,19 +1681,15 @@
+@@ -2162,19 +1684,15 @@
  		i = soc_info->num_clk;
  	for (i = i - 1; i >= 0; i--) {
  		if (soc_info->clk[i]) {
@@ -35217,7 +35301,7 @@
  	}
  
  put_regulator:
-@@ -2213,10 +1728,6 @@
+@@ -2213,10 +1731,6 @@
  	}
  
  	for (i = soc_info->num_clk - 1; i >= 0; i--) {
@@ -35228,7 +35312,7 @@
  		clk_put(soc_info->clk[i]);
  		soc_info->clk[i] = NULL;
  	}
-@@ -2234,10 +1745,10 @@
+@@ -2234,10 +1748,10 @@
  		soc_info->reg_map[i].size = 0;
  	}
  
@@ -35242,7 +35326,7 @@
  	}
  
  	if (soc_info->pinctrl_info.pinctrl)
-@@ -2362,9 +1873,8 @@
+@@ -2362,9 +1876,8 @@
  
  	if (!soc_info || !dump_out_buf || !reg_read || !cmd_buf_end) {
  		CAM_ERR(CAM_UTIL,
@@ -35254,7 +35338,7 @@
  		rc = -EINVAL;
  		goto end;
  	}
-@@ -2386,8 +1896,8 @@
+@@ -2386,8 +1899,8 @@
  		- sizeof(uint32_t) + dump_out_buf->bytes_written +
  		(reg_read->num_values * 2 * sizeof(uint32_t)))) {
  		CAM_ERR(CAM_UTIL,
@@ -35265,7 +35349,7 @@
  			(uintptr_t)dump_out_buf);
  		rc = -EINVAL;
  		goto end;
-@@ -2399,7 +1909,7 @@
+@@ -2399,7 +1912,7 @@
  			(uint32_t)soc_info->reg_map[base_idx].size) {
  			CAM_ERR(CAM_UTIL,
  				"Reg offset out of range, offset: 0x%X reg_map size: 0x%X",
@@ -35274,7 +35358,7 @@
  				(uint32_t)soc_info->reg_map[base_idx].size);
  			rc = -EINVAL;
  			goto end;
-@@ -2467,9 +1977,9 @@
+@@ -2467,9 +1980,9 @@
  		(dmi_read->dmi_data_read.num_values * 2 *
  		sizeof(uint32_t))))) {
  		CAM_ERR(CAM_UTIL,
@@ -35286,7 +35370,7 @@
  			(uintptr_t)dump_out_buf);
  		rc = -EINVAL;
  		goto end;
-@@ -2580,8 +2090,7 @@
+@@ -2580,8 +2093,7 @@
  		goto end;
  	}
  	remain_len = buf_len - dump_args->offset;
@@ -35296,7 +35380,7 @@
  		(dmi_read->dmi_data_read.num_values * 2 * sizeof(uint32_t)) +
  		sizeof(uint32_t);
  	if (remain_len < min_len) {
-@@ -2689,7 +2198,7 @@
+@@ -2689,7 +2201,7 @@
  	if (rc) {
  		CAM_ERR(CAM_UTIL, "Invalid handle %u rc %d",
  			dump_args->buf_handle, rc);
@@ -35305,7 +35389,7 @@
  	}
  	if (buf_len <= dump_args->offset) {
  		CAM_WARN(CAM_UTIL, "Dump offset overshoot %zu %zu",
-@@ -2724,7 +2233,7 @@
+@@ -2724,7 +2236,7 @@
  			(uint32_t)soc_info->reg_map[base_idx].size) {
  			CAM_ERR(CAM_UTIL,
  				"Reg offset out of range, offset: 0x%X reg_map size: 0x%X",
@@ -35314,7 +35398,7 @@
  				(uint32_t)soc_info->reg_map[base_idx].size);
  			rc = -EINVAL;
  			goto end;
-@@ -2800,14 +2309,15 @@
+@@ -2800,14 +2312,15 @@
  	struct cam_cmd_buf_desc *cmd_desc, uint64_t req_id,
  	cam_soc_util_regspace_data_cb reg_data_cb,
  	struct cam_hw_soc_dump_args *soc_dump_args,
@@ -35332,7 +35416,7 @@
  	struct cam_reg_dump_input_info   *reg_input_info = NULL;
  	struct cam_reg_dump_desc         *reg_dump_desc = NULL;
  	struct cam_reg_dump_out_buffer   *dump_out_buf = NULL;
-@@ -2827,6 +2337,15 @@
+@@ -2827,6 +2340,15 @@
  		return -EINVAL;
  	}
  
@@ -35348,7 +35432,7 @@
  	CAM_DBG(CAM_UTIL, "Get cpu buf success req_id: %llu buf_size: %zu",
  		req_id, buf_size);
  	if ((buf_size < sizeof(uint32_t)) ||
-@@ -2892,7 +2411,7 @@
+@@ -2892,7 +2414,7 @@
  		if ((cmd_in_data_end - cmd_buf_start) <= (uintptr_t)
  			reg_input_info->dump_set_offsets[i]) {
  			CAM_ERR(CAM_UTIL,
@@ -35357,7 +35441,7 @@
  				(uintptr_t)reg_input_info->dump_set_offsets[i],
  				cmd_buf_start, cmd_in_data_end);
  			rc = -EINVAL;
-@@ -2929,7 +2448,7 @@
+@@ -2929,7 +2451,7 @@
  			(reg_dump_desc->dump_buffer_offset +
  			sizeof(struct cam_reg_dump_out_buffer))) {
  			CAM_ERR(CAM_UTIL,
@@ -35366,7 +35450,7 @@
  				(uintptr_t)reg_dump_desc->dump_buffer_offset,
  				cmd_buf_start, cmd_buf_end);
  			rc = -EINVAL;
-@@ -2977,7 +2496,7 @@
+@@ -2977,7 +2499,7 @@
  			rc = cam_soc_util_user_reg_dump(reg_dump_desc,
  				soc_dump_args, soc_info, reg_base_idx);
  			CAM_INFO(CAM_UTIL,
@@ -35375,7 +35459,7 @@
  				soc_info->dev_name, reg_base_idx,
  				soc_dump_args->offset);
  			goto end;
-@@ -3025,6 +2544,7 @@
+@@ -3025,6 +2547,7 @@
  	}
  
  end:
@@ -35383,7 +35467,7 @@
  	return rc;
  }
  
-@@ -3059,7 +2579,7 @@
+@@ -3059,7 +2582,7 @@
  		clk_rate = clk_get_rate(soc_info->clk[i]);
  
  		CAM_INFO(CAM_UTIL,

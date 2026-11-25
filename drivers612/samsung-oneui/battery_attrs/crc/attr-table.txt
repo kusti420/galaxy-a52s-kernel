@@ -1,0 +1,2 @@
+oneui_attrs[0]: name=pass_through      mode=0664 show=pass_through_show store=pass_through_store
+oneui_attrs[1]: name=sub_bat_temp_raw  mode=0664 show=sub_bat_temp_raw_show store=sub_bat_temp_raw_store

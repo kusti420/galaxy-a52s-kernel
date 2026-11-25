@@ -21,9 +21,13 @@ for w in ws:
 ')
 TITLE="A52s kernel: action needed"
 BODY="$M"$'\n'"Window: ${WTITLE:-this Claude session} (repo a52sxq-mainline)"
+# 2026-11-25: never leave waiting notifications behind (60 piled up): the previous ring's waiter is killed first,
+# the notification expires after 120 s and its --wait is bounded by the same timeout.
+PF=${XDG_RUNTIME_DIR:-/tmp}/a52s-attention.pid
+[ -f "$PF" ] && { kill -- -"$(cat "$PF")" 2>/dev/null || kill "$(cat "$PF")" 2>/dev/null; rm -f "$PF"; }
 if [ -n "$WID" ]; then
-	( a=$(notify-send -u critical -a "A52s kernel" -A show=Show --wait "$TITLE" "$BODY" 2>/dev/null)
-	  [ "$a" = show ] && niri msg action focus-window --id "$WID" >/dev/null 2>&1 ) &
+	setsid bash -c 'echo $$ > "$4"; a=$(timeout 125 notify-send -u critical -t 120000 -a "A52s kernel" -A show=Show --wait "$1" "$2" 2>/dev/null)
+	  [ "$a" = show ] && niri msg action focus-window --id "$3" >/dev/null 2>&1; rm -f "$4"' _ "$TITLE" "$BODY" "$WID" "$PF" &
 else
-	notify-send -u critical -a "A52s kernel" "$TITLE" "$BODY" 2>/dev/null || true
+	notify-send -u critical -t 120000 -a "A52s kernel" "$TITLE" "$BODY" 2>/dev/null || true
 fi

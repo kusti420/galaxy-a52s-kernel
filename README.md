@@ -24,18 +24,22 @@ Prebuilt **alpha** images are published as GitHub Releases of this repository (t
 page). Each release has its own README with the install and roll-back steps and a SHA256SUMS
 file. Read the [safety notes](#safety-read-before-touching-a-phone) first.
 
-**Alpha 1: Linux 6.12 for LineageOS 24 on the SM-A528B.** Qualcomm's 6.12 BSP kernel (GKI
-6.12.81 + the forward-ported Qualcomm/Samsung drivers from this tree) in place of the phone's 5.4
-kernel. The ROM and its vendor blobs run unchanged. For enthusiasts only.
+**Linux 6.12 for the SM-A528B, any ROM.** Qualcomm's 6.12 BSP kernel (GKI 6.12.81 + the
+forward-ported Qualcomm/Samsung drivers from this tree) in place of the phone's 5.4 kernel, as a
+kernel-only recovery zip: it is not tied to a ROM. It is meant for Android 17 ROMs for the
+SM-A528B that use the stock-derived a52sxq vendor (tested: LineageOS 24, IchthysOS, K4_UN1CA
+One UI 9 port). The ROM and its vendor blobs run unchanged. For enthusiasts only.
 
 Requirements:
 
-- SM-A528B with an unlocked bootloader.
-- LineageOS 24.0 (Android 17); tested with `lineage-24.0-20261028-nightly`. Other builds and
-  ROMs are untested.
+- SM-A528B with an unlocked bootloader and a custom ROM installed (AVB verification disabled in
+  vbmeta, as custom ROMs are installed).
+- Android 17 with the a52sxq vendor. The installer accepts any Android ROM of this phone; on a
+  ROM it was not tested with, or an Android version older than 17, it prints a warning and
+  installs anyway (untested: it may not boot; the restore zip brings your ROM's kernel back).
 - The mobile network (modem) needs the bootloader-bit-5 firmware (A528BXXU5...). On older
   firmware the phone boots, but TrustZone refuses the modem (no cellular).
-- A PC with adb and Odin (or `odin4` on Linux); Developer options -> Rooted debugging on.
+- TWRP, or a recovery that can sideload zips.
 
 What works (tested on two phones): display 120 Hz, touch, GPU, CPU/GPU/bus frequency scaling,
 Wi-Fi, Bluetooth, NFC, LTE voice + mobile data, calls (CS/CSFB) + SMS, speaker/mic/call audio,
@@ -43,21 +47,18 @@ cameras (photo/video, flash, torch), hardware video decode, fingerprint (enroll 
 sensors, battery + charging, USB, microSD, vibrator, SELinux enforcing, the real encrypted
 `/data`.
 
-Known issues:
+Known issues: each release lists its own in the release notes.
 
-- No VoLTE / VoWiFi (this LineageOS build has no IMS stack; the same on the stock kernel).
-- The L3 cache clock idles at about 1.19 GHz (a firmware-side vote is not configured yet); the
-  battery impact is still being measured, battery and standby numbers are not final.
-- The first Wi-Fi connection attempt sometimes fails; the retry works.
-- Night light also tints the fingerprint circle.
-
-Install in short (the release README has the exact steps): boot the phone normally on the
-**stock** 5.4 kernel, run the release's `install-addon.sh` (it writes the 6.12 vendor add-on into
-`/vendor`; the 5.4 kernel ignores it), then flash the release's AP tar in Download mode with Odin.
-To roll back, flash the stock LineageOS AP tar of the release (or your own build's
-`boot.img`/`vendor_boot.img`/`dtbo.img`). If it bootloops: hold Vol-down + Power about 7 s to
-restart, then at once Vol-down + Vol-up with USB plugged in for Download mode, and flash the
-roll-back tar.
+Install in short (the release notes have the exact steps): flash the release's
+`a52s-k612-<name>.zip` in the recovery. The zip keeps your ROM's own ramdisks, Android version
+and security patch level; it replaces only the kernel, the first-stage modules, the device tree
+and the dtbo, backs the current images up first and never writes `/vendor`. To roll back, flash
+the release's `a52s-k612-restore.zip`: your ROM's own kernel is back. After a ROM update flash
+the kernel zip again. If it bootloops: hold Vol-down + Power about 7 s to restart, then at once
+Vol-up + Power with USB plugged in for the recovery, and flash the restore zip (or Vol-down +
+Vol-up with USB plugged in for Download mode, and flash your ROM's own
+`boot.img`/`vendor_boot.img`/`dtbo.img`). The first alphas (before alpha 6) were packages with
+a `/vendor` add-on for LineageOS 24 only; their own READMEs describe them.
 
 Two rules from the release notes that protect the phone:
 
@@ -68,8 +69,8 @@ Two rules from the release notes that protect the phone:
 
 ## Status
 
-Tested on SM-A528B units with their own stock firmware, booting Android 17 (LineageOS-based
-userspace) through the kexec test harness and as a real boot.
+Tested on SM-A528B units with their own stock firmware, booting Android 17 (LineageOS 24,
+IchthysOS and the K4_UN1CA One UI 9 port) through the kexec test harness and as a real boot.
 
 | Feature | 6.12 (Qualcomm BSP) | 6.18 (ACK android17-6.18) |
 |---|---|---|
@@ -206,17 +207,18 @@ SPDX identifiers found in the exported files, by directory:
 | `drivers612/hwbringup` | GPL-2.0-only (2), GPL-2.0 (1) |
 | `drivers612/modem` | BSD-3-Clause (13), GPL-2.0-only (8), GPL-2.0 (2) |
 | `drivers612/nfc` | GPL-2.0-only (3), GPL-2.0 (1) |
-| `drivers612/power` | GPL-2.0 (25) |
+| `drivers612/power` | GPL-2.0 (30) |
 | `drivers612/qfprom-sys` | GPL-2.0-only (1) |
-| `drivers612/realboot` | GPL-2.0 (15), GPL-2.0-only (8), BSD-3-Clause (1) |
+| `drivers612/realboot` | GPL-2.0 (19), GPL-2.0-only (8), BSD-3-Clause (1) |
+| `drivers612/samsung-oneui` | GPL-2.0-only (34), GPL-2.0 (19), GPL-2.0-or-later (6), GPL-2.0+ (1) |
 | `drivers612/secure` | GPL-2.0-only (17), BSD-3-Clause (4), GPL-2.0 WITH Linux-syscall-note (3), GPL-2.0-only WITH Linux-syscall-note (1) |
 | `drivers612/sensors-factory` | GPL-2.0 (1) |
 | `drivers612/suspend` | GPL-2.0-only (1) |
 | `drivers612/touch` | GPL-2.0-only (5) |
 | `drivers612/vibrator` | GPL-2.0 (1) |
-| `drivers612/wifibt` | BSD-3-Clause (1) |
+| `drivers612/wifibt` | GPL-2.0 (2), BSD-3-Clause (1) |
 | `dtbo` | BSD-3-Clause (1) |
 | `modules` | GPL-2.0-only (10), GPL-2.0 WITH Linux-syscall-note (3), GPL-2.0-only WITH Linux-syscall-note (1), GPL-2.0 (1) |
 | `patches` | BSD-3-Clause (6), GPL-2.0-only (4), GPL-2.0-only OR BSD-2-Clause (2) |
 | `samsung612` | GPL-2.0-only (2) |
-| `tools` | GPL-2.0-only (1), GPL-2.0 (1) |
+| `tools` | GPL-2.0 (2), GPL-2.0-only (1) |
