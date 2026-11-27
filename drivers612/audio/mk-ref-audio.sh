@@ -27,7 +27,12 @@ for KO in "$@"; do
 	"$CB/llvm-strip" --strip-debug -o "$W/new/$b" "$KO"
 	[ "$(vm "$old")" = "$(vm "$W/new/$b")" ] || fail "$b: vermagic differs: $(vm "$old") vs $(vm "$W/new/$b")"
 	cmp -s "$old" "$W/new/$b" && fail "$b is the REF's own file (not the new build?)"
-	for s in __kcrctab __kcrctab_gpl __versions __ksymtab_strings .modinfo; do
+	# RELINK=1 (opt-in): the given modules may change their exports/imports/depends together (a patch that adds
+	# an export, or changes a prototype that a sibling in the same call imports). This script then does NOT prove
+	# that they still bind: build-realboot.sh's tools/loadsim.py must (CRCs vs exporters, duplicates, load order).
+	SECS="__kcrctab __kcrctab_gpl __versions __ksymtab_strings .modinfo"
+	[ "${RELINK:-0}" = 1 ] && { SECS=""; echo "$b: RELINK=1: CRC/import/modinfo sections not compared (loadsim.py checks binding)"; }
+	for s in $SECS; do
 		"$CB/llvm-objcopy" -O binary --only-section=$s "$old" "$W/o.bin" 2>/dev/null || : > "$W/o.bin"
 		"$CB/llvm-objcopy" -O binary --only-section=$s "$W/new/$b" "$W/n.bin" 2>/dev/null || : > "$W/n.bin"
 		cmp -s "$W/o.bin" "$W/n.bin" || fail "$b section $s differs (CRCs/imports/modinfo changed: rebuild the dependent modules too)"
@@ -55,5 +60,5 @@ cmp -s "$W/d.txt" "$W/want.txt" || { cat "$W/d.txt"; fail "read-back differs bey
 for b in "${NAMES[@]}"; do cmp -s "$W/c/a52/mods/audio/$b" "$W/new/$b" || fail "read-back $b"; done
 mv "$W/out.cpio.gz" "$OUT"
 for b in "${NAMES[@]}"; do
-	echo "$OUT: a52/mods/audio/$b $(sha256sum < "$W/a/a52/mods/audio/$b" | cut -c1-16) -> $(sha256sum < "$W/new/$b" | cut -c1-16) (vermagic + CRC/import sections identical)"
+	echo "$OUT: a52/mods/audio/$b $(sha256sum < "$W/a/a52/mods/audio/$b" | cut -c1-16) -> $(sha256sum < "$W/new/$b" | cut -c1-16) $( [ "${RELINK:-0}" = 1 ] && echo "(vermagic identical; RELINK: binding left to loadsim)" || echo "(vermagic + CRC/import sections identical)")"
 done

@@ -1,0 +1,20 @@
+PROPOSED, NOT APPLIED (2026-11-26, suspend-failure analysis). Hardening only: it is NOT a fix for the
+failed_freeze count (no path was found where the re-freeze makes a task unfreezable or keeps it runnable).
+A thread that sleeps in a freezable state that is not TASK_INTERRUPTIBLE (TASK_KILLABLE|TASK_FREEZABLE,
+e.g. a vfork parent) is not woken by TWA_SIGNAL (include/linux/sched/signal.h:362-366: the wake is
+wake_up_state(TASK_INTERRUPTIBLE), and only on the first TIF_NOTIFY_SIGNAL). Its work stays queued, and
+every later resume queues one more (16 bytes + one module reference each) for as long as the app stays
+frozen. Skip a thread that already has a notification pending.
+
+--- a/drivers612/samsung-oneui/freecess/freecess_refreeze.c
++++ b/drivers612/samsung-oneui/freecess/freecess_refreeze.c
+@@ -61,6 +61,9 @@ static long refreeze_walk(bool act)
+ 		escaped++;
+ 		if (!act)
+ 			continue;
++		/* an earlier walk's work is still queued (the sleep is not interruptible): do not pile up */
++		if (test_tsk_thread_flag(p, TIF_NOTIFY_SIGNAL) && task_work_pending(p))
++			continue;
+ 		work = kmalloc(sizeof(*work), GFP_ATOMIC);
+ 		if (!work)
+ 			continue;

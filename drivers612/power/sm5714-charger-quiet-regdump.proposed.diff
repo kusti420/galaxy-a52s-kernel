@@ -1,0 +1,79 @@
+PROPOSED, NOT APPLIED, NOT BUILT, NEVER RUN (2026-11-26, suspend-failure job, item 3).
+
+Why: on 6.12 the kernel ring is 128 KiB (GKI CONFIG_LOG_BUF_SHIFT=17, no log_buf_len on the command line);
+5.4 has 1 MiB (CONFIG_LOG_BUF_SHIFT=20). The sec_battery monitor cycle (10 s while a charger/USB is present)
+makes sm5714-charger print its register map TWICE per cycle (health read "please keep this log message" +
+POWER_SUPPLY_EXT_PROP_MONITOR_WORK): 10 lines, ~1.45 KiB per cycle = 64 lines / 9.2 KiB per minute, the same
+rate as 5.4 (68 lines / 9.8 KiB per minute in logs/selftest/PHONE1-20261122-172724/kmsg.txt). The code is
+identical to 5.4; only the small ring makes it hurt (the whole ring holds ~1 minute of a One UI boot).
+
+FIRST CHOICE (no driver change): a larger ring, as 5.4 has: build with DIAG_BOOTARGS="log_buf_len=1M" (or 4M for
+a night of pm_debug_messages); DIAG_BOOTARGS already reaches the DT bootargs (rb99m ran log_buf_len=8M on a
+real boot). This patch is the second, optional step.
+
+What it does: chg_print_regmap() prints only when one of the 49 registers changed since the last print, or on
+every 30th call (a heartbeat: every ~2.5 min at the 10 s cycle with two calls per cycle), and says how many
+unchanged dumps it skipped. Module parameter a52_regdump: 1 (default) = this behaviour, 2 = every call as 5.4,
+0 = changes only. Nothing else in the driver moves; the registers are still read every call (same I2C traffic).
+Expected: the "sm5714-charger: regmap:" lines drop from ~64 to ~2-5 per minute at steady state (changes during
+charging phases still print); about 8.5 of 9.2 KiB/min saved = 7 % of the awake One UI log volume (116 KiB/min).
+The two dev_info "sm5714_chg_get_property: psp=N" / "wdt kick" lines per cycle are left alone (5.4 has them).
+
+Module that changes: sm5714-charger.ko only (first-stage line 166 in rb111), no export or import change expected
+(module_param only: param_ops_int is already imported by the power set; check __versions after the build).
+Build ONLY through a copy of the tree as drivers612/power/out-p1/build.sh does; NEVER take the in-place
+drivers612/power/*.ko (relinked 2026-11-24). The power tree has an owner: hand this to that line.
+
+--- a/drivers612/power/src/battery/charger/sm5714_charger/sm5714_charger.c
++++ b/drivers612/power/src/battery/charger/sm5714_charger/sm5714_charger.c
+@@ -525,15 +525,42 @@
+
+ #define PRINT_CHG_REG_NUM    32
+ #define PRINT_CHG_REG2_NUM   17
++/*
++ * a52sxq 6.12: the sec_battery monitor calls this twice per cycle (every 10 s with a charger). On the 128 KiB
++ * GKI ring the 10 lines per cycle push everything else out, so an unchanged map is printed only as a heartbeat.
++ * a52_regdump: 1 = on change + every A52_REGDUMP_HEARTBEAT-th call (default), 2 = every call (5.4), 0 = changes.
++ */
++#define A52_REGDUMP_HEARTBEAT 30
++static int a52_regdump = 1;
++module_param(a52_regdump, int, 0644);
+ static void chg_print_regmap(struct sm5714_charger_data *charger)
+ {
+ 	u8 regs[PRINT_CHG_REG_NUM] = {0x0, };
+ 	u8 reg2s[PRINT_CHG_REG2_NUM] = {0x0, };
++	static u8 last[PRINT_CHG_REG_NUM + PRINT_CHG_REG2_NUM];
++	static unsigned int skipped;
+ 	char temp_buf[500] = {0,};
+ 	int i;
+
+ 	// READ INTMSK
+ 	sm5714_bulk_read(charger->i2c, SM5714_CHG_REG_INTMSK1, PRINT_CHG_REG_NUM, regs);
++	sm5714_bulk_read(charger->i2c, SM5714_CHG_REG_SINKADJ, PRINT_CHG_REG2_NUM, reg2s);
++	if (a52_regdump != 2) {
++		bool same = !memcmp(last, regs, PRINT_CHG_REG_NUM) &&
++			    !memcmp(last + PRINT_CHG_REG_NUM, reg2s, PRINT_CHG_REG2_NUM);
++
++		if (same && (a52_regdump == 0 || skipped + 1 < A52_REGDUMP_HEARTBEAT)) {
++			skipped++;
++			return;
++		}
++		if (skipped)
++			pr_info("sm5714-charger: regmap: %u unchanged dump(s) not printed%s\n", skipped,
++				same ? ", still the same:" : ", changed:");
++		skipped = 0;
++		memcpy(last, regs, PRINT_CHG_REG_NUM);
++		memcpy(last + PRINT_CHG_REG_NUM, reg2s, PRINT_CHG_REG2_NUM);
++	}
++
+ 	for (i = 0; i < PRINT_CHG_REG_NUM; ++i) {
+ 		sprintf(temp_buf+strlen(temp_buf), "0x%02X[0x%02X],", SM5714_CHG_REG_INTMSK1 + i, regs[i]);
+ 		if (i % 11 == 10) {
+@@ -545,7 +572,6 @@
+ 	memset(temp_buf, 0x0, sizeof(temp_buf));
+
+ 	// SINKADJ & FLED
+-	sm5714_bulk_read(charger->i2c, SM5714_CHG_REG_SINKADJ, PRINT_CHG_REG2_NUM, reg2s);
+ 	for (i = 0; i < PRINT_CHG_REG2_NUM; ++i) {
+ 		sprintf(temp_buf+strlen(temp_buf), "0x%02X[0x%02X],", SM5714_CHG_REG_SINKADJ + i, reg2s[i]);
+ 		if (i % 9 == 8) {

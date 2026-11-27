@@ -196,7 +196,7 @@ SPDX identifiers found in the exported files, by directory:
 | `bsp612` | BSD-3-Clause (1) |
 | `bsp618` | GPL-2.0-only (1) |
 | `drivers612/androidboot` | GPL-2.0 (1) |
-| `drivers612/audio` | GPL-2.0-only (17) |
+| `drivers612/audio` | GPL-2.0-only (17), GPL-2.0-or-later (2) |
 | `drivers612/boarddt` | GPL-2.0 (35), BSD-3-Clause (4) |
 | `drivers612/camera` | GPL-2.0-only (25), GPL-2.0 WITH Linux-syscall-note (6), GPL-2.0-only WITH Linux-syscall-note (3) |
 | `drivers612/conn` | GPL-2.0-only (18), BSD-3-Clause (3), GPL-2.0 (3), GPL-2.0-only WITH Linux-syscall-note (3) |

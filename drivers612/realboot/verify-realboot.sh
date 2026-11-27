@@ -95,7 +95,10 @@ fi
 
 # ---- 7. display: off/on 5x, brightness, screencap
 if ! skip display; then
-	E0=$(sh 'dmesg' | grep -cE 'underrun|sde_encoder.*(timeout|error)|dsi.*(error|failed)|\[drm:.*ERROR')
+	# error lines newer than the start of the test (a count of the whole ring drops when old lines rotate out)
+	T0=$(sh 'cut -d" " -f1 /proc/uptime')
+	derr() { sh 'dmesg' | grep -E 'underrun|sde_encoder.*(timeout|error)|dsi.*(error|failed)|\[drm:.*ERROR' | awk -v t="$T0" -F'[][]' '$2+0 > t+0' | wc -l; }
+	E0=0
 	OKC=0
 	for i in 1 2 3 4 5; do
 		sh 'input keyevent KEYCODE_SLEEP'; sleep 2; a=$(sh 'dumpsys power' | sed -n 's/.*mWakefulness=//p' | head -1)
@@ -103,8 +106,8 @@ if ! skip display; then
 		[ "$a" != Awake ] && [ "$b" = Awake ] && OKC=$((OKC+1))
 	done
 	sh 'wm dismiss-keyguard; input keyevent KEYCODE_HOME' >/dev/null; sleep 2
-	E1=$(sh 'dmesg' | grep -cE 'underrun|sde_encoder.*(timeout|error)|dsi.*(error|failed)|\[drm:.*ERROR')
-	ok $([ "$OKC" = 5 ] && [ "$E1" = "$E0" ] && echo 1 || echo 0) display-offon "$OKC/5 sleep/wake cycles, display error lines $E0 -> $E1"
+	E1=$(derr)
+	ok $([ "$OKC" = 5 ] && [ "$E1" = "$E0" ] && echo 1 || echo 0) display-offon "$OKC/5 sleep/wake cycles, new display error lines $E1"
 	BR0=$(sh 'settings get system screen_brightness'); BM0=$(sh 'settings get system screen_brightness_mode')
 	sh 'settings put system screen_brightness_mode 0; settings put system screen_brightness 30'; sleep 2; K1=$(sh 'dmesg' | grep -E 'ss_brightness_dcs|bl_level|backlight' | tail -1)
 	sh 'settings put system screen_brightness 200'; sleep 2; K2=$(sh 'dmesg' | grep -E 'ss_brightness_dcs|bl_level|backlight' | tail -1)
@@ -176,7 +179,8 @@ ok $([ "$SN" = 32 ] && echo 1 || echo 0) sensors "$SN h/w sensors"
 MT=$(sh 'cat /proc/meminfo' | awk '/^MemTotal/{print $2}'); CT=$(sh 'cat /proc/meminfo' | awk '/^CmaTotal/{print $2}')
 DG=$(( (MT - BASE_MEM) / 1024 ))
 # a build without log_buf_len=8M / the DIAG debug words (release style) has ~36 MiB more: upper bound +48 there
-GHI=$((GAIN + 8)); grep -q 'log_buf_len=' "$L/cmdline.txt" || GHI=$((GAIN + 48))
+# (only the DIAG-size rings count: log_buf_len=1M, the 5.4-parity ring of the 11-27 lines, costs ~4 MiB, release-style)
+GHI=$((GAIN + 48)); grep -qE 'log_buf_len=([4-9]|[1-9][0-9]+)M' "$L/cmdline.txt" && GHI=$((GAIN + 8))
 ok $([ "$DG" -ge $((GAIN - 4)) ] && [ "$DG" -le $GHI ] && [ "$CT" -le $((BASE_CMA - 100000)) ] && echo 1 || echo 0) memory "MemTotal $MT kB = baseline $BASE_MEM + $DG MiB (want ~$GAIN); CmaTotal $CT kB (baseline $BASE_CMA, want -102400); dma heaps: $(sh 'ls /dev/dma_heap' | tr '\n' ' ')"
 
 # ---- 13. modem side (no working modem on white cable): modules, no crash, phone process calm
