@@ -57,6 +57,9 @@
 #include <linux/string.h>
 #include <linux/sysfs.h>
 #include <linux/version.h>
+#include <linux/namei.h>
+#include <linux/path.h>
+#include "../../../../bsp612/kernel/fs/proc/internal.h"	/* struct proc_inode (RANDSTRUCT_NONE) */
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 18, 0)
 static inline struct kernfs_node *a52_kn_parent(struct kernfs_node *kn) { return rcu_dereference_raw(kn->__parent); }
@@ -67,7 +70,8 @@ static inline struct kernfs_node *a52_kn_parent(struct kernfs_node *kn) { return
 #define G_BW		0x1
 #define G_SCHEDUTIL	0x2
 #define G_SYSCTL	0x4
-static unsigned int groups = G_BW | G_SCHEDUTIL | G_SYSCTL;
+#define G_WALTFWD	0x8
+static unsigned int groups = G_BW | G_SCHEDUTIL | G_SYSCTL | G_WALTFWD;
 module_param(groups, uint, 0444);
 MODULE_PARM_DESC(groups, "node groups to create: 1 bw_hwmon devfreq nodes, 2 schedutil hispeed files, 4 /proc/sys/kernel/sched_* (default 7)");
 static unsigned int forward = G_BW;
@@ -437,6 +441,123 @@ static struct ctl_table sc_table[] = {
 	SC_ENT("sched_group_downmigrate", SC_GDOWN),
 };
 
+/* ------------------------------------------------------------------ group 5: /proc/sys/kernel/<walt knob> -> /proc/sys/walt
+ * 2026-11-27 (tester: "perfboostsconfig.xml works on 5.4, on 6.12 the nodes moved to /proc/sys/walt/"): the QTI perf
+ * HAL (commonresourceconfigs.xml, libqti-perfd) opens these 5.4 WALT sysctls under /proc/sys/kernel; on 6.12 the
+ * same knobs (same name, same value format) live only under /proc/sys/walt, so every boost that uses them failed
+ * with ENOENT (sched_busy_hyst_ns, sched_ravg_window_nr_ticks ... in ONEUI9-PARITY). For each name that exists in
+ * /proc/sys/walt and not in /proc/sys/kernel an alias is registered whose handler calls sched-walt's OWN
+ * proc_handler on sched-walt's own ctl_table entry (taken from the proc inode at load: first stage, before the
+ * SELinux policy). No VFS: the caller's access is checked once, at the 5.4 path, as on 5.4; the value is checked
+ * by WALT as if written to /proc/sys/walt. Names that already exist under /proc/sys/kernel are left alone. */
+static const char * const wf_names[] = {
+	"sched_busy_hyst_ns", "sched_busy_hysteresis_enable_cpus", "sched_coloc_busy_hysteresis_enable_cpus",
+	"sched_coloc_downmigrate_ns", "sched_force_lb_enable", "sched_init_task_load", "sched_many_wakeup_threshold",
+	"sched_min_task_util_for_boost", "sched_min_task_util_for_colocation", "sched_ravg_window_nr_ticks",
+	"sched_sync_hint_enable", "sched_user_hint", "sched_window_stats_policy", "walt_low_latency_task_threshold",
+	"walt_rtg_cfs_boost_prio",
+};
+#define WF_N ARRAY_SIZE(wf_names)
+static struct path wf_path[WF_N];
+static struct ctl_table *wf_real[WF_N];
+static struct ctl_table wf_table[WF_N][1];
+static struct ctl_table_header *wf_hdr[WF_N];
+static unsigned int wf_slot[WF_N];
+static unsigned int wf_count;
+static bool wf_done[WF_N], wf_stop;
+static unsigned int wf_tries;
+static void wf_work_fn(struct work_struct *w);
+static DECLARE_DELAYED_WORK(wf_work, wf_work_fn);
+module_param_named(waltfwd_count, wf_count, uint, 0444);
+
+static int wf_handler(const struct ctl_table *table, int write, void *buffer, size_t *lenp, loff_t *ppos)
+{
+	unsigned int i = *(unsigned int *)table->data;
+
+	if (i >= WF_N || !wf_real[i] || !wf_real[i]->proc_handler)
+		return -ENOENT;
+	return wf_real[i]->proc_handler(wf_real[i], write, buffer, lenp, ppos);
+}
+
+static bool wf_kernel_has(const char *name)
+{
+	char p[96];
+	struct path k;
+
+	snprintf(p, sizeof(p), "/proc/sys/kernel/%s", name);
+	if (kern_path(p, 0, &k))
+		return false;
+	path_put(&k);
+	return true;
+}
+
+static void wf_init(void)
+{
+	unsigned int i, skip = 0, miss = 0;
+	char p[96];
+
+	for (i = 0; i < WF_N; i++) {
+		struct inode *ino;
+
+		wf_slot[i] = i;
+		if (wf_hdr[i] || wf_done[i])
+			continue;
+		if (wf_kernel_has(wf_names[i])) {
+			wf_done[i] = true;
+			skip++;
+			continue;
+		}
+		snprintf(p, sizeof(p), "/proc/sys/walt/%s", wf_names[i]);
+		if (kern_path(p, 0, &wf_path[i])) {
+			miss++;
+			continue;
+		}
+		ino = d_inode(wf_path[i].dentry);
+		if (!ino || !PROC_I(ino)->sysctl_entry || !PROC_I(ino)->sysctl_entry->proc_handler) {
+			path_put(&wf_path[i]);
+			memset(&wf_path[i], 0, sizeof(wf_path[i]));
+			miss++;
+			continue;
+		}
+		wf_real[i] = PROC_I(ino)->sysctl_entry;
+		wf_table[i][0] = (struct ctl_table){ .procname = wf_names[i], .data = &wf_slot[i],
+			.maxlen = wf_real[i]->maxlen, .mode = 0644, .proc_handler = wf_handler };
+		wf_hdr[i] = register_sysctl_sz("kernel", wf_table[i], 1);
+		if (!wf_hdr[i]) {
+			path_put(&wf_path[i]);
+			memset(&wf_path[i], 0, sizeof(wf_path[i]));
+			wf_real[i] = NULL;
+			miss++;
+			continue;
+		}
+		wf_count++;
+	}
+	pr_info("/proc/sys/kernel -> /proc/sys/walt aliases for the perf HAL: %u registered, %u already there, %u missing (try %u)\n",
+		wf_count, skip, miss, wf_tries + 1);
+	/* sched-walt registers /proc/sys/walt once every CPU has a cpufreq policy: retry the missing ones for 2 min */
+	if (miss && ++wf_tries < 24 && !wf_stop)
+		queue_delayed_work(system_power_efficient_wq, &wf_work, 5 * HZ);
+}
+
+static void wf_work_fn(struct work_struct *w)
+{
+	wf_init();
+}
+
+static void wf_exit(void)
+{
+	unsigned int i;
+
+	wf_stop = true;
+	cancel_delayed_work_sync(&wf_work);
+	for (i = 0; i < WF_N; i++) {
+		if (wf_hdr[i])
+			unregister_sysctl_table(wf_hdr[i]);
+		if (wf_real[i])
+			path_put(&wf_path[i]);
+	}
+}
+
 /* ------------------------------------------------------------------ init: nothing here may fail the load */
 static void bw_init(void)
 {
@@ -478,6 +599,8 @@ static int __init a52_bwcompat_init(void)
 		pr_info("/proc/sys/kernel/sched_{boost,prefer_spread,upmigrate,downmigrate,group_*}: %s\n",
 			sc_hdr ? "registered (accept + remember)" : "NOT registered");
 	}
+	if (groups & G_WALTFWD)
+		wf_init();
 	if (groups & G_SCHEDUTIL) {
 		unsigned int a, b;
 
@@ -501,6 +624,7 @@ static void __exit a52_bwcompat_exit(void)
 	}
 	if (sc_hdr)
 		unregister_sysctl_table(sc_hdr);
+	wf_exit();
 	for (i = 0; i < ARRAY_SIZE(bw_nodes); i++)
 		bw_remove(&bw_nodes[i]);
 	kobject_put(devfreq_class_kobj);

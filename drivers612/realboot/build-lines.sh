@@ -17,14 +17,16 @@ COMMON=(STRIP_BTF=1 "ASYNC_LAST=stm_ts qti_devfreq_cdev sm5714_fuelgauge frpc-ad
 ONEUI=(VOLKEY=1 BWCOMPAT=1 ARGOS=1 SOCSTATS=1 NTFS3=1 USBACC=1 ZRAM_LZ4=1 USERSPACE=samsung
 	"EXTRA_CMDLINE=stm_ts.lp_dump_inf=1" "DUMP=${ONEUI_DUMP:-$TOP/testdev-PHONE1/oneui9-9.3.177}")
 case "$LINE" in
-main)  SET=("${COMMON[@]}" WALT=1 "REF=${3:-s99ok}") ;;   # WALT=1 since rb112w (11-27); WALT=0 = rb111/rb112 style
-oneui) SET=("${COMMON[@]}" "${ONEUI[@]}" KSU=1 "KSU_DIR=$HERE/modules/resukisu/out" "REF=${3:-s99ou9f}") ;;
-susfs) SET=("${COMMON[@]}" "${ONEUI[@]/#EXTRA_CMDLINE=/EXTRA_CMDLINE=androidboot.a52sxq.susfs=1 }" SUSFS=1 "IMAGE=$TOP/bsp612/out/susfs/Image" "REF=${3:-s99ou9f}") ;;
+main)  SET=("${COMMON[@]}" WALT=1 BWCOMPAT=1 "REF=${3:-s99ol}") ;;   # WALT=1 since rb112w (11-27); WALT=0 = rb111/rb112 style
+oneui) SET=("${COMMON[@]}" "${ONEUI[@]}" KSU=1 "KSU_DIR=$HERE/modules/resukisu/out" "REF=${3:-s99ou9g}") ;;
+susfs) SET=("${COMMON[@]}" "${ONEUI[@]/#EXTRA_CMDLINE=/EXTRA_CMDLINE=androidboot.a52sxq.susfs=1 }" SUSFS=1 "IMAGE=$TOP/bsp612/out/susfs/Image" "REF=${3:-s99ou9g}") ;;
 *) echo "line: main|oneui|susfs" >&2; exit 2 ;;
 esac
-# caller's environment wins over the line's values (DIAG_BOOTARGS defaults to none: the shipped lines had no debug words)
+# caller's environment wins over the line's values (DIAG_BOOTARGS default: the line's log ring below; rb111/rbou9e had none)
 ARGS=()
 for kv in "${SET[@]}"; do k=${kv%%=*}; [ -n "${!k+x}" ] && ARGS+=("$k=${!k}") || ARGS+=("$kv"); done
-[ -n "${DIAG_BOOTARGS+x}" ] || ARGS+=(DIAG_BOOTARGS=none)
+# kernel log ring per line (2026-11-27): main 1M (5.4 size), One UI 4M (One UI fills 1 MiB ~1.5 min after boot)
+case "$LINE" in main) RING=log_buf_len=1M ;; *) RING=log_buf_len=4M ;; esac
+[ -n "${DIAG_BOOTARGS+x}" ] || ARGS+=("DIAG_BOOTARGS=$RING")
 echo "build-lines: $LINE $NAME: ${ARGS[*]}"
 cd "$TOP" && exec env "${ARGS[@]}" "$HERE/build-realboot.sh" "$NAME"
